@@ -1,10 +1,10 @@
 [Unit]
-Description=Pilipilis GitHub Bridge
+Description=GitHub Agent Bridge
 After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/pilipilis-github-bridge
+ExecStart=%h/.local/bin/github-agent-bridge
 Restart=on-failure
 RestartSec=10
 

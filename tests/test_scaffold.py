@@ -1,4 +1,4 @@
-from pilipilis_github_bridge import __version__
+from github_agent_bridge import __version__
 
 
 def test_version_present():

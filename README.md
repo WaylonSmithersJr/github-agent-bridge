@@ -1,4 +1,4 @@
-# Pilipilis GitHub Bridge
+# GitHub Agent Bridge
 
 Bridge between GitHub notifications and OpenClaw agents.
 

@@ -18,6 +18,11 @@ IMAP reader -> SQLite queue -> executor pool -> GitHub 👀 + OpenClaw agent dis
 - Duplicate notifications for an active thread are coalesced.
 - Dispatch timeout/failure marks one job as `blocked` without blocking unrelated work.
 
+
+## Scope boundary
+
+This project is GitHub-only. Generic email triage, calendar/status emails and personal inbox logic should live in a separate generic inbox worker. The bridge must not mutate non-GitHub messages. See `docs/scope.md`.
+
 ## CLI
 
 ```bash

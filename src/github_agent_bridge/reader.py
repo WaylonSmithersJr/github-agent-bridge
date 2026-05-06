@@ -52,9 +52,11 @@ class ImapReader:
                 if "notifications@github.com" in from_addr.lower():
                     n = Notification(uid=uid, message_id=message_id, subject=subject, from_addr=from_addr, body=extract_body_text(msg), auth=parse_auth_results(msg))
                     self.queue.enqueue(n, self.policy)
+                    # Only GitHub notifications belong to this bounded context.
+                    # Generic/non-GitHub mail must remain untouched for the generic inbox worker.
+                    imap.uid("store", str(uid), "+FLAGS", "(\\Seen)")
                     count += 1
                 self.queue.set_state("last_uid", str(uid))
-                imap.uid("store", str(uid), "+FLAGS", "(\\Seen)")
             return count
         finally:
             try:

@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 from dataclasses import dataclass
+from enum import StrEnum
 
 from .models import GitHubContext, Job
 from .policy import Policy, Route
@@ -12,6 +13,12 @@ WORKTREE_RULES = """Worktree rule: when working on an existing PR and local file
 PR_METADATA_RULES = """PR metadata rule: if code/docs/tests change on an existing PR, keep the PR title/body aligned with final scope and test plan.\n"""
 HUMAN_REVIEWER_RULES = """Human reviewer rule: do not request/add individual human reviewers unless explicitly requested or configured.\n"""
 REVIEW_ONLY_RULES = """Review-only rule: do not edit code, commit, push, or update PR metadata. Review the PR and leave concrete findings/test notes/approval or concerns.\n"""
+
+
+class RunMode(StrEnum):
+    SHADOW = "shadow"  # no external side effects: no GitHub reaction, no OpenClaw dispatch
+    DRY_RUN = "dry-run"  # no external side effects, but render intended commands/actions
+    LIVE = "live"  # perform GitHub reaction and OpenClaw dispatch
 
 
 @dataclass(frozen=True)
@@ -30,13 +37,16 @@ class DispatchResult:
 
 
 class GitHubClient:
-    def __init__(self, gh_bin: str = "gh"):
+    def __init__(self, gh_bin: str = "gh", mode: RunMode = RunMode.LIVE):
+        self.mode = mode
         self.gh_bin = gh_bin
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run([self.gh_bin, *args], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     def react_eyes(self, ctx: GitHubContext) -> bool:
+        if self.mode != RunMode.LIVE:
+            return True
         repo, issue = ctx.repo, ctx.issue_number
         if not repo or not issue:
             return False
@@ -48,12 +58,13 @@ class GitHubClient:
 
 
 class OpenClawDispatcher:
-    def __init__(self, openclaw_bin: str = "openclaw", node_bin: str | None = None, default_channel: str = "telegram", default_to: str = "43532269", timeout_seconds: int = 240):
+    def __init__(self, openclaw_bin: str = "openclaw", node_bin: str | None = None, default_channel: str = "telegram", default_to: str = "43532269", timeout_seconds: int = 240, mode: RunMode = RunMode.LIVE):
         self.openclaw_bin = openclaw_bin
         self.node_bin = node_bin
         self.default_channel = default_channel
         self.default_to = default_to
         self.timeout_seconds = timeout_seconds
+        self.mode = mode
 
     def build_prompt(self, job: Job) -> str:
         intent_rules = REVIEW_ONLY_RULES if job.work_intent == "review_only" else ""
@@ -86,6 +97,8 @@ class OpenClawDispatcher:
         env = os.environ.copy()
         if self.node_bin:
             env["PATH"] = os.path.dirname(self.node_bin) + os.pathsep + env.get("PATH", "")
+        if self.mode != RunMode.LIVE:
+            return DispatchResult(True, 0, "side effects skipped", "", False, reaction_ok, cmd)
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
         try:
             out, err = proc.communicate(timeout=self.timeout_seconds)

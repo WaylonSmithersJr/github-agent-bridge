@@ -28,7 +28,7 @@ This project is GitHub-only. Generic email triage, calendar/status emails and pe
 ```bash
 github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 init-db
 github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 read-imap-once   --email "$EMAIL" --password "$APP_PASSWORD"
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run --workers 4
+github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run --mode shadow --workers 4
 github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 status
 ```
 
@@ -49,6 +49,10 @@ By default the bridge is conservative. Provide a JSON policy with trusted repos/
   }
 }
 ```
+
+## Safe rollout
+
+Use `replay`, `read-imap-once` without `--mark-seen`, and `run --mode shadow` before enabling `run --mode live`. See `docs/shadow-canary.md`.
 
 ## Current status
 

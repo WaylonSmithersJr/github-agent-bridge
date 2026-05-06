@@ -25,10 +25,11 @@ class ImapReader:
     It intentionally never dispatches OpenClaw agents. Slow work belongs to ExecutorPool.
     """
 
-    def __init__(self, config: ImapConfig, queue: JobQueue, policy: Policy):
+    def __init__(self, config: ImapConfig, queue: JobQueue, policy: Policy, mark_seen: bool = False):
         self.config = config
         self.queue = queue
         self.policy = policy
+        self.mark_seen = mark_seen
 
     def fetch_once(self) -> int:
         last_uid = int(self.queue.get_state("last_uid", "0") or 0)
@@ -54,7 +55,8 @@ class ImapReader:
                     self.queue.enqueue(n, self.policy)
                     # Only GitHub notifications belong to this bounded context.
                     # Generic/non-GitHub mail must remain untouched for the generic inbox worker.
-                    imap.uid("store", str(uid), "+FLAGS", "(\\Seen)")
+                    if self.mark_seen:
+                        imap.uid("store", str(uid), "+FLAGS", "(\\Seen)")
                     count += 1
                 self.queue.set_state("last_uid", str(uid))
             return count

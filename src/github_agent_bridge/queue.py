@@ -131,6 +131,35 @@ class JobQueue:
             row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
             self._log(con, job_id, row["work_key"] if row else None, status, summary, detail)
 
+
+    def list_jobs(self, status: str | None = None, limit: int = 20) -> list[Job]:
+        sql = "SELECT * FROM jobs"
+        args: tuple[object, ...] = ()
+        if status:
+            sql += " WHERE status=?"
+            args = (status,)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args = (*args, limit)
+        with self.connect() as con:
+            return [j for j in (self._row_to_job(r) for r in con.execute(sql, args)) if j]
+
+    def retry(self, job_id: int) -> bool:
+        now = utc_now()
+        with self.connect() as con:
+            cur = con.execute("UPDATE jobs SET status='pending', locked_by=NULL, last_error=NULL, updated_at=? WHERE id=? AND status IN ('blocked','denied','waiting_approval')", (now, job_id))
+            if cur.rowcount:
+                row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
+                self._log(con, job_id, row["work_key"] if row else None, "retry", "job requeued", None)
+            return bool(cur.rowcount)
+
+    def unlock_stale(self, older_than_seconds: int) -> int:
+        with self.connect() as con:
+            rows = con.execute("SELECT id, work_key FROM jobs WHERE status='running' AND started_at IS NOT NULL AND (julianday('now') - julianday(started_at)) * 86400 > ?", (older_than_seconds,)).fetchall()
+            for row in rows:
+                con.execute("UPDATE jobs SET status='pending', locked_by=NULL, updated_at=? WHERE id=?", (utc_now(), row["id"]))
+                self._log(con, row["id"], row["work_key"], "unlock_stale", f"running job older than {older_than_seconds}s requeued", None)
+            return len(rows)
+
     def get(self, job_id: int) -> Job | None:
         with self.connect() as con:
             return self._row_to_job(con.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())

@@ -8,10 +8,10 @@ from .models import GitHubContext
 
 REVIEW_ONLY_PATTERNS = ("fes-ne una review", "fes una review", "fes review", "fer una review", "fes-ne una revisio", "fes-ne una revisió", "fes una revisio", "fes una revisió", "fer una revisio", "fer una revisió", "review de la pr", "revisió de la pr", "revisio de la pr", "revisa aquesta pr", "revisa els canvis", "revisar els canvis", "com veus els canvis", "què et semblen els canvis", "que et semblen els canvis", "what do you think of these changes", "please review", "can you review")
 IMPLEMENTATION_PATTERNS = ("fes els canvis", "fes-ho", "implementa", "modifica", "canvia", "arregla", "corregeix", "fix", "push", "commit", "aplica", "resol", "resolve")
-BOT_MENTION_PATTERNS = ("@pilipilisbot", "pilipilisbot")
+BOT_MENTION_PATTERNS = ("@pilipilisbot", "pilipilisbot", "you are receiving this because you were mentioned")
 ASSIGNMENT_PATTERNS = ("assigned you", "assigned to you", "you were assigned", "you are assigned", "assigned pilipilisbot", "assigned @pilipilisbot")
 REVIEW_REQUEST_PATTERNS = ("requested your review", "requested a review from you", "you were requested for review", "review requested", "requested review from pilipilisbot", "requested review from @pilipilisbot", "requested @pilipilisbot")
-COPILOT_REVIEW_PATTERNS = ("copilot-pull-request-reviewer", "github-copilot", "github copilot", "copilot reviewed", "copilot left a comment", "copilot suggested", "copilot requested changes")
+COPILOT_REVIEW_PATTERNS = ("copilot-pull-request-reviewer", "github-copilot", "github copilot", "copilot reviewed", "copilot commented", "copilot left a comment", "copilot suggested", "copilot requested changes")
 
 
 def decode_header_value(value: str | None) -> str:
@@ -57,9 +57,13 @@ def classify_github_action(subject: str, body: str) -> str:
     flags = github_event_flags(subject, body)
     if "merged" in text:
         return "sync_after_merge"
+    # PR reviews/comments should be handled as replies even when GitHub's footer
+    # also says the bot was assigned to the thread.
+    if flags["review_requested"] or flags["copilot_review"] or "pullrequestreview" in text:
+        return "reply_comment"
     if flags["assigned"]:
         return "open_issue"
-    if flags["review_requested"] or flags["copilot_review"] or flags["bot_mentioned"]:
+    if flags["bot_mentioned"]:
         return "reply_comment"
     return "archive_notification"
 

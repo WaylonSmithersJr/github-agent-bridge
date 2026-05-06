@@ -11,6 +11,11 @@ def test_extract_review_comment_context():
 
 def test_mentions_are_actionable():
     assert classify_github_action("Re: [x] PR", "@pilipilisbot fes-ho") == "reply_comment"
+    assert classify_github_action("Re: [x] PR", "You are receiving this because you were mentioned.") == "reply_comment"
+
+
+def test_copilot_comment_is_actionable():
+    assert classify_github_action("Re: [x] PR", "@Copilot commented on this pull request.") == "reply_comment"
 
 
 def test_review_only_intent():

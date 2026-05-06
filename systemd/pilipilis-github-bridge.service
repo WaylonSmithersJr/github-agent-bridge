@@ -1,0 +1,12 @@
+[Unit]
+Description=Pilipilis GitHub Bridge
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/pilipilis-github-bridge
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

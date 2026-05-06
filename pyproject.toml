@@ -1,0 +1,18 @@
+[project]
+name = "pilipilis-github-bridge"
+version = "0.1.0"
+description = "GitHub notification to OpenClaw agent bridge for Pilipilis"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+pilipilis-github-bridge = "pilipilis_github_bridge.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

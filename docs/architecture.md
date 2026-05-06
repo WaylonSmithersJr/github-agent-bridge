@@ -2,26 +2,39 @@
 
 ## Components
 
-1. **Reader**
-   - Reads IMAP/GitHub notifications.
-   - Extracts stable job identity: `work_key = owner/repo#number`.
-   - Persists the job before advancing mailbox high-water marks.
+### Reader
 
-2. **Queue**
-   - SQLite-backed durable queue.
-   - Stores message ids, UIDs, GitHub ids, status, attempts and timestamps.
-   - Coalesces repeated notifications for the same active `work_key`.
+`ImapReader` fetches GitHub notification emails, parses basic metadata and enqueues durable `Notification` jobs. It does **not** react on GitHub or dispatch agents.
 
-3. **Executor pool**
-   - Runs multiple jobs concurrently when their `work_key` differs.
-   - Enforces a per-`work_key` lock so one PR/issue is processed at a time.
-   - Converts dispatch timeouts into `blocked` state without blocking the reader.
+Critical invariant: advance `last_uid` only after a notification has been durably queued or safely ignored.
 
-4. **Dispatch**
-   - Applies 👀 reaction when applicable.
-   - Sends an OpenClaw agent task with full GitHub context instructions.
+### Queue
 
-## Non-goals for now
+`JobQueue` is backed by SQLite/WAL.
 
-- No Redis/Celery unless SQLite becomes insufficient.
-- No long-running agent subprocess inside the IMAP reader.
+Tables:
+
+- `jobs`: durable work items and execution state.
+- `coalesced_notifications`: extra emails folded into an already active `work_key`.
+- `state`: mailbox high-water and future cursors.
+- `worklog`: audit trail.
+
+### Executor pool
+
+`ExecutorPool` claims pending jobs using this rule:
+
+```sql
+status = 'pending'
+AND NOT EXISTS running job with same work_key
+```
+
+This allows parallelism across unrelated PRs/issues while serializing a single thread.
+
+### Dispatch
+
+Dispatch has two external side effects:
+
+1. apply GitHub 👀 reaction when possible;
+2. send one OpenClaw agent task with a prompt that forces full context loading.
+
+Failure is contained to the job: `blocked`, `last_error`, lock released.

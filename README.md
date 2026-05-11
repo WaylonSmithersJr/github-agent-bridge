@@ -24,6 +24,10 @@ IMAP reader -> SQLite queue -> executor pool -> GitHub 👀 + OpenClaw agent dis
 
 This project is GitHub-only. Generic email triage, calendar/status emails and personal inbox logic should live in a separate generic inbox worker. The bridge must not mutate non-GitHub messages. See `docs/scope.md`.
 
+## Development
+
+Agents should read `AGENTS.md` first. Developer workflow and safe manual replay commands live in `docs/development.md`.
+
 ## CLI
 
 ```bash
@@ -34,6 +38,9 @@ github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run -
 github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run --mode live --workers 4 --review-timeout 900 --work-timeout 3600
 github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 status
 github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor
+# safely enqueue a specific GitHub issue/PR comment URL
+github-agent-bridge --db /tmp/github-agent-bridge-dev.sqlite3 --policy ./policy.example.json enqueue-comment-url \
+  "https://github.com/gisce/erp/pull/27675#issuecomment-4419572864"
 ```
 
 ## Policy
@@ -43,6 +50,7 @@ By default the bridge is conservative. Provide a JSON policy with trusted repos/
 ```json
 {
   "trustedOrgs": ["gisce"],
+  "enabledRepos": ["gisce/erp"],
   "actions": {
     "auto": ["archive_notification", "sync_after_merge"],
     "trustedAuto": ["reply_comment", "open_issue"],

@@ -1,0 +1,53 @@
+# Development workflow
+
+This guide is for agents and humans changing the bridge.
+
+## Local setup
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[test]'
+pytest -q
+```
+
+## Safe manual replay of a GitHub comment
+
+Use `enqueue-comment-url` instead of hand-writing notification JSON:
+
+```bash
+DB=/tmp/github-agent-bridge-dev.sqlite3
+github-agent-bridge --db "$DB" init-db
+github-agent-bridge --db "$DB" --policy ./policy.example.json enqueue-comment-url \
+  'https://github.com/gisce/erp/pull/27675#issuecomment-4419572864'
+github-agent-bridge --db "$DB" --policy ./policy.example.json jobs --limit 5
+```
+
+Then process it without side effects:
+
+```bash
+github-agent-bridge --db "$DB" --policy ./policy.example.json run --mode shadow --once
+```
+
+To process in production, only use the configured production DB/policy when explicitly asked by the operator.
+
+## Policy gates
+
+`enabledRepos` is a hard canary allowlist. When non-empty, every repo outside the set is denied before trust/action checks. This lets the operator move one repo from the legacy worker to this bridge without widening live scope.
+
+Example:
+
+```json
+{
+  "trustedOrgs": ["gisce"],
+  "enabledRepos": ["gisce/erp"]
+}
+```
+
+## PR checklist
+
+- [ ] Added/updated tests for changed parser, policy, queue, dispatch, CLI or monitor behavior.
+- [ ] `pytest -q` passes.
+- [ ] New operational commands are documented here or in `docs/operations.md`.
+- [ ] No secrets, local DBs, app passwords or personal mailbox state committed.
+- [ ] Rollback is clear for systemd/config changes.

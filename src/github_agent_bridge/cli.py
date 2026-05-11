@@ -5,11 +5,13 @@ import email
 import json
 import mailbox
 import os
+import re
+import subprocess
 from pathlib import Path
 
 from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
 from .executor import ExecutorConfig, ExecutorPool
-from .models import Notification
+from .models import Notification, utc_now
 from .monitor import MonitorThresholds, monitor, report_json
 from .parser import decode_header_value, extract_body_text, parse_auth_results
 from .policy import Policy
@@ -39,6 +41,39 @@ def msg_to_notification(msg, uid: int | None = None) -> Notification | None:
     )
 
 
+def _run_gh_json(args: list[str], gh_bin: str = "gh") -> dict:
+    proc = subprocess.run([gh_bin, *args], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(f"gh failed ({proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}")
+    return json.loads(proc.stdout)
+
+
+def _parse_github_comment_url(url: str) -> tuple[str, int, int]:
+    match = re.search(r"github\.com/([^/]+/[^/]+)/(?:issues|pull)/(\d+)#issuecomment-(\d+)", url)
+    if not match:
+        raise SystemExit("expected a GitHub issue/PR issue-comment URL like https://github.com/owner/repo/pull/123#issuecomment-456")
+    return match.group(1).lower(), int(match.group(2)), int(match.group(3))
+
+
+def notification_from_comment_url(url: str, gh_bin: str = "gh", message_id_prefix: str = "manual") -> Notification:
+    repo, issue_number, comment_id = _parse_github_comment_url(url)
+    comment = _run_gh_json(["api", f"repos/{repo}/issues/comments/{comment_id}"], gh_bin)
+    issue = _run_gh_json(["api", f"repos/{repo}/issues/{issue_number}"], gh_bin)
+    html_url = comment.get("html_url") or url
+    body = f"{comment.get('body') or ''}\n\n{html_url}\n"
+    subject_kind = "PR" if "pull_request" in issue else "Issue"
+    subject = f"Re: [{repo}] {issue.get('title') or subject_kind} ({subject_kind} #{issue_number})"
+    return Notification(
+        uid=None,
+        message_id=f"<{message_id_prefix}/{repo}/issues/{issue_number}/c{comment_id}@github.com>",
+        subject=subject,
+        from_addr="GitHub <notifications@github.com>",
+        body=body,
+        received_at=utc_now(),
+        auth={"spf": True, "dkim": True, "dmarc": True},
+    )
+
+
 def cmd_init_db(args: argparse.Namespace) -> int:
     JobQueue(args.db)
     print(f"initialized {args.db}")
@@ -51,6 +86,20 @@ def cmd_enqueue_json(args: argparse.Namespace) -> int:
     n = Notification(**data)
     job, state = q.enqueue(n, policy)
     print(json.dumps({"state": state, "job_id": job.id if job else None, "work_key": job.work_key if job else None}, ensure_ascii=False))
+    return 0
+
+
+def cmd_enqueue_comment_url(args: argparse.Namespace) -> int:
+    q = JobQueue(args.db); policy = load_policy(args.policy)
+    n = notification_from_comment_url(args.url, args.gh_bin, args.message_id_prefix)
+    job, state = q.enqueue(n, policy)
+    print(json.dumps({
+        "state": state,
+        "job_id": job.id if job else None,
+        "work_key": job.work_key if job else None,
+        "message_id": n.message_id,
+        "subject": n.subject,
+    }, ensure_ascii=False))
     return 0
 
 
@@ -157,6 +206,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(required=True)
     s = sub.add_parser("init-db"); s.set_defaults(func=cmd_init_db)
     s = sub.add_parser("enqueue-json"); s.add_argument("file"); s.set_defaults(func=cmd_enqueue_json)
+    s = sub.add_parser("enqueue-comment-url", help="fetch a GitHub issue/PR comment URL and enqueue it as a trusted notification")
+    s.add_argument("url")
+    s.add_argument("--gh-bin", default="gh")
+    s.add_argument("--message-id-prefix", default="manual")
+    s.set_defaults(func=cmd_enqueue_comment_url)
     s = sub.add_parser("replay"); s.add_argument("path"); s.add_argument("--format", choices=["eml", "mbox"], default="eml"); s.add_argument("--uid-base", type=int); s.add_argument("--verbose", action="store_true"); s.set_defaults(func=cmd_replay)
     s = sub.add_parser("read-imap-once")
     s.add_argument("--imap-host", default=os.getenv("GITHUB_AGENT_BRIDGE_IMAP_HOST", "imap.gmail.com"))

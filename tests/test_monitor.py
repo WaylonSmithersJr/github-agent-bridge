@@ -1,6 +1,7 @@
 import sqlite3
 
 from github_agent_bridge.models import Notification
+from github_agent_bridge import monitor as monitor_module
 from github_agent_bridge.monitor import MonitorThresholds, monitor
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
@@ -52,3 +53,30 @@ def test_monitor_alerts_on_old_running_job(tmp_path):
     report = monitor(db, thresholds=MonitorThresholds(work_running_warn_seconds=1), check_systemd=False)
     assert report.ok is False
     assert any("running job" in a for a in report.alerts)
+
+
+def test_monitor_reports_recent_reader_from_systemd_age(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    monkeypatch.setattr(monitor_module, "_is_active", lambda unit: "active")
+    monkeypatch.setattr(monitor_module, "_last_service_result", lambda unit: ("success", "0", 42))
+
+    report = monitor(db, thresholds=MonitorThresholds(reader_recent_seconds=180))
+
+    assert report.ok is True
+    assert report.metrics["reader_recent"] is True
+    assert report.metrics["reader_last_age_seconds"] == 42
+    assert "reader_recent=True" in report.text()
+
+
+def test_monitor_alerts_on_stale_reader_from_systemd_age(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    monkeypatch.setattr(monitor_module, "_is_active", lambda unit: "active")
+    monkeypatch.setattr(monitor_module, "_last_service_result", lambda unit: ("success", "0", 181))
+
+    report = monitor(db, thresholds=MonitorThresholds(reader_recent_seconds=180))
+
+    assert report.ok is False
+    assert report.metrics["reader_recent"] is False
+    assert any("reader last run age 181s > 180s" in a for a in report.alerts)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,12 +56,31 @@ def _is_active(unit: str) -> str:
     return proc.stdout.strip() or "unknown"
 
 
-def _last_service_result(unit: str) -> tuple[str, str | None]:
-    proc = _run_systemctl(["show", unit, "--property=Result,ExecMainStatus,InactiveExitTimestampMonotonic", "--value"])
-    lines = [line.strip() for line in proc.stdout.splitlines()]
-    result = lines[0] if lines else "unknown"
-    exit_status = lines[1] if len(lines) > 1 else None
-    return result or "unknown", exit_status
+def _last_service_result(unit: str) -> tuple[str, str | None, int | None]:
+    proc = _run_systemctl([
+        "show",
+        unit,
+        "--property=Result,ExecMainStatus,InactiveEnterTimestampMonotonic,ActiveEnterTimestampMonotonic",
+    ])
+    props: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        props[key] = value.strip()
+
+    result = props.get("Result") or "unknown"
+    exit_status = props.get("ExecMainStatus") or None
+    finished_raw = props.get("InactiveEnterTimestampMonotonic") or props.get("ActiveEnterTimestampMonotonic")
+    age_seconds: int | None = None
+    try:
+        finished_us = int(finished_raw or "0")
+    except ValueError:
+        finished_us = 0
+    if finished_us > 0:
+        now_us = time.monotonic_ns() // 1000
+        age_seconds = max(0, int((now_us - finished_us) / 1_000_000))
+    return result, exit_status, age_seconds
 
 
 def _table_exists(con: sqlite3.Connection, name: str) -> bool:
@@ -147,12 +167,13 @@ def monitor(
     if check_systemd:
         executor_state = _is_active(executor_unit)
         timer_state = _is_active(reader_timer_unit)
-        reader_result, reader_exit = _last_service_result(reader_service_unit)
+        reader_result, reader_exit, reader_age = _last_service_result(reader_service_unit)
         metrics.update({
             "executor_service": executor_state,
             "reader_timer": timer_state,
             "reader_last_result": reader_result,
             "reader_last_exit_status": reader_exit,
+            "reader_last_age_seconds": reader_age,
         })
         if executor_state != "active":
             alerts.append(f"executor service is {executor_state}")
@@ -160,7 +181,13 @@ def monitor(
             alerts.append(f"reader timer is {timer_state}")
         if reader_result not in ("success", "unknown"):
             alerts.append(f"reader last result is {reader_result} exit={reader_exit}")
-        metrics["reader_recent"] = "unknown"
+        if reader_age is None:
+            metrics["reader_recent"] = "unknown"
+        else:
+            reader_recent = reader_age <= thresholds.reader_recent_seconds
+            metrics["reader_recent"] = reader_recent
+            if not reader_recent:
+                alerts.append(f"reader last run age {reader_age}s > {thresholds.reader_recent_seconds}s")
 
     return MonitorReport(ok=not alerts, alerts=alerts, metrics=metrics)
 

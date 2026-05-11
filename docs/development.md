@@ -17,16 +17,16 @@ Use `enqueue-comment-url` instead of hand-writing notification JSON:
 
 ```bash
 DB=/tmp/github-agent-bridge-dev.sqlite3
-github-agent-bridge --db "$DB" init-db
-github-agent-bridge --db "$DB" --policy ./policy.example.json enqueue-comment-url \
+gab --db "$DB" init-db
+gab --db "$DB" --policy ./policy.example.json enqueue-comment-url \
   'https://github.com/gisce/erp/pull/27675#issuecomment-4419572864'
-github-agent-bridge --db "$DB" --policy ./policy.example.json jobs --limit 5
+gab --db "$DB" --policy ./policy.example.json jobs --limit 5
 ```
 
 Then process it without side effects:
 
 ```bash
-github-agent-bridge --db "$DB" --policy ./policy.example.json run --mode shadow --once
+gab --db "$DB" --policy ./policy.example.json run --mode shadow --once
 ```
 
 To process in production, only use the configured production DB/policy when explicitly asked by the operator.

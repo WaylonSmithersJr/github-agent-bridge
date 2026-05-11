@@ -7,9 +7,9 @@ The safe path to production is deliberately staged.
 Export recent GitHub notification emails as `.eml` files or an mbox and replay them:
 
 ```bash
-github-agent-bridge --db /tmp/github-agent-bridge-shadow.sqlite3 init-db
-github-agent-bridge --db /tmp/github-agent-bridge-shadow.sqlite3 --policy ./policy.json replay ./fixtures/github-emails --verbose
-github-agent-bridge --db /tmp/github-agent-bridge-shadow.sqlite3 jobs --limit 50
+gab --db /tmp/github-agent-bridge-shadow.sqlite3 init-db
+gab --db /tmp/github-agent-bridge-shadow.sqlite3 --policy ./policy.json replay ./fixtures/github-emails --verbose
+gab --db /tmp/github-agent-bridge-shadow.sqlite3 jobs --limit 50
 ```
 
 No GitHub reaction, no OpenClaw agent dispatch and no IMAP mutation happen in replay.
@@ -19,9 +19,9 @@ No GitHub reaction, no OpenClaw agent dispatch and no IMAP mutation happen in re
 Read live IMAP with an independent bridge DB cursor, but do not mark messages seen:
 
 ```bash
-github-agent-bridge --db ~/.local/state/github-agent-bridge-shadow/bridge.sqlite3 read-imap-once \
+gab --db ~/.local/state/github-agent-bridge-shadow/bridge.sqlite3 read-imap-once \
   --email "$EMAIL" --password "$APP_PASSWORD"
-github-agent-bridge --db ~/.local/state/github-agent-bridge-shadow/bridge.sqlite3 run --mode shadow --once --workers 4
+gab --db ~/.local/state/github-agent-bridge-shadow/bridge.sqlite3 run --mode shadow --once --workers 4
 ```
 
 Important: `read-imap-once` only marks GitHub messages seen when `--mark-seen` is explicitly passed.
@@ -37,7 +37,7 @@ Use this to validate routing and prompts.
 Use a policy that trusts only one low-risk repo/org, then run live:
 
 ```bash
-github-agent-bridge --policy ./policy-canary.json run --mode live --workers 2
+gab --policy ./policy-canary.json run --mode live --workers 2
 ```
 
 Only after canary is clean should the legacy worker stop handling GitHub notifications.

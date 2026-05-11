@@ -10,6 +10,7 @@ dependencies = []
 test = ["pytest>=8"]
 
 [project.scripts]
+gab = "github_agent_bridge.cli:main"
 github-agent-bridge = "github_agent_bridge.cli:main"
 
 [build-system]

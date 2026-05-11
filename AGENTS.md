@@ -25,22 +25,22 @@ pytest -q
 ```bash
 # Initialize an isolated DB
 DB=/tmp/github-agent-bridge-dev.sqlite3
-github-agent-bridge --db "$DB" init-db
+gab --db "$DB" init-db
 
 # Replay a saved .eml without external side effects
-github-agent-bridge --db "$DB" --policy ./policy.example.json replay ./fixtures/example.eml --verbose
+gab --db "$DB" --policy ./policy.example.json replay ./fixtures/example.eml --verbose
 
 # Enqueue a real GitHub issue/PR comment URL as a synthetic trusted notification
-github-agent-bridge --db "$DB" --policy ./policy.example.json enqueue-comment-url \
+gab --db "$DB" --policy ./policy.example.json enqueue-comment-url \
   'https://github.com/gisce/erp/pull/27675#issuecomment-4419572864'
 
 # Process queued jobs without touching GitHub/OpenClaw
-github-agent-bridge --db "$DB" --policy ./policy.example.json run --mode shadow --once
+gab --db "$DB" --policy ./policy.example.json run --mode shadow --once
 
 # Inspect health
 
-github-agent-bridge --db "$DB" --policy ./policy.example.json status
-github-agent-bridge --db "$DB" --policy ./policy.example.json monitor --no-systemd
+gab --db "$DB" --policy ./policy.example.json status
+gab --db "$DB" --policy ./policy.example.json monitor --no-systemd
 ```
 
 ## Architecture contract

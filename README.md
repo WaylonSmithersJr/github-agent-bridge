@@ -30,16 +30,18 @@ Agents should read `AGENTS.md` first. Developer workflow and safe manual replay 
 
 ## CLI
 
+Prefer the short `gab` command. The long `github-agent-bridge` entrypoint remains as a backwards-compatible alias for existing installs/systemd units.
+
 ```bash
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 init-db
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 read-imap-once   --email "$EMAIL" --password "$APP_PASSWORD"
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run --mode shadow --workers 4
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 init-db
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 read-imap-once   --email "$EMAIL" --password "$APP_PASSWORD"
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run --mode shadow --workers 4
 # live executor, explicit long-running GitHub work timeout profile
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run --mode live --workers 4 --review-timeout 900 --work-timeout 3600
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 status
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run --mode live --workers 4 --review-timeout 900 --work-timeout 3600
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 status
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor
 # safely enqueue a specific GitHub issue/PR comment URL
-github-agent-bridge --db /tmp/github-agent-bridge-dev.sqlite3 --policy ./policy.example.json enqueue-comment-url \
+gab --db /tmp/github-agent-bridge-dev.sqlite3 --policy ./policy.example.json enqueue-comment-url \
   "https://github.com/gisce/erp/pull/27675#issuecomment-4419572864"
 ```
 

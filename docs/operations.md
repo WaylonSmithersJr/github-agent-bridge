@@ -1,5 +1,7 @@
 # Operations
 
+Prefer `gab` for operator commands. The long `github-agent-bridge` command remains supported for backwards compatibility.
+
 Initial migration target from legacy worker:
 
 - `~/.local/bin/pilipilis_inbox_worker.py`
@@ -18,8 +20,8 @@ Operational SLOs:
 Monitoring checks:
 
 ```bash
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor --json
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor --json
 ```
 
 The monitor exits `0` when healthy and `2` when it detects alerts. It checks:
@@ -35,12 +37,12 @@ Suggested production split:
 
 ```bash
 # Executor pool: long-running service
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   --policy ~/.config/github-agent-bridge/policy.json \
   run --mode live --workers 4 --review-timeout 900 --work-timeout 3600
 
 # Reader: short periodic job, safe to run via systemd timer
-github-agent-bridge --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   --policy ~/.config/github-agent-bridge/policy.json \
   read-imap-once --email "$GITHUB_AGENT_BRIDGE_EMAIL" --password "$GITHUB_AGENT_BRIDGE_PASSWORD" --mark-seen
 ```

@@ -7,6 +7,7 @@ import mailbox
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
@@ -200,7 +201,7 @@ def cmd_monitor(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="github-agent-bridge")
+    p = argparse.ArgumentParser(prog=Path(sys.argv[0]).name)
     p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--policy", default=None)
     sub = p.add_subparsers(required=True)

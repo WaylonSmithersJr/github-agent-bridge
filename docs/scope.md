@@ -22,5 +22,5 @@ GitHub Agent Bridge
 The bridge may scan the same mailbox with its own high-water cursor, but it must only mutate
 GitHub notification messages. Non-GitHub mail is ignored and left untouched for the generic worker.
 
-If the generic worker becomes the sole IMAP owner later, it can call `github-agent-bridge enqueue-json`
+If the generic worker becomes the sole IMAP owner later, it can call `gab enqueue-json`
 for GitHub messages instead of letting the bridge read IMAP directly.

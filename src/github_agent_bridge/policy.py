@@ -21,6 +21,7 @@ class Policy:
     message_id_domain: str = "github.com"
     trusted_repos: set[str] = field(default_factory=set)
     trusted_orgs: set[str] = field(default_factory=set)
+    enabled_repos: set[str] = field(default_factory=set)
     auto_actions: set[str] = field(default_factory=lambda: {"archive_notification", "sync_after_merge"})
     ask_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue", "docs_update", "content_change"})
     trusted_auto_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue"})
@@ -39,6 +40,7 @@ class Policy:
             message_id_domain=source.get("messageIdDomain", cls.message_id_domain),
             trusted_repos={r.lower() for r in data.get("trustedRepos", [])},
             trusted_orgs={o.lower() for o in data.get("trustedOrgs", [])},
+            enabled_repos={r.lower() for r in data.get("enabledRepos", [])},
             auto_actions=set(actions.get("auto", ["archive_notification", "sync_after_merge"])),
             ask_actions=set(actions.get("ask", ["reply_comment", "open_issue", "docs_update", "content_change"])),
             trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue"])),
@@ -56,6 +58,8 @@ class Policy:
         return repo in self.trusted_repos or org in self.trusted_orgs
 
     def decision(self, n: Notification, ctx: GitHubContext, action: str) -> str:
+        if self.enabled_repos and (ctx.repo or "").lower() not in self.enabled_repos:
+            return "deny"
         if not self.trusted_source(n, ctx):
             return "deny"
         if action in self.auto_actions:

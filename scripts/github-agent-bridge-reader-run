@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+mailbox="${GITHUB_AGENT_BRIDGE_MAILBOX:-INBOX}"
+# Gmail folders with spaces must be quoted at the IMAP protocol level.
+if [[ "$mailbox" == *" "* && "$mailbox" != '"'* ]]; then
+  mailbox="\"$mailbox\""
+fi
+args=(
+  "$HOME/.local/bin/github-agent-bridge"
+  --db "$HOME/.local/state/github-agent-bridge/bridge.sqlite3"
+  --policy "$HOME/.config/github-agent-bridge/policy.json"
+  read-imap-once
+  --imap-host "${GITHUB_AGENT_BRIDGE_IMAP_HOST:-imap.gmail.com}"
+  --imap-port "${GITHUB_AGENT_BRIDGE_IMAP_PORT:-993}"
+  --email "${GITHUB_AGENT_BRIDGE_EMAIL:-}"
+  --password "${GITHUB_AGENT_BRIDGE_PASSWORD:-}"
+  --mailbox "$mailbox"
+)
+if [[ "${GITHUB_AGENT_BRIDGE_MARK_SEEN:-}" == "--mark-seen" ]]; then
+  args+=(--mark-seen)
+fi
+exec "${args[@]}"

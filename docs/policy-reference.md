@@ -1,6 +1,25 @@
 # `policy.json` reference
 
-`policy.json` controls which GitHub notifications the bridge trusts, which repositories are in scope, which actions are automatic, and where OpenClaw agent work is delivered.
+`policy.json` controls which GitHub notifications the bridge trusts, which repositories are in scope, which actions are automatic, where OpenClaw agent work is delivered, and which operating posture the agent uses.
+
+## Quick map
+
+```mermaid
+flowchart TD
+    A[source] --> B[enabledRepos]
+    B --> C[actions]
+    C --> D[repoRoutes/orgRoutes]
+    D --> E[repoRoles/orgRoles]
+    E --> F[OpenClaw dispatch]
+```
+
+| Question | Policy area |
+| --- | --- |
+| Is this a trusted GitHub notification? | `source` |
+| Is this repo currently in live/canary scope? | `enabledRepos` |
+| Is this action automatic, trusted-only, approval-only, or denied? | `actions` |
+| Where should accepted work be delivered? | `repoRoutes`, `orgRoutes` |
+| How much authority should the agent use? | `repoRoles`, `orgRoles` |
 
 Default path in the packaged CLI/systemd examples:
 
@@ -42,6 +61,12 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
       "channel": "telegram",
       "to": "-1003972920100"
     }
+  },
+  "repoRoles": {
+    "gisce/erp": "owner"
+  },
+  "orgRoles": {
+    "pilipilisbot": "maintainer"
   },
   "actions": {
     "auto": ["archive_notification", "sync_after_merge"],
@@ -404,6 +429,12 @@ Use lowercase in policy files for readability.
       "channel": "telegram",
       "to": "-1003972920100"
     }
+  },
+  "repoRoles": {
+    "gisce/erp": "owner"
+  },
+  "orgRoles": {
+    "pilipilisbot": "maintainer"
   },
   "actions": {
     "auto": ["archive_notification", "sync_after_merge"],

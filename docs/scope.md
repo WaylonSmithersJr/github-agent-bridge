@@ -2,25 +2,35 @@
 
 `github-agent-bridge` is intentionally GitHub-only.
 
-It should not become a generic inbox assistant. The intended production split is:
+## Boundary
 
-```text
-Generic inbox worker
-  ├── ordinary email triage / reminders / calendar invites / status emails
-  └── GitHub notifications are delegated to github-agent-bridge
+```mermaid
+flowchart TD
+    A[Mailbox] --> B[Generic inbox worker]
+    A --> C[GitHub Agent Bridge]
 
-GitHub Agent Bridge
-  ├── classify GitHub notification
-  ├── enqueue durable GitHub job
-  ├── coalesce per owner/repo#number
-  ├── react 👀
-  └── dispatch OpenClaw agent work
+    B --> B1[ordinary email triage]
+    B --> B2[calendar invites]
+    B --> B3[reminders/status emails]
+
+    C --> C1[classify GitHub notification]
+    C --> C2[enqueue durable GitHub job]
+    C --> C3[coalesce per owner/repo#number]
+    C --> C4[react 👀]
+    C --> C5[dispatch OpenClaw agent work]
 ```
 
-## Mailbox ownership rule
+## Rules
 
-The bridge may scan the same mailbox with its own high-water cursor, but it must only mutate
-GitHub notification messages. Non-GitHub mail is ignored and left untouched for the generic worker.
+| Rule | Reason |
+| --- | --- |
+| Do not become a generic inbox assistant. | Keeps policy, safety, and failure modes narrow. |
+| Do not mutate non-GitHub mail. | Prevents accidental mailbox side effects. |
+| Keep generic email logic elsewhere. | Calendar/status/personal triage has different semantics. |
+| Accept delegated GitHub messages from another worker. | Allows a future single IMAP owner if needed. |
 
-If the generic worker becomes the sole IMAP owner later, it can call `gab enqueue-json`
-for GitHub messages instead of letting the bridge read IMAP directly.
+## Mailbox ownership
+
+The bridge may scan the same mailbox with its own high-water cursor, but it must only mutate GitHub notification messages.
+
+If a generic worker becomes the sole IMAP owner later, it can call `gab enqueue-json` for GitHub messages instead of letting the bridge read IMAP directly.

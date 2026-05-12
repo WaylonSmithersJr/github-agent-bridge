@@ -1,77 +1,155 @@
 # GitHub Agent Bridge
 
-Reusable bridge between GitHub notifications and OpenClaw agents.
+<p align="center">
+  <strong>Durable GitHub notifications → OpenClaw agent work.</strong><br>
+  Fast inbox reading, persistent queues, safe rollout, and policy-driven agent dispatch.
+</p>
 
-It is designed to replace one-off inbox scripts with a durable, auditable pipeline:
+<p align="center">
+  <a href="https://github.com/pilipilisbot/github-agent-bridge/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/pilipilisbot/github-agent-bridge/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="https://github.com/pilipilisbot/github-agent-bridge/actions/workflows/release.yml"><img alt="release" src="https://github.com/pilipilisbot/github-agent-bridge/actions/workflows/release.yml/badge.svg"></a>
+  <a href="https://github.com/pilipilisbot/github-agent-bridge/releases"><img alt="latest release" src="https://img.shields.io/github/v/release/pilipilisbot/github-agent-bridge?sort=semver"></a>
+  <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-blue">
+</p>
 
-```text
-IMAP reader -> SQLite queue -> executor pool -> GitHub 👀 + OpenClaw agent dispatch
-                         └── per-work_key lock: owner/repo#number
+---
+
+## At a glance
+
+`github-agent-bridge` replaces fragile one-off inbox automation with a small, auditable pipeline for GitHub notifications.
+
+```mermaid
+flowchart LR
+    A[GitHub notification email] --> B[IMAP reader]
+    B --> C[(SQLite queue)]
+    C --> D[Executor pool]
+    D --> E[GitHub 👀 reaction]
+    D --> F[OpenClaw agent]
+
+    C -. coalesce .-> C
+    D -. one worker per owner/repo#number .-> D
 ```
 
-## What it solves
+| Capability | What it means |
+| --- | --- |
+| **Fast reader** | IMAP polling never waits for slow agent work. |
+| **Durable queue** | Jobs are persisted before mailbox high-water marks advance. |
+| **Safe concurrency** | Different PRs/issues run in parallel; the same thread is serialized. |
+| **Coalescing** | Duplicate notifications for active threads fold into existing work. |
+| **Policy gates** | Trust, canary scope, actions, routes, and repo roles live in JSON policy. |
+| **Safe rollout** | Replay, shadow, dry-run, canary, then live. |
+| **Automatic releases** | Conventional commits drive tags, changelog, GitHub Releases, wheel/sdist. |
 
-- The IMAP reader is fast and never waits for agent work.
-- Jobs are persisted before mailbox high-water marks advance.
-- Different issues/PRs can run in parallel.
-- The same issue/PR cannot run concurrently (`work_key = owner/repo#number`).
-- Duplicate notifications for an active thread are coalesced.
-- Dispatch timeout/failure marks one job as `blocked` without blocking unrelated work.
-- OpenClaw agent runs get explicit timeouts: 900s for review-only jobs and 3600s for implementation work by default.
-
-
-## Scope boundary
-
-This project is GitHub-only. Generic email triage, calendar/status emails and personal inbox logic should live in a separate generic inbox worker. The bridge must not mutate non-GitHub messages. See `docs/scope.md`.
-
-## Releases
-
-Versions, tags, changelog and GitHub Releases are automated from Conventional Commits on `main`; see `docs/releases.md`.
-
-## Development
-
-Agents should read `AGENTS.md` first. Developer workflow and safe manual replay commands live in `docs/development.md`.
-
-## CLI
-
-Prefer the short `gab` command. The long `github-agent-bridge` entrypoint remains as a backwards-compatible alias for existing installs/systemd units.
+## Installation
 
 ```bash
-gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 init-db
-gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 read-imap-once   --email "$EMAIL" --password "$APP_PASSWORD"
-gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run --mode shadow --workers 4
-# live executor, explicit long-running GitHub work timeout profile
-gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 run --mode live --workers 4 --review-timeout 900 --work-timeout 3600
-gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 status
-gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor
-# safely enqueue a specific GitHub issue/PR comment URL
-gab --db /tmp/github-agent-bridge-dev.sqlite3 --policy ./policy.example.json enqueue-comment-url \
-  "https://github.com/gisce/erp/pull/27675#issuecomment-4419572864"
+python -m pip install git+https://github.com/pilipilisbot/github-agent-bridge.git
 ```
 
-## Policy
+For local development:
 
-By default the bridge is conservative. Provide a JSON policy with trusted repos/orgs and routes. See `docs/policy-reference.md` for the full reference:
+```bash
+git clone https://github.com/pilipilisbot/github-agent-bridge.git
+cd github-agent-bridge
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[test]'
+pytest -q
+```
+
+## Quick start
+
+Prefer the short CLI: **`gab`**. The long `github-agent-bridge` command remains as a backwards-compatible alias.
+
+```bash
+DB=~/.local/state/github-agent-bridge/bridge.sqlite3
+POLICY=~/.config/github-agent-bridge/policy.json
+
+# Initialize storage
+gab --db "$DB" init-db
+
+# Inspect queue health
+gab --db "$DB" status
+gab --db "$DB" monitor --no-systemd
+
+# Run one safe shadow job without external side effects
+gab --db "$DB" --policy "$POLICY" run --mode shadow --once
+```
+
+Manual developer replay from a GitHub comment URL:
+
+```bash
+DB=/tmp/github-agent-bridge-dev.sqlite3
+
+gab --db "$DB" init-db
+gab --db "$DB" --policy ./policy.example.json enqueue-comment-url \
+  'https://github.com/owner/repo/pull/123#issuecomment-456'
+gab --db "$DB" --policy ./policy.example.json run --mode shadow --once
+```
+
+## Policy in one screen
+
+The bridge is conservative by default. `policy.json` decides what is trusted, what is in scope, where work is delivered, and how the agent should behave.
 
 ```json
 {
   "trustedOrgs": ["gisce"],
   "enabledRepos": ["gisce/erp"],
+  "orgRoutes": {
+    "gisce": {
+      "agent": "gisce-developer",
+      "channel": "telegram",
+      "to": "-1003972920100"
+    }
+  },
+  "repoRoles": {
+    "gisce/erp": "owner"
+  },
   "actions": {
     "auto": ["archive_notification", "sync_after_merge"],
     "trustedAuto": ["reply_comment", "open_issue"],
-    "ask": ["reply_comment", "open_issue"]
-  },
-  "orgRoutes": {
-    "gisce": {"agent": "gisce-developer", "channel": "telegram", "to": "-1003972920100"}
+    "ask": []
   }
 }
 ```
 
-## Safe rollout
+Repository roles control **judgment**; work intent controls **allowed actions**. For example, `owner` + `review_only` means “review with owner-level judgment, but do not modify code or PR metadata”.
 
-Use `replay`, `read-imap-once` without `--mark-seen`, and `run --mode shadow` before enabling `run --mode live`. See `docs/shadow-canary.md`.
+Full reference: [`docs/policy-reference.md`](docs/policy-reference.md).
+
+## Safe rollout path
+
+```mermaid
+flowchart LR
+    A[Offline replay] --> B[Shadow IMAP]
+    B --> C[Dry-run executor]
+    C --> D[Canary live repo]
+    D --> E[Wider live scope]
+```
+
+Start with `replay`, `read-imap-once` without `--mark-seen`, and `run --mode shadow`. Move to live only after canary behavior is clean.
+
+See [`docs/shadow-canary.md`](docs/shadow-canary.md).
+
+## Documentation
+
+| If you want to... | Read |
+| --- | --- |
+| Understand the system shape | [`docs/architecture.md`](docs/architecture.md) |
+| Develop or test changes | [`docs/development.md`](docs/development.md) |
+| Operate the bridge | [`docs/operations.md`](docs/operations.md) |
+| Configure trust, actions, routes, roles | [`docs/policy-reference.md`](docs/policy-reference.md) |
+| Plan rollout safely | [`docs/shadow-canary.md`](docs/shadow-canary.md) |
+| Understand releases | [`docs/releases.md`](docs/releases.md) |
+| Understand scope boundaries | [`docs/scope.md`](docs/scope.md) |
+| Diagnose failure modes | [`docs/failure-modes.md`](docs/failure-modes.md) |
+
+Start at [`docs/README.md`](docs/README.md) for the full documentation map.
+
+## Scope boundary
+
+This project is **GitHub-only**. Generic email triage, calendar/status emails, reminders, and personal inbox logic belong in a separate worker. The bridge must not mutate non-GitHub messages.
 
 ## Current status
 
-This is an implementation scaffold with reusable components and tests. It does not yet replace the production legacy worker automatically. Use the systemd units under `systemd/` for shadow/canary deployment.
+The bridge has reusable components, tests, packaged prompt resources, systemd units, and an automated release pipeline. Production deployment still requires an explicit operator rollout using the policy and systemd units in this repository.

@@ -1,48 +1,98 @@
 # Operations
 
-Prefer `gab` for operator commands. The long `github-agent-bridge` command remains supported for backwards compatibility.
+This guide is for running and monitoring the bridge.
 
-Initial migration target from legacy worker:
+> **Operator rule:** prefer `gab`. The long `github-agent-bridge` entrypoint is kept only for backwards compatibility.
 
-- `~/.local/bin/pilipilis_inbox_worker.py`
-- `~/.local/state/pilipilis/github-worklog.jsonl`
-- `~/.local/state/pilipilis/github-active.json`
-- `~/.local/state/pilipilis/inbox_state.json`
+## Runtime layout
 
-Operational SLOs:
+| Item | Typical path |
+| --- | --- |
+| Database | `~/.local/state/github-agent-bridge/bridge.sqlite3` |
+| Policy | `~/.config/github-agent-bridge/policy.json` |
+| Environment | `systemd/env.example` copied to a private env file |
+| Units | `systemd/*.service`, `systemd/*.timer` |
 
-- Oldest pending GitHub job age should stay below 2 minutes.
-- A blocked dispatch must not block unrelated PRs/issues.
-- No UID may be advanced before its notification is durably queued or handled.
-- Review-only jobs should normally finish within 15 minutes (`--review-timeout 900`).
-- Implementation jobs may run for up to 60 minutes (`--work-timeout 3600`) before being marked blocked.
+## Production commands
 
-Monitoring checks:
+Executor pool:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  --policy ~/.config/github-agent-bridge/policy.json \
+  run --mode live --workers 4 --review-timeout 900 --work-timeout 3600
+```
+
+Reader timer job:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  --policy ~/.config/github-agent-bridge/policy.json \
+  read-imap-once \
+  --email "$GITHUB_AGENT_BRIDGE_EMAIL" \
+  --password "$GITHUB_AGENT_BRIDGE_PASSWORD" \
+  --mark-seen
+```
+
+## Health checks
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor --json
 ```
 
-The monitor exits `0` when healthy and `2` when it detects alerts. It checks:
+The monitor exits:
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | healthy |
+| `2` | alert detected |
+
+It checks:
 
 - executor service active;
 - reader timer active;
 - last reader service result;
 - blocked jobs;
-- pending jobs older than 300s;
-- running jobs older than the review/work thresholds.
+- pending jobs older than 300 seconds;
+- running jobs older than review/work thresholds.
 
-Suggested production split:
+## Operational SLOs
+
+| Signal | Target |
+| --- | --- |
+| Oldest pending job | below 2 minutes |
+| Review-only job | normally below 15 minutes |
+| Implementation job | normally below 60 minutes |
+| Blocked dispatch | must not block unrelated PRs/issues |
+| Mailbox cursor | must not advance before durable queue/ignore |
+
+## Common operator tasks
+
+### Inspect queue status
 
 ```bash
-# Executor pool: long-running service
-gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
-  --policy ~/.config/github-agent-bridge/policy.json \
-  run --mode live --workers 4 --review-timeout 900 --work-timeout 3600
-
-# Reader: short periodic job, safe to run via systemd timer
-gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
-  --policy ~/.config/github-agent-bridge/policy.json \
-  read-imap-once --email "$GITHUB_AGENT_BRIDGE_EMAIL" --password "$GITHUB_AGENT_BRIDGE_PASSWORD" --mark-seen
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 status
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 jobs --limit 20
 ```
+
+### Retry a blocked job
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 retry <job-id>
+```
+
+### Unlock stale running jobs
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 unlock-stale --older-than 1800
+```
+
+## Migration context
+
+Initial migration target from the legacy worker:
+
+- `~/.local/bin/pilipilis_inbox_worker.py`
+- `~/.local/state/pilipilis/github-worklog.jsonl`
+- `~/.local/state/pilipilis/github-active.json`
+- `~/.local/state/pilipilis/inbox_state.json`

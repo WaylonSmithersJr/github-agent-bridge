@@ -61,7 +61,7 @@ gab --db "$DB" --policy ./policy.example.json run --mode shadow --once
 | Policy decisions | `src/github_agent_bridge/policy.py`, `tests/test_policy.py` |
 | Queue schema/state | `src/github_agent_bridge/queue.py`, `src/github_agent_bridge/sql/schema.sql`, `tests/test_queue.py` |
 | Dispatch/prompt construction | `src/github_agent_bridge/dispatch.py`, `tests/test_modes_cli.py`, `tests/test_prompt_rules.py` |
-| Prompt rules | `src/github_agent_bridge/prompt_rules/*.md` |
+| Prompt rules | `src/github_agent_bridge/prompt_rules/*.md`, policy `promptOverrides` loader in `src/github_agent_bridge/policy.py` |
 | Repository roles | `src/github_agent_bridge/prompt_rules/roles/*.md` |
 | CLI behavior | `src/github_agent_bridge/cli.py`, CLI tests |
 | Monitoring | `src/github_agent_bridge/monitor.py`, `tests/test_monitor.py` |
@@ -100,7 +100,10 @@ If you add or rename a packaged resource:
 
 1. update the loader code;
 2. update resource tests;
-3. build a wheel and verify the file is included.
+3. update `promptOverrides` documentation if the resource is operator-customizable;
+4. build a wheel and verify the file is included.
+
+Operators can customize selected prompt resources through `policy.json` `promptOverrides`. Keep packaged defaults usable on their own; overrides are deployment configuration, not a replacement for sane defaults.
 
 ## Role and intent semantics
 

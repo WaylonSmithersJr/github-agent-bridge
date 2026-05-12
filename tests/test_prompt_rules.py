@@ -61,3 +61,35 @@ def test_review_only_preserves_repository_role_judgment():
     assert "# Review-only rule" in prompt
     assert "does not downgrade the repository role" in prompt
     assert "owner` + `review_only`" in prompt
+
+
+def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
+    base = tmp_path / "base.md"
+    owner = tmp_path / "owner.md"
+    review_only = tmp_path / "review_only.md"
+    base.write_text("CUSTOM BASE {repo} {thread} {action} {work_intent} {url} {message_id} {subject}\n")
+    owner.write_text("# Custom owner role\nBe ownerish.\n")
+    review_only.write_text("# Custom review-only intent\nNo writes.\n")
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text(
+        """{
+          "repoRoles": {"gisce/erp": "owner"},
+          "promptOverrides": {
+            "base": "base.md",
+            "roles": {"owner": "owner.md"},
+            "intents": {"review_only": "review_only.md"}
+          }
+        }"""
+    )
+    policy = Policy.from_file(policy_file)
+
+    prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job("review_only"), policy)
+
+    assert "CUSTOM BASE gisce/erp 1 reply_comment review_only" in prompt
+    assert "# Custom owner role" in prompt
+    assert "# Custom review-only intent" in prompt
+    assert "# Repository role: owner" not in prompt
+    assert "# Review-only rule" not in prompt
+    assert "# Worktree rule" in prompt
+    assert "# PR metadata rule" in prompt
+    assert "# Human reviewer rule" in prompt

@@ -10,7 +10,8 @@ flowchart TD
     B --> C[actions]
     C --> D[repoRoutes/orgRoutes]
     D --> E[repoRoles/orgRoles]
-    E --> F[OpenClaw dispatch]
+    E --> F[promptOverrides]
+    F --> G[OpenClaw dispatch]
 ```
 
 | Question | Policy area |
@@ -20,6 +21,7 @@ flowchart TD
 | Is this action automatic, trusted-only, approval-only, or denied? | `actions` |
 | Where should accepted work be delivered? | `repoRoutes`, `orgRoutes` |
 | How much authority should the agent use? | `repoRoles`, `orgRoles` |
+| Which prompt text should be customized? | `promptOverrides` |
 
 Default path in the packaged CLI/systemd examples:
 
@@ -90,6 +92,7 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 | `repoRoles` | object | `{}` | Exact per-repo operating role. Takes precedence over `orgRoles`. |
 | `orgRoles` | object | `{}` | Per-owner operating role used when no `repoRoles` entry matches. |
 | `actions` | object | built-in action defaults | Maps classified notification actions to policy decisions. |
+| `promptOverrides` | object | `{}` | Optional Markdown files that replace selected packaged prompt resources. |
 
 Unknown top-level keys are ignored by the current implementation.
 
@@ -278,6 +281,85 @@ Example:
 
 The role prompts live as packaged Markdown resources under `src/github_agent_bridge/prompt_rules/roles/*.md`, so they are readable in source and available from wheels/sdists.
 
+## `promptOverrides`
+
+`promptOverrides` lets operators replace selected packaged prompt Markdown files from `policy.json`. If an override is not configured, the bridge uses the packaged default.
+
+Supported shape:
+
+```json
+{
+  "promptOverrides": {
+    "base": "path/to/base.md",
+    "roles": {
+      "owner": "path/to/owner.md",
+      "maintainer": "path/to/maintainer.md"
+    },
+    "intents": {
+      "review_only": "path/to/review_only.md"
+    }
+  }
+}
+```
+
+Supported fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `base` | string | Replaces the base GitHub work prompt template. |
+| `roles.owner` | string | Replaces the packaged `owner` role prompt. |
+| `roles.maintainer` | string | Replaces the packaged `maintainer` role prompt. |
+| `roles.contributor` | string | Replaces the packaged `contributor` role prompt. |
+| `roles.reviewer` | string | Replaces the packaged `reviewer` role prompt. |
+| `intents.review_only` | string | Replaces the packaged review-only intent prompt. |
+
+Path semantics:
+
+- Relative paths are resolved relative to the directory containing `policy.json`.
+- Absolute paths are used as-is.
+- `~` is expanded.
+
+Validation semantics:
+
+- Missing override keys fall back to packaged defaults.
+- Configured override files must exist.
+- Configured override files must contain non-whitespace text.
+- Unknown role names or intent names are rejected.
+
+Prompt assembly order:
+
+1. base prompt, packaged or `promptOverrides.base`;
+2. repository role prompt, packaged or `promptOverrides.roles[role]`;
+3. work-intent prompt, currently only `review_only`, packaged or `promptOverrides.intents.review_only`;
+4. packaged operational rules such as worktree, PR metadata, and human reviewer handling.
+
+The base prompt is a Python `str.format` template. It may use these placeholders:
+
+| Placeholder | Meaning |
+| --- | --- |
+| `{repo}` | Repository name, for example `gisce/erp`. |
+| `{thread}` | Issue or PR number. |
+| `{action}` | Classified bridge action. |
+| `{work_intent}` | Work intent, for example `work_allowed` or `review_only`. |
+| `{url}` | Short GitHub URL extracted from the notification. |
+| `{message_id}` | Source notification message id. |
+| `{subject}` | Source notification subject. |
+
+Example with defaults for everything except the owner role:
+
+```json
+{
+  "repoRoles": {
+    "gisce/erp": "owner"
+  },
+  "promptOverrides": {
+    "roles": {
+      "owner": "./prompts/owner.md"
+    }
+  }
+}
+```
+
 ## `actions`
 
 The parser classifies each GitHub notification into one action. `actions` maps that action to a policy decision.
@@ -463,7 +545,8 @@ With this policy, trusted source notifications for comment/assignment actions be
 ## Operational notes
 
 - Policy changes affect new enqueue decisions. Existing jobs keep the decision/status already stored in SQLite.
-- Restart the long-running executor after changing routes or run-mode related environment, because it loads policy at process start.
+- Restart the long-running executor after changing routes, prompt override paths, or run-mode related environment, because it loads policy at process start.
 - The periodic IMAP reader loads policy on each invocation.
+- Editing the contents of an existing prompt override file is read when prompts are built; changing which files are referenced requires a restart.
 - Use `gab monitor` after policy changes to verify queue health.
 - Use `gab jobs --limit 20` to inspect recent decisions.

@@ -28,6 +28,11 @@ def load_role_prompt(role: str) -> str:
     return load_prompt_rule(f"roles/{role}.md")
 
 
+def load_prompt_override(path) -> str:
+    """Read a policy-configured prompt override file."""
+    return path.read_text(encoding="utf-8").strip() + "\n"
+
+
 BASE_PROMPT = load_prompt_rule("base.md")
 WORKTREE_RULES = load_prompt_rule("worktree.md")
 PR_METADATA_RULES = load_prompt_rule("pr_metadata.md")
@@ -108,11 +113,16 @@ class OpenClawDispatcher:
         return self.timeout_seconds
 
     def build_prompt(self, job: Job, policy: Policy | None = None) -> str:
-        intent_rules = REVIEW_ONLY_RULES if job.work_intent == "review_only" else ""
         repo = job.repo or "unknown/repo"; thread = job.thread or 0
         role = policy.role_for(job.repo) if policy else DEFAULT_REPO_ROLE
-        role_prompt = load_role_prompt(role)
-        base_prompt = BASE_PROMPT.format(
+        role_override = policy.prompt_overrides.role_path(role) if policy else None
+        intent_override = policy.prompt_overrides.intent_path(job.work_intent) if policy else None
+        base_template = load_prompt_override(policy.prompt_overrides.base) if policy and policy.prompt_overrides.base else BASE_PROMPT
+        role_prompt = load_prompt_override(role_override) if role_override else load_role_prompt(role)
+        intent_rules = ""
+        if job.work_intent == "review_only":
+            intent_rules = load_prompt_override(intent_override) if intent_override else REVIEW_ONLY_RULES
+        base_prompt = base_template.format(
             repo=repo,
             thread=thread,
             action=job.action,

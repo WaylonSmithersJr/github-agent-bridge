@@ -7,6 +7,7 @@ from pathlib import Path
 from .models import GitHubContext, Notification
 
 ALLOWED_REPO_ROLES = {"owner", "maintainer", "contributor", "reviewer"}
+ALLOWED_PROMPT_INTENTS = {"review_only"}
 DEFAULT_REPO_ROLE = "contributor"
 
 
@@ -15,6 +16,19 @@ class Route:
     agent: str | None = None
     channel: str | None = None
     to: str | None = None
+
+
+@dataclass(frozen=True)
+class PromptOverrides:
+    base: Path | None = None
+    roles: dict[str, Path] = field(default_factory=dict)
+    intents: dict[str, Path] = field(default_factory=dict)
+
+    def role_path(self, role: str) -> Path | None:
+        return self.roles.get(role.lower())
+
+    def intent_path(self, intent: str) -> Path | None:
+        return self.intents.get(intent.lower())
 
 
 @dataclass(frozen=True)
@@ -32,19 +46,53 @@ class Policy:
     org_routes: dict[str, Route] = field(default_factory=dict)
     repo_roles: dict[str, str] = field(default_factory=dict)
     org_roles: dict[str, str] = field(default_factory=dict)
+    prompt_overrides: PromptOverrides = field(default_factory=PromptOverrides)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Policy":
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        policy_path = Path(path).expanduser()
+        data = json.loads(policy_path.read_text(encoding="utf-8"))
         source = data.get("source", {}); actions = data.get("actions", {})
+
         def routes(raw: dict) -> dict[str, Route]:
             return {k.lower(): Route(**v) for k, v in (raw or {}).items() if isinstance(v, dict)}
+
         def roles(raw: dict) -> dict[str, str]:
             result = {k.lower(): str(v).lower() for k, v in (raw or {}).items()}
             unknown = sorted(set(result.values()) - ALLOWED_REPO_ROLES)
             if unknown:
                 raise ValueError(f"unknown repo role(s): {unknown}; allowed roles: {sorted(ALLOWED_REPO_ROLES)}")
             return result
+
+        def prompt_path(raw_path: str) -> Path:
+            candidate = Path(raw_path).expanduser()
+            if not candidate.is_absolute():
+                candidate = policy_path.parent / candidate
+            if not candidate.is_file():
+                raise ValueError(f"prompt override file does not exist: {candidate}")
+            if not candidate.read_text(encoding="utf-8").strip():
+                raise ValueError(f"prompt override file is empty: {candidate}")
+            return candidate
+
+        def prompt_overrides(raw: dict) -> PromptOverrides:
+            raw = raw or {}
+            base = prompt_path(raw["base"]) if raw.get("base") else None
+            raw_roles = raw.get("roles", {}) or {}
+            role_names = {str(k).lower() for k in raw_roles}
+            unknown_roles = sorted(role_names - ALLOWED_REPO_ROLES)
+            if unknown_roles:
+                raise ValueError(f"unknown prompt override role(s): {unknown_roles}; allowed roles: {sorted(ALLOWED_REPO_ROLES)}")
+            raw_intents = raw.get("intents", {}) or {}
+            intent_names = {str(k).lower() for k in raw_intents}
+            unknown_intents = sorted(intent_names - ALLOWED_PROMPT_INTENTS)
+            if unknown_intents:
+                raise ValueError(f"unknown prompt override intent(s): {unknown_intents}; allowed intents: {sorted(ALLOWED_PROMPT_INTENTS)}")
+            return PromptOverrides(
+                base=base,
+                roles={str(k).lower(): prompt_path(v) for k, v in raw_roles.items()},
+                intents={str(k).lower(): prompt_path(v) for k, v in raw_intents.items()},
+            )
+
         return cls(
             source_from=source.get("from", cls.source_from),
             required_url_prefix=source.get("requiredUrlPrefix", cls.required_url_prefix),
@@ -57,6 +105,7 @@ class Policy:
             trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue"])),
             repo_routes=routes(data.get("repoRoutes", {})), org_routes=routes(data.get("orgRoutes", {})),
             repo_roles=roles(data.get("repoRoles", {})), org_roles=roles(data.get("orgRoles", {})),
+            prompt_overrides=prompt_overrides(data.get("promptOverrides", {})),
         )
 
     def trusted_source(self, n: Notification, ctx: GitHubContext) -> bool:

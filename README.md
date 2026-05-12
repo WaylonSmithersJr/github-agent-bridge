@@ -47,7 +47,7 @@ gab --db /tmp/github-agent-bridge-dev.sqlite3 --policy ./policy.example.json enq
 
 ## Policy
 
-By default the bridge is conservative. Provide a JSON policy with trusted repos/orgs and routes:
+By default the bridge is conservative. Provide a JSON policy with trusted repos/orgs and routes. See `docs/policy-reference.md` for the full reference:
 
 ```json
 {

@@ -33,6 +33,9 @@ To process in production, only use the configured production DB/policy when expl
 
 ## Policy gates
 
+Full policy schema and semantics are documented in `docs/policy-reference.md`.
+
+
 `enabledRepos` is a hard canary allowlist. When non-empty, every repo outside the set is denied before trust/action checks. This lets the operator move one repo from the legacy worker to this bridge without widening live scope.
 
 Example:

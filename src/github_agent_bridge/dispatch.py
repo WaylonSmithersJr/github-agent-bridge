@@ -23,6 +23,7 @@ def load_prompt_rule(name: str) -> str:
     return resources.files(PROMPT_RULES_PACKAGE).joinpath(name).read_text(encoding="utf-8").strip() + "\n"
 
 
+BASE_PROMPT = load_prompt_rule("base.md")
 WORKTREE_RULES = load_prompt_rule("worktree.md")
 PR_METADATA_RULES = load_prompt_rule("pr_metadata.md")
 HUMAN_REVIEWER_RULES = load_prompt_rule("human_reviewer.md")
@@ -77,7 +78,7 @@ class OpenClawDispatcher:
         openclaw_bin: str = "openclaw",
         node_bin: str | None = None,
         default_channel: str = "telegram",
-        default_to: str = "43532269",
+        default_to: str = "",
         timeout_seconds: int = 3600,
         mode: RunMode = RunMode.LIVE,
         review_timeout_seconds: int = 900,
@@ -104,23 +105,22 @@ class OpenClawDispatcher:
     def build_prompt(self, job: Job) -> str:
         intent_rules = REVIEW_ONLY_RULES if job.work_intent == "review_only" else ""
         repo = job.repo or "unknown/repo"; thread = job.thread or 0
-        return (
-            "[AUTO_GITHUB_WORK]\n"
-            f"repo={repo}\nthread={thread}\naction={job.action}\nwork_intent={job.work_intent}\n"
-            f"url={job.context.short_url}\nmessage_id={job.message_id}\nsubject={job.subject}\n\n"
-            "Trusted GitHub event detected. Load the full issue/PR/comments context before acting. "
-            "Do real work for this thread; do not stop at ack-only. If blocked, report a concrete blocker.\n"
-            f"{intent_rules}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}"
+        base_prompt = BASE_PROMPT.format(
+            repo=repo,
+            thread=thread,
+            action=job.action,
+            work_intent=job.work_intent,
+            url=job.context.short_url,
+            message_id=job.message_id,
+            subject=job.subject,
         )
+        return f"{base_prompt}{intent_rules}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}"
 
     def route_for(self, job: Job, policy: Policy) -> tuple[str | None, str, str]:
         route: Route = policy.route_for(job.repo)
         agent = route.agent
         channel = route.channel or self.default_channel
         to = route.to or self.default_to
-        org = (job.repo or "").split("/", 1)[0]
-        if not route.agent and org == "gisce":
-            agent = "gisce-developer"
         return agent, channel, to
 
     def dispatch(self, job: Job, policy: Policy, reaction_ok: bool | None = None) -> DispatchResult:

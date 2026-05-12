@@ -27,3 +27,9 @@ def test_review_only_dispatch_uses_shorter_timeout():
     assert result.command
     timeout_idx = result.command.index("--timeout")
     assert result.command[timeout_idx + 1] == "900"
+
+
+def test_dispatcher_does_not_hardcode_org_agent_fallback():
+    dispatcher = OpenClawDispatcher(mode=RunMode.SHADOW)
+    job = make_job()
+    assert dispatcher.route_for(job, Policy()) == (None, "telegram", "")

@@ -58,3 +58,7 @@ Example:
 ## Prompt rules
 
 Agent prompt rules live in `src/github_agent_bridge/prompt_rules/*.md`. They are packaged resources loaded with `importlib.resources`, not external runtime files. If you add or rename a rule file, update `dispatch.py` and `tests/test_prompt_rules.py`, then verify the wheel contains the Markdown files.
+
+SQLite schema lives in `src/github_agent_bridge/sql/schema.sql` and is packaged with the project. If schema changes, update queue tests and verify wheel contents.
+
+Avoid adding organization-specific routing fallbacks in code. Put repo/org routing in `policy.example.json` or the deployed policy file.

@@ -12,17 +12,21 @@ def make_job(work_intent="work_allowed"):
 
 def test_prompt_rule_markdown_files_are_packaged_resources():
     package = resources.files("github_agent_bridge.prompt_rules")
-    expected = {"worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md"}
+    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md"}
     found = {p.name for p in package.iterdir() if p.name.endswith(".md")}
     assert expected <= found
     for name in expected:
         text = package.joinpath(name).read_text(encoding="utf-8")
-        assert text.startswith("# ")
+        assert text.strip()
+        if name != "base.md":
+            assert text.startswith("# ")
         assert len(text.strip()) > 40
 
 
 def test_build_prompt_reads_packaged_markdown_rules():
     prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job("review_only"))
+    assert "[AUTO_GITHUB_WORK]" in prompt
+    assert "Trusted GitHub event detected" in prompt
     assert "# Worktree rule" in prompt
     assert "# PR metadata rule" in prompt
     assert "# Human reviewer rule" in prompt

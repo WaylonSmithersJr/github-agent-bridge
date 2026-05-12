@@ -66,6 +66,7 @@ Important invariants:
 - `parser.py`: classify GitHub notification text and extract repo/thread/comment context.
 - `policy.py`: trust, canary scope, actions and routing decisions.
 - `queue.py`: durable jobs, coalescing, locking and retry state.
+- `sql/schema.sql`: packaged SQLite schema loaded by `queue.py`.
 - `dispatch.py`: GitHub reactions and OpenClaw agent command construction/execution.
 - `prompt_rules/*.md`: packaged Markdown rules appended to agent prompts. Keep these readable; they are loaded with `importlib.resources` so they work from wheels/sdists.
 - `reader.py`: IMAP polling and mailbox mutation.

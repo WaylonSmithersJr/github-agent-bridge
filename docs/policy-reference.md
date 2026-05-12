@@ -175,8 +175,9 @@ Route precedence:
 
 1. Exact `repoRoutes[owner/repo]`.
 2. Owner-level `orgRoutes[owner]`.
-3. CLI defaults passed to `gab run` with `--channel` and `--to`.
-4. Dispatch fallback: when no route agent is configured and the repo owner is `gisce`, the dispatcher uses `gisce-developer`.
+3. CLI defaults passed to `gab run` with `--channel` and `--to` (or environment defaults).
+
+There is intentionally no hardcoded organization-to-agent fallback in code; configure routing in `repoRoutes` or `orgRoutes`.
 
 Example:
 
@@ -204,7 +205,7 @@ With this policy:
 | Repo | Route |
 | --- | --- |
 | `canprats/governance` | `canprats-core` to `-1003731933363`. |
-| `gisce/erp` | `gisce-developer` to `-1003972920100`. |
+| `gisce/erp` | `gisce-developer` to `-1003972920100`, because `orgRoutes.gisce` defines that route. |
 | `other/repo` | CLI default channel/target, no configured agent unless dispatch fallback applies. |
 
 Routes do not grant trust. A repo can have a route and still be denied by source/action/scope policy.

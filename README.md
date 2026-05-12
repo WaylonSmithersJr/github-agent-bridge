@@ -24,6 +24,10 @@ IMAP reader -> SQLite queue -> executor pool -> GitHub 👀 + OpenClaw agent dis
 
 This project is GitHub-only. Generic email triage, calendar/status emails and personal inbox logic should live in a separate generic inbox worker. The bridge must not mutate non-GitHub messages. See `docs/scope.md`.
 
+## Releases
+
+Versions, tags, changelog and GitHub Releases are automated from Conventional Commits on `main`; see `docs/releases.md`.
+
 ## Development
 
 Agents should read `AGENTS.md` first. Developer workflow and safe manual replay commands live in `docs/development.md`.

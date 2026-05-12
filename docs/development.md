@@ -62,3 +62,7 @@ Agent prompt rules live in `src/github_agent_bridge/prompt_rules/*.md`. They are
 SQLite schema lives in `src/github_agent_bridge/sql/schema.sql` and is packaged with the project. If schema changes, update queue tests and verify wheel contents.
 
 Avoid adding organization-specific routing fallbacks in code. Put repo/org routing in `policy.example.json` or the deployed policy file.
+
+## Commit messages
+
+Use Conventional Commits so automated releases can infer versions. See `docs/releases.md`.

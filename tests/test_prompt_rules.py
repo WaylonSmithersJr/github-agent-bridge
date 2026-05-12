@@ -53,3 +53,11 @@ def test_build_prompt_includes_policy_role():
 
     default_prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job())
     assert "# Repository role: contributor" in default_prompt
+
+
+def test_review_only_preserves_repository_role_judgment():
+    prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job("review_only"), Policy(repo_roles={"gisce/erp": "owner"}))
+    assert "# Repository role: owner" in prompt
+    assert "# Review-only rule" in prompt
+    assert "does not downgrade the repository role" in prompt
+    assert "owner` + `review_only`" in prompt

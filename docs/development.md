@@ -68,3 +68,5 @@ Avoid adding organization-specific routing fallbacks in code. Put repo/org routi
 Use Conventional Commits so automated releases can infer versions. See `docs/releases.md`.
 
 Repository roles are configured through `repoRoles` and `orgRoles` in policy files. Keep role behavior in Markdown resources, not inline Python strings.
+
+Role and work intent are separate. `owner` + `review_only` should preserve owner-level judgment while forbidding code/metadata changes. Do not auto-convert review-only work to the `reviewer` role.

@@ -216,6 +216,13 @@ Routes do not grant trust. A repo can have a route and still be denied by source
 
 `repoRoles` and `orgRoles` define the operating posture that is injected into the OpenClaw agent prompt. They do not change queue trust decisions in v1; they change how the agent should reason once work is dispatched.
 
+Repository role and work intent are intentionally separate:
+
+- Role controls judgment and authority: owner, maintainer, contributor, or reviewer.
+- Work intent controls allowed actions: for example `review_only` versus `work_allowed`.
+
+Do not treat `review_only` as an automatic role downgrade to `reviewer`. `owner` + `review_only` is valid and means: review with owner-level judgment, explain why yes/why no, and push back when needed, but do not modify code, commit, push, or update PR metadata.
+
 Precedence:
 
 1. `repoRoles[owner/repo]`

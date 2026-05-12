@@ -4,15 +4,29 @@ import os
 import signal
 import subprocess
 from dataclasses import dataclass
+from importlib import resources
 from enum import StrEnum
 
 from .models import GitHubContext, Job
 from .policy import Policy, Route
 
-WORKTREE_RULES = """Worktree rule: when working on an existing PR and local files/tests are needed, first check whether a clean dedicated worktree already exists. If it does not exist, recreate it. For review_only, inspection is allowed but do not modify/commit/push unless explicitly asked.\n"""
-PR_METADATA_RULES = """PR metadata rule: if code/docs/tests change on an existing PR, keep the PR title/body aligned with final scope and test plan.\n"""
-HUMAN_REVIEWER_RULES = """Human reviewer rule: do not request/add individual human reviewers unless explicitly requested or configured.\n"""
-REVIEW_ONLY_RULES = """Review-only rule: do not edit code, commit, push, or update PR metadata. Review the PR and leave concrete findings/test notes/approval or concerns.\n"""
+PROMPT_RULES_PACKAGE = "github_agent_bridge.prompt_rules"
+
+
+def load_prompt_rule(name: str) -> str:
+    """Read a packaged Markdown prompt rule.
+
+    The rules are package resources so they remain available after wheel/sdist
+    installation. Keep them as Markdown files instead of inline strings so
+    agents and humans can review/edit them directly.
+    """
+    return resources.files(PROMPT_RULES_PACKAGE).joinpath(name).read_text(encoding="utf-8").strip() + "\n"
+
+
+WORKTREE_RULES = load_prompt_rule("worktree.md")
+PR_METADATA_RULES = load_prompt_rule("pr_metadata.md")
+HUMAN_REVIEWER_RULES = load_prompt_rule("human_reviewer.md")
+REVIEW_ONLY_RULES = load_prompt_rule("review_only.md")
 
 
 class RunMode(StrEnum):

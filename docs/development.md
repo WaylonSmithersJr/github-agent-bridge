@@ -54,3 +54,7 @@ Example:
 - [ ] New operational commands are documented here or in `docs/operations.md`.
 - [ ] No secrets, local DBs, app passwords or personal mailbox state committed.
 - [ ] Rollback is clear for systemd/config changes.
+
+## Prompt rules
+
+Agent prompt rules live in `src/github_agent_bridge/prompt_rules/*.md`. They are packaged resources loaded with `importlib.resources`, not external runtime files. If you add or rename a rule file, update `dispatch.py` and `tests/test_prompt_rules.py`, then verify the wheel contains the Markdown files.

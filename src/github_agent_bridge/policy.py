@@ -39,9 +39,9 @@ class Policy:
     trusted_repos: set[str] = field(default_factory=set)
     trusted_orgs: set[str] = field(default_factory=set)
     enabled_repos: set[str] = field(default_factory=set)
-    auto_actions: set[str] = field(default_factory=lambda: {"archive_notification", "sync_after_merge"})
+    auto_actions: set[str] = field(default_factory=lambda: {"archive_notification"})
     ask_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue", "docs_update", "content_change"})
-    trusted_auto_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue"})
+    trusted_auto_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue", "sync_after_merge"})
     repo_routes: dict[str, Route] = field(default_factory=dict)
     org_routes: dict[str, Route] = field(default_factory=dict)
     repo_roles: dict[str, str] = field(default_factory=dict)
@@ -100,9 +100,9 @@ class Policy:
             trusted_repos={r.lower() for r in data.get("trustedRepos", [])},
             trusted_orgs={o.lower() for o in data.get("trustedOrgs", [])},
             enabled_repos={r.lower() for r in data.get("enabledRepos", [])},
-            auto_actions=set(actions.get("auto", ["archive_notification", "sync_after_merge"])),
+            auto_actions=set(actions.get("auto", ["archive_notification"])),
             ask_actions=set(actions.get("ask", ["reply_comment", "open_issue", "docs_update", "content_change"])),
-            trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue"])),
+            trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue", "sync_after_merge"])),
             repo_routes=routes(data.get("repoRoutes", {})), org_routes=routes(data.get("orgRoutes", {})),
             repo_roles=roles(data.get("repoRoles", {})), org_roles=roles(data.get("orgRoles", {})),
             prompt_overrides=prompt_overrides(data.get("promptOverrides", {})),

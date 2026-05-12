@@ -27,13 +27,13 @@
   "actions": {
     "auto": [
       "archive_notification",
-      "react_eyes",
-      "sync_after_merge"
+      "react_eyes"
     ],
     "ask": [],
     "trustedAuto": [
       "reply_comment",
       "open_issue",
+      "sync_after_merge",
       "docs_update",
       "content_change"
     ],

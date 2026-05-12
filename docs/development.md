@@ -90,6 +90,7 @@ Prompt resources are packaged with the Python distribution and loaded through `i
 | --- | --- |
 | `prompt_rules/base.md` | Base GitHub work prompt. |
 | `prompt_rules/review_only.md` | Review-only action constraints. |
+| `prompt_rules/sync_after_merge.md` | Post-merge workspace cleanup constraints. |
 | `prompt_rules/worktree.md` | Worktree behavior. |
 | `prompt_rules/pr_metadata.md` | PR metadata behavior. |
 | `prompt_rules/human_reviewer.md` | Reviewer-request behavior. |

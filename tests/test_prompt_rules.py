@@ -1,3 +1,4 @@
+from dataclasses import replace
 from importlib import resources
 
 from github_agent_bridge.dispatch import OpenClawDispatcher, REVIEW_ONLY_RULES, WORKTREE_RULES
@@ -12,7 +13,7 @@ def make_job(work_intent="work_allowed"):
 
 def test_prompt_rule_markdown_files_are_packaged_resources():
     package = resources.files("github_agent_bridge.prompt_rules")
-    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md"}
+    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md"}
     found = {p.name for p in package.iterdir() if p.name.endswith(".md")}
     assert expected <= found
     for name in expected:
@@ -93,3 +94,18 @@ def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
     assert "# Worktree rule" in prompt
     assert "# PR metadata rule" in prompt
     assert "# Human reviewer rule" in prompt
+
+
+def test_sync_after_merge_prompt_includes_cleanup_rule():
+    job = replace(make_job(), action="sync_after_merge")
+    prompt = OpenClawDispatcher(mode="shadow").build_prompt(job, Policy(repo_roles={"gisce/erp": "owner"}))
+
+    assert "# Sync-after-merge rule" in prompt
+    assert "Perform post-merge workspace cleanup" in prompt
+    assert "If a dedicated worktree exists and is clean, remove it." in prompt
+    assert "Do not remove the canonical repository checkout." in prompt
+
+
+def test_non_merge_prompt_does_not_include_cleanup_rule():
+    prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job(), Policy())
+    assert "# Sync-after-merge rule" not in prompt

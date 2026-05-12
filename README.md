@@ -106,8 +106,8 @@ The bridge is conservative by default. `policy.json` decides what is trusted, wh
     "gisce/erp": "owner"
   },
   "actions": {
-    "auto": ["archive_notification", "sync_after_merge"],
-    "trustedAuto": ["reply_comment", "open_issue"],
+    "auto": ["archive_notification"],
+    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"],
     "ask": []
   }
 }

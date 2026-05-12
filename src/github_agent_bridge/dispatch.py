@@ -38,6 +38,7 @@ WORKTREE_RULES = load_prompt_rule("worktree.md")
 PR_METADATA_RULES = load_prompt_rule("pr_metadata.md")
 HUMAN_REVIEWER_RULES = load_prompt_rule("human_reviewer.md")
 REVIEW_ONLY_RULES = load_prompt_rule("review_only.md")
+SYNC_AFTER_MERGE_RULES = load_prompt_rule("sync_after_merge.md")
 
 
 class RunMode(StrEnum):
@@ -122,6 +123,7 @@ class OpenClawDispatcher:
         intent_rules = ""
         if job.work_intent == "review_only":
             intent_rules = load_prompt_override(intent_override) if intent_override else REVIEW_ONLY_RULES
+        action_rules = SYNC_AFTER_MERGE_RULES if job.action == "sync_after_merge" else ""
         base_prompt = base_template.format(
             repo=repo,
             thread=thread,
@@ -131,7 +133,7 @@ class OpenClawDispatcher:
             message_id=job.message_id,
             subject=job.subject,
         )
-        return f"{base_prompt}{role_prompt}{intent_rules}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}"
+        return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}"
 
     def route_for(self, job: Job, policy: Policy) -> tuple[str | None, str, str]:
         route: Route = policy.route_for(job.repo)

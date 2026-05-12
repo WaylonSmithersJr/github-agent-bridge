@@ -101,3 +101,11 @@ def test_policy_from_file_rejects_invalid_prompt_overrides(tmp_path):
         assert "prompt override file is empty" in str(exc)
     else:
         raise AssertionError("expected ValueError for empty prompt override")
+
+
+def test_sync_after_merge_is_trusted_auto_by_default_not_auto():
+    n = Notification(1, "<x@github.com>", "subj", "notifications@github.com", "", auth={"spf": True, "dkim": True, "dmarc": True})
+    ctx = extract_github_context("https://github.com/gisce/erp/pull/1")
+
+    assert Policy(trusted_orgs={"gisce"}).decision(n, ctx, "sync_after_merge") == "auto_trusted"
+    assert Policy().decision(n, ctx, "sync_after_merge") == "ask"

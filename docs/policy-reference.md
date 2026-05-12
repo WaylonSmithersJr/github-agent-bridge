@@ -71,9 +71,9 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
     "pilipilisbot": "maintainer"
   },
   "actions": {
-    "auto": ["archive_notification", "sync_after_merge"],
+    "auto": ["archive_notification"],
     "ask": [],
-    "trustedAuto": ["reply_comment", "open_issue", "docs_update", "content_change"],
+    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge", "docs_update", "content_change"],
     "deny": ["merge_main", "org_permissions_change", "manage_secrets", "delete_remote_repo_or_branch"]
   }
 }
@@ -369,7 +369,7 @@ Supported action names currently produced by the parser:
 | Action | Produced when | Typical meaning |
 | --- | --- | --- |
 | `archive_notification` | Notification is routine and does not mention/assign/request the bot. | Persist as handled without agent work. |
-| `sync_after_merge` | Notification text contains `merged`. | Do post-merge cleanup/sync behavior. |
+| `sync_after_merge` | Notification text contains `merged`. | Dispatch trusted post-merge workspace cleanup to the agent. |
 | `reply_comment` | Bot mentioned, review requested, Copilot review, or PR review notification. | React 👀 and dispatch agent work/reply. |
 | `open_issue` | Bot assigned to an issue/PR. | React 👀 and dispatch agent work for the assigned thread. |
 
@@ -383,7 +383,7 @@ Default:
 
 ```json
 {
-  "auto": ["archive_notification", "sync_after_merge"]
+  "auto": ["archive_notification"]
 }
 ```
 
@@ -415,11 +415,22 @@ Typical values:
 
 ```json
 {
-  "trustedAuto": ["reply_comment", "open_issue"]
+  "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"]
 }
 ```
 
 The example policy may include future action labels such as `docs_update` or `content_change`. Those are harmless until the parser emits them.
+
+### Post-merge workspace cleanup
+
+`sync_after_merge` is classified from GitHub merge notifications and is part of `trustedAuto` by default. It dispatches an agent prompt with the packaged `sync_after_merge` rule.
+
+The bridge does not know local worktree paths. The agent must resolve the dedicated PR worktree using its own repo/workspace conventions. The cleanup rule is conservative:
+
+- remove the dedicated PR worktree only when it exists and is clean;
+- never remove a dirty worktree or the canonical repository checkout;
+- report the path/reason when cleanup is skipped;
+- if a later PR event arrives and a worktree is needed, recreate it from the canonical checkout.
 
 ### `actions.ask`
 
@@ -492,8 +503,8 @@ Use lowercase in policy files for readability.
 {
   "trustedOrgs": ["gisce"],
   "actions": {
-    "auto": ["archive_notification", "sync_after_merge"],
-    "trustedAuto": ["reply_comment", "open_issue"],
+    "auto": ["archive_notification"],
+    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"],
     "ask": []
   }
 }
@@ -519,8 +530,8 @@ Use lowercase in policy files for readability.
     "pilipilisbot": "maintainer"
   },
   "actions": {
-    "auto": ["archive_notification", "sync_after_merge"],
-    "trustedAuto": ["reply_comment", "open_issue"],
+    "auto": ["archive_notification"],
+    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"],
     "ask": []
   }
 }
@@ -534,7 +545,7 @@ Use lowercase in policy files for readability.
   "trustedOrgs": [],
   "actions": {
     "auto": ["archive_notification"],
-    "trustedAuto": ["reply_comment", "open_issue"],
+    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"],
     "ask": ["reply_comment", "open_issue"]
   }
 }

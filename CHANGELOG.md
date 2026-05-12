@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.3.0 (2026-05-12)
+
+### Documentation
+
+- Clarify role and intent interaction
+  ([`517edbb`](https://github.com/pilipilisbot/github-agent-bridge/commit/517edbb14ea6beaa9332c697aaedf90146c19ace))
+
+- Improve documentation design
+  ([`a7464af`](https://github.com/pilipilisbot/github-agent-bridge/commit/a7464aff3a62d5e74cf72bdae8ee6f76702fd124))
+
+### Features
+
+- Support policy prompt overrides
+  ([`a61b9d5`](https://github.com/pilipilisbot/github-agent-bridge/commit/a61b9d55bb6fa76c7fce3fa51793d72f355d272e))
+
+
 ## v0.2.0 (2026-05-12)
 
 ### Chores

@@ -8,7 +8,7 @@ from importlib import resources
 from enum import StrEnum
 
 from .models import GitHubContext, Job
-from .policy import Policy, Route
+from .policy import DEFAULT_REPO_ROLE, Policy, Route
 
 PROMPT_RULES_PACKAGE = "github_agent_bridge.prompt_rules"
 
@@ -21,6 +21,11 @@ def load_prompt_rule(name: str) -> str:
     agents and humans can review/edit them directly.
     """
     return resources.files(PROMPT_RULES_PACKAGE).joinpath(name).read_text(encoding="utf-8").strip() + "\n"
+
+
+def load_role_prompt(role: str) -> str:
+    """Read a packaged Markdown repository-role prompt."""
+    return load_prompt_rule(f"roles/{role}.md")
 
 
 BASE_PROMPT = load_prompt_rule("base.md")
@@ -102,9 +107,11 @@ class OpenClawDispatcher:
             return self.work_timeout_seconds
         return self.timeout_seconds
 
-    def build_prompt(self, job: Job) -> str:
+    def build_prompt(self, job: Job, policy: Policy | None = None) -> str:
         intent_rules = REVIEW_ONLY_RULES if job.work_intent == "review_only" else ""
         repo = job.repo or "unknown/repo"; thread = job.thread or 0
+        role = policy.role_for(job.repo) if policy else DEFAULT_REPO_ROLE
+        role_prompt = load_role_prompt(role)
         base_prompt = BASE_PROMPT.format(
             repo=repo,
             thread=thread,
@@ -114,7 +121,7 @@ class OpenClawDispatcher:
             message_id=job.message_id,
             subject=job.subject,
         )
-        return f"{base_prompt}{intent_rules}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}"
+        return f"{base_prompt}{role_prompt}{intent_rules}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}"
 
     def route_for(self, job: Job, policy: Policy) -> tuple[str | None, str, str]:
         route: Route = policy.route_for(job.repo)
@@ -129,7 +136,7 @@ class OpenClawDispatcher:
         if agent:
             cmd += ["--agent", agent]
         agent_timeout = self.timeout_for(job)
-        cmd += ["--channel", channel, "--to", to, "--deliver", "--timeout", str(agent_timeout), "--message", self.build_prompt(job)]
+        cmd += ["--channel", channel, "--to", to, "--deliver", "--timeout", str(agent_timeout), "--message", self.build_prompt(job, policy)]
         env = os.environ.copy()
         if self.node_bin:
             env["PATH"] = os.path.dirname(self.node_bin) + os.pathsep + env.get("PATH", "")

@@ -1,13 +1,21 @@
 {
   "source": {
     "from": "notifications@github.com",
-    "requiredAuth": ["spf=pass", "dkim=pass", "dmarc=pass"],
+    "requiredAuth": [
+      "spf=pass",
+      "dkim=pass",
+      "dmarc=pass"
+    ],
     "requiredUrlPrefix": "https://github.com/",
     "messageIdDomain": "github.com"
   },
   "trustedRepos": [],
-  "trustedOrgs": ["gisce"],
-  "enabledRepos": ["gisce/erp"],
+  "trustedOrgs": [
+    "gisce"
+  ],
+  "enabledRepos": [
+    "gisce/erp"
+  ],
   "repoRoutes": {},
   "orgRoutes": {
     "gisce": {
@@ -17,9 +25,29 @@
     }
   },
   "actions": {
-    "auto": ["archive_notification", "react_eyes", "sync_after_merge"],
+    "auto": [
+      "archive_notification",
+      "react_eyes",
+      "sync_after_merge"
+    ],
     "ask": [],
-    "trustedAuto": ["reply_comment", "open_issue", "docs_update", "content_change"],
-    "deny": ["merge_main", "org_permissions_change", "manage_secrets", "delete_remote_repo_or_branch"]
+    "trustedAuto": [
+      "reply_comment",
+      "open_issue",
+      "docs_update",
+      "content_change"
+    ],
+    "deny": [
+      "merge_main",
+      "org_permissions_change",
+      "manage_secrets",
+      "delete_remote_repo_or_branch"
+    ]
+  },
+  "repoRoles": {
+    "gisce/erp": "owner"
+  },
+  "orgRoles": {
+    "pilipilisbot": "maintainer"
   }
 }

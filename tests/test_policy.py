@@ -19,3 +19,28 @@ def test_enabled_repos_restricts_canary_scope():
     assert policy.decision(n, erp, "reply_comment") == "auto_trusted"
     assert policy.decision(n, other, "reply_comment") == "deny"
     assert policy.decision(n, other, "sync_after_merge") == "deny"
+
+
+def test_repo_roles_precedence_and_default():
+    policy = Policy(repo_roles={"gisce/erp": "owner"}, org_roles={"gisce": "maintainer"})
+
+    assert policy.role_for("gisce/erp") == "owner"
+    assert policy.role_for("gisce/other") == "maintainer"
+    assert policy.role_for("other/repo") == "contributor"
+
+
+def test_policy_from_file_loads_roles_and_rejects_unknown(tmp_path):
+    valid = tmp_path / "policy.json"
+    valid.write_text('{"repoRoles": {"GISCE/ERP": "Owner"}, "orgRoles": {"pilipilisbot": "maintainer"}}')
+    policy = Policy.from_file(valid)
+    assert policy.role_for("gisce/erp") == "owner"
+    assert policy.role_for("pilipilisbot/github-agent-bridge") == "maintainer"
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text('{"repoRoles": {"gisce/erp": "boss"}}')
+    try:
+        Policy.from_file(invalid)
+    except ValueError as exc:
+        assert "unknown repo role" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for unknown repo role")

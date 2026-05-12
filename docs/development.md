@@ -57,7 +57,7 @@ Example:
 
 ## Prompt rules
 
-Agent prompt rules live in `src/github_agent_bridge/prompt_rules/*.md`. They are packaged resources loaded with `importlib.resources`, not external runtime files. If you add or rename a rule file, update `dispatch.py` and `tests/test_prompt_rules.py`, then verify the wheel contains the Markdown files.
+Agent prompt rules live in `src/github_agent_bridge/prompt_rules/*.md`. Repository-role prompts live in `src/github_agent_bridge/prompt_rules/roles/*.md`. They are packaged resources loaded with `importlib.resources`, not external runtime files. If you add or rename a rule file, update `dispatch.py` and `tests/test_prompt_rules.py`, then verify the wheel contains the Markdown files.
 
 SQLite schema lives in `src/github_agent_bridge/sql/schema.sql` and is packaged with the project. If schema changes, update queue tests and verify wheel contents.
 
@@ -66,3 +66,5 @@ Avoid adding organization-specific routing fallbacks in code. Put repo/org routi
 ## Commit messages
 
 Use Conventional Commits so automated releases can infer versions. See `docs/releases.md`.
+
+Repository roles are configured through `repoRoles` and `orgRoles` in policy files. Keep role behavior in Markdown resources, not inline Python strings.

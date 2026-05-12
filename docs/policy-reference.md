@@ -62,6 +62,8 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 | `enabledRepos` | array of strings | `[]` | Optional hard allowlist/canary scope. If non-empty, all repos not listed here are denied before other checks. Case-insensitive. |
 | `repoRoutes` | object | `{}` | Exact per-repo delivery routes. Takes precedence over `orgRoutes`. |
 | `orgRoutes` | object | `{}` | Per-owner delivery routes used when no `repoRoutes` entry matches. |
+| `repoRoles` | object | `{}` | Exact per-repo operating role. Takes precedence over `orgRoles`. |
+| `orgRoles` | object | `{}` | Per-owner operating role used when no `repoRoles` entry matches. |
 | `actions` | object | built-in action defaults | Maps classified notification actions to policy decisions. |
 
 Unknown top-level keys are ignored by the current implementation.
@@ -209,6 +211,40 @@ With this policy:
 | `other/repo` | CLI default channel/target, no configured agent unless dispatch fallback applies. |
 
 Routes do not grant trust. A repo can have a route and still be denied by source/action/scope policy.
+
+## `repoRoles` and `orgRoles`
+
+`repoRoles` and `orgRoles` define the operating posture that is injected into the OpenClaw agent prompt. They do not change queue trust decisions in v1; they change how the agent should reason once work is dispatched.
+
+Precedence:
+
+1. `repoRoles[owner/repo]`
+2. `orgRoles[owner]`
+3. default role: `contributor`
+
+Allowed roles:
+
+| Role | Meaning |
+| --- | --- |
+| `owner` | Acts as a repo owner. Has independent judgment, may push back, and must justify why yes/why no when requests are risky or misaligned. |
+| `maintainer` | Acts as a maintainer. Applies strong technical judgment and keeps the repo coherent, but with less product/ownership authority than `owner`. |
+| `contributor` | Acts as a careful contributor. Implements the request with good practices and flags clear risks without broad ownership decisions. |
+| `reviewer` | Acts as a reviewer. Reviews critically and constructively; should not implement unless explicitly asked. |
+
+Example:
+
+```json
+{
+  "repoRoles": {
+    "gisce/erp": "owner"
+  },
+  "orgRoles": {
+    "pilipilisbot": "maintainer"
+  }
+}
+```
+
+The role prompts live as packaged Markdown resources under `src/github_agent_bridge/prompt_rules/roles/*.md`, so they are readable in source and available from wheels/sdists.
 
 ## `actions`
 

@@ -69,6 +69,7 @@ Important invariants:
 - `sql/schema.sql`: packaged SQLite schema loaded by `queue.py`.
 - `dispatch.py`: GitHub reactions and OpenClaw agent command construction/execution.
 - `prompt_rules/*.md`: packaged Markdown rules appended to agent prompts. Keep these readable; they are loaded with `importlib.resources` so they work from wheels/sdists.
+- `prompt_rules/roles/*.md`: packaged repository-role postures selected by `policy.json` `repoRoles`/`orgRoles`.
 - `reader.py`: IMAP polling and mailbox mutation.
 - `monitor.py`: operational health checks.
 - `cli.py`: operational entrypoints and developer tooling.

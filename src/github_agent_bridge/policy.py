@@ -6,6 +6,9 @@ from pathlib import Path
 
 from .models import GitHubContext, Notification
 
+ALLOWED_REPO_ROLES = {"owner", "maintainer", "contributor", "reviewer"}
+DEFAULT_REPO_ROLE = "contributor"
+
 
 @dataclass(frozen=True)
 class Route:
@@ -27,6 +30,8 @@ class Policy:
     trusted_auto_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue"})
     repo_routes: dict[str, Route] = field(default_factory=dict)
     org_routes: dict[str, Route] = field(default_factory=dict)
+    repo_roles: dict[str, str] = field(default_factory=dict)
+    org_roles: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Policy":
@@ -34,6 +39,12 @@ class Policy:
         source = data.get("source", {}); actions = data.get("actions", {})
         def routes(raw: dict) -> dict[str, Route]:
             return {k.lower(): Route(**v) for k, v in (raw or {}).items() if isinstance(v, dict)}
+        def roles(raw: dict) -> dict[str, str]:
+            result = {k.lower(): str(v).lower() for k, v in (raw or {}).items()}
+            unknown = sorted(set(result.values()) - ALLOWED_REPO_ROLES)
+            if unknown:
+                raise ValueError(f"unknown repo role(s): {unknown}; allowed roles: {sorted(ALLOWED_REPO_ROLES)}")
+            return result
         return cls(
             source_from=source.get("from", cls.source_from),
             required_url_prefix=source.get("requiredUrlPrefix", cls.required_url_prefix),
@@ -45,6 +56,7 @@ class Policy:
             ask_actions=set(actions.get("ask", ["reply_comment", "open_issue", "docs_update", "content_change"])),
             trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue"])),
             repo_routes=routes(data.get("repoRoutes", {})), org_routes=routes(data.get("orgRoutes", {})),
+            repo_roles=roles(data.get("repoRoles", {})), org_roles=roles(data.get("orgRoles", {})),
         )
 
     def trusted_source(self, n: Notification, ctx: GitHubContext) -> bool:
@@ -73,3 +85,7 @@ class Policy:
     def route_for(self, repo: str | None) -> Route:
         repo = (repo or "").lower(); org = repo.split("/", 1)[0] if "/" in repo else ""
         return self.repo_routes.get(repo) or self.org_routes.get(org) or Route()
+
+    def role_for(self, repo: str | None) -> str:
+        repo = (repo or "").lower(); org = repo.split("/", 1)[0] if "/" in repo else ""
+        return self.repo_roles.get(repo) or self.org_roles.get(org) or DEFAULT_REPO_ROLE

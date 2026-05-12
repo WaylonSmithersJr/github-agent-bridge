@@ -33,3 +33,12 @@ def test_dispatcher_does_not_hardcode_org_agent_fallback():
     dispatcher = OpenClawDispatcher(mode=RunMode.SHADOW)
     job = make_job()
     assert dispatcher.route_for(job, Policy()) == (None, "telegram", "")
+
+
+def test_dispatch_passes_policy_role_into_prompt():
+    result = OpenClawDispatcher(openclaw_bin="definitely-not-present", mode=RunMode.SHADOW).dispatch(
+        make_job(), Policy(repo_roles={"gisce/erp": "owner"}), reaction_ok=True
+    )
+    assert result.command
+    message = result.command[result.command.index("--message") + 1]
+    assert "# Repository role: owner" in message

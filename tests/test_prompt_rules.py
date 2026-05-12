@@ -33,3 +33,23 @@ def test_build_prompt_reads_packaged_markdown_rules():
     assert "# Review-only rule" in prompt
     assert WORKTREE_RULES in prompt
     assert REVIEW_ONLY_RULES in prompt
+
+
+def test_role_prompt_markdown_files_are_packaged_resources():
+    package = resources.files("github_agent_bridge.prompt_rules").joinpath("roles")
+    expected = {"owner.md", "maintainer.md", "contributor.md", "reviewer.md"}
+    found = {p.name for p in package.iterdir() if p.name.endswith(".md")}
+    assert expected <= found
+    for name in expected:
+        text = package.joinpath(name).read_text(encoding="utf-8")
+        assert text.startswith("# Repository role:")
+        assert len(text.strip()) > 120
+
+
+def test_build_prompt_includes_policy_role():
+    prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job(), Policy(repo_roles={"gisce/erp": "owner"}))
+    assert "# Repository role: owner" in prompt
+    assert "not as an obedient executor" in prompt
+
+    default_prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job())
+    assert "# Repository role: contributor" in default_prompt

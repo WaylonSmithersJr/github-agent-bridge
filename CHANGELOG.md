@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.4.0 (2026-05-12)
+
+### Features
+
+- Dispatch post-merge workspace cleanup
+  ([`f630f25`](https://github.com/pilipilisbot/github-agent-bridge/commit/f630f250b122ed7ba168efbe4f19610acec49b9f))
+
+
 ## v0.3.0 (2026-05-12)
 
 ### Documentation

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.3 (2026-05-13)
+
+### Bug Fixes
+
+- Upgrade assigned PR comments to work allowed
+  ([`d64580a`](https://github.com/pilipilisbot/github-agent-bridge/commit/d64580aeea38a768612ee5cb9da3e639978fdca4))
+
+
 ## v0.5.2 (2026-05-13)
 
 ### Bug Fixes

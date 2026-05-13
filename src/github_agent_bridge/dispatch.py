@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -70,6 +71,28 @@ class GitHubClient:
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run([self.gh_bin, *args], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    def current_login(self) -> str | None:
+        result = self._run(["api", "user", "--jq", ".login"])
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+
+    def is_assigned_to_current_user(self, ctx: GitHubContext) -> bool:
+        repo, issue = ctx.repo, ctx.issue_number
+        if not repo or not issue:
+            return False
+        login = self.current_login()
+        if not login:
+            return False
+        result = self._run(["api", f"repos/{repo}/issues/{issue}"])
+        if result.returncode != 0:
+            return False
+        try:
+            data = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return False
+        return login in {a.get("login") for a in data.get("assignees", []) if isinstance(a, dict)}
 
     def react_eyes(self, ctx: GitHubContext) -> bool:
         if self.mode != RunMode.LIVE:

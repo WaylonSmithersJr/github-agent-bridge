@@ -32,6 +32,8 @@ class ExecutorPool:
         if not job:
             return False
         try:
+            if job.action == "reply_comment" and job.work_intent == "review_only" and self.github.is_assigned_to_current_user(job.context):
+                job = self.queue.update_work_intent(job.id, "work_allowed", "PR/issue assigned to authenticated bot; upgraded review-only comment to work_allowed") or job
             reaction_ok = self.github.react_eyes(job.context)
             result = self.dispatcher.dispatch(job, self.policy, reaction_ok=reaction_ok)
             if result.ok:

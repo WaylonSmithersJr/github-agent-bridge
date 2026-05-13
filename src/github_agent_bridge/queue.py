@@ -94,6 +94,16 @@ class JobQueue:
             row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
             self._log(con, job_id, row["work_key"] if row else None, status, summary, detail)
 
+    def update_work_intent(self, job_id: int, work_intent: str, summary: str) -> Job | None:
+        now = utc_now()
+        with self.connect() as con:
+            row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                return None
+            con.execute("UPDATE jobs SET work_intent=?, updated_at=? WHERE id=?", (work_intent, now, job_id))
+            self._log(con, job_id, row["work_key"], "intent_update", summary, None)
+        return self.get(job_id)
+
 
     def list_jobs(self, status: str | None = None, limit: int = 20) -> list[Job]:
         sql = "SELECT * FROM jobs"

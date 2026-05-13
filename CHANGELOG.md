@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.6 (2026-05-13)
+
+### Bug Fixes
+
+- Require new value before github comments
+  ([`fa3010e`](https://github.com/pilipilisbot/github-agent-bridge/commit/fa3010eb778f861d6d8573f8f5a1e679aa582a08))
+
+
 ## v0.5.5 (2026-05-13)
 
 ### Bug Fixes

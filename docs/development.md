@@ -146,3 +146,5 @@ PR review follow-ups must stay read-only by default. A comment on a PR that ment
 ### Comment value / no-op reaction rule
 
 For PR/issue comments that produce `reply_comment`, the bridge checks the actual GitHub comment before dispatch. If the comment is not addressed to the authenticated bot and the bot is not assigned, the bridge reacts with 👀 plus 👍 and skips agent dispatch. “Addressed to the bot” currently means the bot is the first mentioned user; later mentions can be merely referential. This avoids low-value “I checked / no extra input” comments when the conversation is clearly directed at someone else.
+
+Copilot reviews with no actionable code comments (for example “generated no new comments” or “wasn't able to review any files”) are treated as no-op: the bridge reacts 👀 + 👍 and skips agent dispatch, even if the bot is assigned.

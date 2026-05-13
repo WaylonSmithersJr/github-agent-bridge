@@ -157,3 +157,5 @@ This project is **GitHub-only**. Generic email triage, calendar/status emails, r
 The bridge has reusable components, tests, packaged prompt resources, systemd units, and an automated release pipeline. Production deployment still requires an explicit operator rollout using the policy and systemd units in this repository.
 
 For PR/issue comments not addressed to the bot and where the bot is not assigned, the bridge reacts 👀 + 👍 and skips dispatch to avoid low-value extra comments.
+
+Copilot reviews with no actionable code comments (for example “generated no new comments” or “wasn't able to review any files”) are treated as no-op: the bridge reacts 👀 + 👍 and skips agent dispatch, even if the bot is assigned.

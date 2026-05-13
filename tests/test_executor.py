@@ -6,9 +6,10 @@ from github_agent_bridge.queue import JobQueue
 
 
 class FakeGitHub:
-    def __init__(self, assigned: bool, mentioned: bool = True):
+    def __init__(self, assigned: bool, mentioned: bool = True, non_actionable_copilot_review: bool = False):
         self.assigned = assigned
         self.mentioned = mentioned
+        self.non_actionable_copilot_review = non_actionable_copilot_review
         self.eyes = 0
         self.acks = 0
 
@@ -17,6 +18,9 @@ class FakeGitHub:
 
     def issue_comment_addresses_current_user(self, ctx):
         return self.mentioned
+
+    def is_non_actionable_copilot_review(self, ctx):
+        return self.non_actionable_copilot_review
 
     def react_eyes(self, ctx):
         self.eyes += 1
@@ -34,6 +38,22 @@ class RecordingDispatcher:
     def dispatch(self, job, policy, reaction_ok=None):
         self.jobs.append(job)
         return DispatchResult(True, 0, "ok", "", False, reaction_ok, ["openclaw"])
+
+
+def enqueue_pr_review(queue: JobQueue):
+    notification = Notification(
+        uid=2,
+        message_id="<gisce/erp/pull/27737/review/4282224025@github.com>",
+        subject="Re: [gisce/erp] Endurecer ir.values sin nuevos pickles (PR #27737)",
+        from_addr="notifications@github.com",
+        body="Copilot wasn't able to review any files in this pull request. https://github.com/gisce/erp/pull/27737#pullrequestreview-4282224025",
+    )
+    job, state = queue.enqueue(notification, Policy(trusted_orgs={"gisce"}))
+    assert state == "enqueued"
+    assert job is not None
+    assert job.action == "reply_comment"
+    assert job.context.review_id == 4282224025
+    return job
 
 
 def enqueue_pr_comment(queue: JobQueue):
@@ -85,6 +105,23 @@ def test_unassigned_unmentioned_pr_comment_reacts_without_dispatch(tmp_path):
     job = enqueue_pr_comment(queue)
     dispatcher = RecordingDispatcher()
     github = FakeGitHub(assigned=False, mentioned=False)
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert dispatcher.jobs == []
+    assert github.eyes == 1
+    assert github.acks == 1
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
+
+
+def test_non_actionable_copilot_review_reacts_without_dispatch_even_when_assigned(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_review(queue)
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=True, non_actionable_copilot_review=True)
 
     pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
     assert pool.work_one("worker-test") is True

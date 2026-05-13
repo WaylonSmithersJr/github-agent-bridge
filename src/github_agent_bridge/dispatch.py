@@ -79,6 +79,33 @@ class GitHubClient:
             return None
         return result.stdout.strip() or None
 
+    def pull_request_review(self, ctx: GitHubContext) -> dict | None:
+        if not ctx.repo or not ctx.review_id:
+            return None
+        result = self._run(["api", f"repos/{ctx.repo}/pulls/{ctx.issue_number}/reviews/{ctx.review_id}"])
+        if result.returncode != 0:
+            return None
+        try:
+            return json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return None
+
+    def is_non_actionable_copilot_review(self, ctx: GitHubContext) -> bool:
+        review = self.pull_request_review(ctx)
+        if not review:
+            return False
+        user = (review.get("user") or {}).get("login", "").lower()
+        body = (review.get("body") or "").lower()
+        if "copilot" not in user:
+            return False
+        non_actionable_markers = (
+            "generated no new comments",
+            "wasn't able to review any files",
+            "was not able to review any files",
+            "no comments",
+        )
+        return any(marker in body for marker in non_actionable_markers)
+
     def issue_comment_body(self, ctx: GitHubContext) -> str | None:
         if not ctx.repo or not ctx.comment_id:
             return None

@@ -33,6 +33,13 @@ class ExecutorPool:
             return False
         try:
             assigned_to_bot = self.github.is_assigned_to_current_user(job.context)
+            if job.action == "reply_comment" and job.context.review_id and self.github.is_non_actionable_copilot_review(job.context):
+                reaction_ok = self.github.react_eyes(job.context)
+                ack_ok = self.github.react_ack_no_comment(job.context)
+                summary = "non-actionable Copilot review; skipped dispatch"
+                detail = f"eyes={reaction_ok} ack={ack_ok}"
+                self.queue.finish(job.id, "done", summary, detail)
+                return True
             if job.action == "reply_comment" and job.context.comment_id and not assigned_to_bot and not self.github.issue_comment_addresses_current_user(job.context):
                 reaction_ok = self.github.react_eyes(job.context)
                 ack_ok = self.github.react_ack_no_comment(job.context)

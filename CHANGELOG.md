@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-05-13)
+
+### Features
+
+- Submit formal reviews for review requests
+  ([`5c98b3c`](https://github.com/pilipilisbot/github-agent-bridge/commit/5c98b3c9ae4e58bb82c786c1ef2042169103ef85))
+
+
 ## v0.4.0 (2026-05-12)
 
 ### Features

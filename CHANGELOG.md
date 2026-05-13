@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.5 (2026-05-13)
+
+### Bug Fixes
+
+- Skip non-actionable copilot reviews
+  ([`214fb40`](https://github.com/pilipilisbot/github-agent-bridge/commit/214fb40c582a6352fcb04e77aa4034138c2c2e9d))
+
+
 ## v0.5.4 (2026-05-13)
 
 ### Bug Fixes

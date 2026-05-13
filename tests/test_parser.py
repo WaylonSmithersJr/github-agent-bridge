@@ -29,3 +29,19 @@ def test_review_request_uses_formal_review_flow():
 
     assert classify_github_action(subject, body) == "submit_review"
     assert classify_work_intent(subject, body) == "review_only"
+
+
+def test_pr_review_followup_is_read_only_without_explicit_implementation():
+    subject = "Re: [gisce/erp] Permitir caller en los dominios (PR #27315)"
+    body = "@pilipilisbot però la transacció en què s'executa que entra per eval_domain és amb una transacció readonly"
+
+    assert classify_github_action(subject, body) == "reply_comment"
+    assert classify_work_intent(subject, body) == "review_only"
+
+
+def test_pr_followup_can_still_request_explicit_implementation():
+    subject = "Re: [gisce/erp] Permitir caller en los dominios (PR #27315)"
+    body = "@pilipilisbot aplica el canvi i fes push"
+
+    assert classify_github_action(subject, body) == "reply_comment"
+    assert classify_work_intent(subject, body) == "work_allowed"

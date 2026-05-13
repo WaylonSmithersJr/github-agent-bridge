@@ -113,6 +113,8 @@ The bridge is conservative by default. `policy.json` decides what is trusted, wh
 }
 ```
 
+For PR review/discussion follow-ups, the bridge defaults to `review_only` unless the human explicitly asks to implement/apply/fix/push.
+
 Repository roles control **judgment**; work intent controls **allowed actions**. For example, `owner` + `review_only` means “review with owner-level judgment, but do not modify code or PR metadata”.
 
 Full reference: [`docs/policy-reference.md`](docs/policy-reference.md).

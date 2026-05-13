@@ -45,12 +45,23 @@ def github_event_flags(subject: str, body: str) -> dict[str, bool]:
     return {"bot_mentioned": _contains_any(text, BOT_MENTION_PATTERNS), "assigned": _contains_any(text, ASSIGNMENT_PATTERNS), "review_requested": _contains_any(text, REVIEW_REQUEST_PATTERNS), "copilot_review": _contains_any(text, COPILOT_REVIEW_PATTERNS)}
 
 
+def _looks_like_pr_thread(subject: str, body: str) -> bool:
+    text = f"{subject}\n{body}".lower()
+    return bool(re.search(r"\bpr #\d+\b|\bpull request #\d+\b", text) or re.search(r"github\.com/[^/]+/[^/]+/pull/\d+", text))
+
+
 def classify_work_intent(subject: str, body: str) -> str:
     text = f"{subject}\n{body}".lower()
     flags = github_event_flags(subject, body)
     asks_review = flags["review_requested"] or _contains_any(text, REVIEW_ONLY_PATTERNS)
     asks_implementation = _contains_any(text, IMPLEMENTATION_PATTERNS)
-    return "review_only" if asks_review and not asks_implementation else "work_allowed"
+    if asks_review and not asks_implementation:
+        return "review_only"
+    # PR threads are review/discussion by default. Do not mutate a contributor's
+    # branch from PR comments unless the human explicitly asks for implementation.
+    if _looks_like_pr_thread(subject, body) and not asks_implementation:
+        return "review_only"
+    return "work_allowed"
 
 
 def classify_github_action(subject: str, body: str) -> str:

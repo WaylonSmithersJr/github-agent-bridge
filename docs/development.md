@@ -138,3 +138,7 @@ fix: avoid duplicate jobs for coalesced notifications
 feat: add repo-level retry policy
 docs: clarify canary rollout
 ```
+
+## PR review read-only invariant
+
+PR review follow-ups must stay read-only by default. A comment on a PR that mentions the bot but does not explicitly ask to implement/apply/fix/push should be classified as `review_only`, even when the repository role is `maintainer` or `owner`. Maintainer/owner controls judgment; `review_only` forbids editing, committing, pushing, merging, or updating the PR branch.

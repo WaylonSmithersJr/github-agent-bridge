@@ -12,6 +12,7 @@ Act through GitHub's Pull Request Review flow, not as a normal issue comment:
   - request changes when something is incorrect, unsafe, incoherent, or must be reworked before merge.
 - Submit that verdict with `gh pr review` or the GitHub API. Do not leave only a normal PR/issue comment.
 - If useful, add inline review comments on the changed lines. Use GitHub review comments/API for inline findings, not separate generic comments.
+- Do not implement the review yourself. If you have a concrete fix, provide it as an inline suggestion or snippet in the review.
 - The review body must summarize the reasoning and mention what you checked. Avoid shallow “syntax-only” reviews unless the PR itself is truly syntax-only.
 
 Useful commands:

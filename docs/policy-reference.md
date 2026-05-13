@@ -249,6 +249,8 @@ Repository role and work intent are intentionally separate:
 - Role controls judgment and authority: owner, maintainer, contributor, or reviewer.
 - Work intent controls allowed actions: for example `review_only` versus `work_allowed`.
 
+For PR review/discussion follow-ups, the bridge classifies the work intent as `review_only` by default unless the human explicitly asks to implement/apply/fix/push. This keeps maintainer/owner judgment while preventing commits to a contributor PR branch from review discussion.
+
 Do not treat `review_only` as an automatic role downgrade to `reviewer`. `owner` + `review_only` is valid and means: review with owner-level judgment, explain why yes/why no, and push back when needed, but do not modify code, commit, push, or update PR metadata.
 
 Precedence:

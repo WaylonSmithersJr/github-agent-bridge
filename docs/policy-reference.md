@@ -566,3 +566,7 @@ With this policy, trusted source notifications for comment/assignment actions be
 - Editing the contents of an existing prompt override file is read when prompts are built; changing which files are referenced requires a restart.
 - Use `gab monitor` after policy changes to verify queue health.
 - Use `gab jobs --limit 20` to inspect recent decisions.
+
+### Comment value / no-op reaction rule
+
+For PR/issue comments that produce `reply_comment`, the bridge checks the actual GitHub comment before dispatch. If the comment is not addressed to the authenticated bot and the bot is not assigned, the bridge reacts with 👀 plus 👍 and skips agent dispatch. “Addressed to the bot” currently means the bot is the first mentioned user; later mentions can be merely referential. This avoids low-value “I checked / no extra input” comments when the conversation is clearly directed at someone else.

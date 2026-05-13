@@ -6,13 +6,24 @@ from github_agent_bridge.queue import JobQueue
 
 
 class FakeGitHub:
-    def __init__(self, assigned: bool):
+    def __init__(self, assigned: bool, mentioned: bool = True):
         self.assigned = assigned
+        self.mentioned = mentioned
+        self.eyes = 0
+        self.acks = 0
 
     def is_assigned_to_current_user(self, ctx):
         return self.assigned
 
+    def issue_comment_addresses_current_user(self, ctx):
+        return self.mentioned
+
     def react_eyes(self, ctx):
+        self.eyes += 1
+        return True
+
+    def react_ack_no_comment(self, ctx):
+        self.acks += 1
         return True
 
 
@@ -55,15 +66,32 @@ def test_assigned_pr_comment_upgrades_to_work_allowed(tmp_path):
     assert stored.work_intent == "work_allowed"
 
 
-def test_unassigned_pr_comment_stays_review_only(tmp_path):
+def test_unassigned_mentioned_pr_comment_stays_review_only(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     enqueue_pr_comment(queue)
     dispatcher = RecordingDispatcher()
 
-    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=FakeGitHub(assigned=False), config=ExecutorConfig(run_once=True))
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=FakeGitHub(assigned=False, mentioned=True), config=ExecutorConfig(run_once=True))
     assert pool.work_one("worker-test") is True
 
     assert dispatcher.jobs[0].work_intent == "review_only"
     stored = queue.get(dispatcher.jobs[0].id)
     assert stored is not None
     assert stored.work_intent == "review_only"
+
+
+def test_unassigned_unmentioned_pr_comment_reacts_without_dispatch(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=False, mentioned=False)
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert dispatcher.jobs == []
+    assert github.eyes == 1
+    assert github.acks == 1
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"

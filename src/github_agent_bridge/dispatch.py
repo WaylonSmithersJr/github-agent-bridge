@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 from dataclasses import dataclass
@@ -78,6 +79,42 @@ class GitHubClient:
             return None
         return result.stdout.strip() or None
 
+    def issue_comment_body(self, ctx: GitHubContext) -> str | None:
+        if not ctx.repo or not ctx.comment_id:
+            return None
+        result = self._run(["api", f"repos/{ctx.repo}/issues/comments/{ctx.comment_id}", "--jq", ".body"])
+        if result.returncode != 0:
+            return None
+        return result.stdout or ""
+
+    def issue_comment_addresses_current_user(self, ctx: GitHubContext) -> bool:
+        body = self.issue_comment_body(ctx)
+        login = self.current_login()
+        if body is None or not login:
+            return False
+        mentions = [m.lower() for m in re.findall(r"@([A-Za-z0-9-]+)", body)]
+        if not mentions:
+            return False
+        # Treat the comment as addressed to the bot only when the bot is the
+        # first mentioned user. A later mention can be merely referential, e.g.
+        # "@Marc what do you think about @pilipilisbot's changes?"
+        return mentions[0] == login.lower()
+
+    def issue_comment_mentions_current_user(self, ctx: GitHubContext) -> bool:
+        return self.issue_comment_addresses_current_user(ctx)
+
+    def react(self, ctx: GitHubContext, content: str) -> bool:
+        if self.mode != RunMode.LIVE:
+            return True
+        repo, issue = ctx.repo, ctx.issue_number
+        if not repo or not issue:
+            return False
+        if ctx.comment_id:
+            return self._run(["api", "-X", "POST", f"repos/{repo}/issues/comments/{ctx.comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
+        if ctx.review_comment_id:
+            return self._run(["api", "-X", "POST", f"repos/{repo}/pulls/comments/{ctx.review_comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
+        return self._run(["api", "-X", "POST", f"repos/{repo}/issues/{issue}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
+
     def is_assigned_to_current_user(self, ctx: GitHubContext) -> bool:
         repo, issue = ctx.repo, ctx.issue_number
         if not repo or not issue:
@@ -95,16 +132,10 @@ class GitHubClient:
         return login in {a.get("login") for a in data.get("assignees", []) if isinstance(a, dict)}
 
     def react_eyes(self, ctx: GitHubContext) -> bool:
-        if self.mode != RunMode.LIVE:
-            return True
-        repo, issue = ctx.repo, ctx.issue_number
-        if not repo or not issue:
-            return False
-        if ctx.comment_id:
-            return self._run(["api", "-X", "POST", f"repos/{repo}/issues/comments/{ctx.comment_id}/reactions", "-f", "content=eyes", "-H", "Accept: application/vnd.github+json"]).returncode == 0
-        if ctx.review_comment_id:
-            return self._run(["api", "-X", "POST", f"repos/{repo}/pulls/comments/{ctx.review_comment_id}/reactions", "-f", "content=eyes", "-H", "Accept: application/vnd.github+json"]).returncode == 0
-        return self._run(["api", "-X", "POST", f"repos/{repo}/issues/{issue}/reactions", "-f", "content=eyes", "-H", "Accept: application/vnd.github+json"]).returncode == 0
+        return self.react(ctx, "eyes")
+
+    def react_ack_no_comment(self, ctx: GitHubContext) -> bool:
+        return self.react(ctx, "+1")
 
 
 class OpenClawDispatcher:

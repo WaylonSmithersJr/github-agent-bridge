@@ -32,7 +32,15 @@ class ExecutorPool:
         if not job:
             return False
         try:
-            if job.action == "reply_comment" and job.work_intent == "review_only" and self.github.is_assigned_to_current_user(job.context):
+            assigned_to_bot = self.github.is_assigned_to_current_user(job.context)
+            if job.action == "reply_comment" and job.context.comment_id and not assigned_to_bot and not self.github.issue_comment_addresses_current_user(job.context):
+                reaction_ok = self.github.react_eyes(job.context)
+                ack_ok = self.github.react_ack_no_comment(job.context)
+                summary = "comment not addressed to bot and bot not assigned; skipped dispatch"
+                detail = f"eyes={reaction_ok} ack={ack_ok}"
+                self.queue.finish(job.id, "done", summary, detail)
+                return True
+            if job.action == "reply_comment" and job.work_intent == "review_only" and assigned_to_bot:
                 job = self.queue.update_work_intent(job.id, "work_allowed", "PR/issue assigned to authenticated bot; upgraded review-only comment to work_allowed") or job
             reaction_ok = self.github.react_eyes(job.context)
             result = self.dispatcher.dispatch(job, self.policy, reaction_ok=reaction_ok)

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.7 (2026-05-13)
+
+### Bug Fixes
+
+- Harden github prompts against injection
+  ([`f0f4bce`](https://github.com/pilipilisbot/github-agent-bridge/commit/f0f4bce2bfcee2ff3d3aeda9b66a8f1c527b8a96))
+
+
 ## v0.5.6 (2026-05-13)
 
 ### Bug Fixes

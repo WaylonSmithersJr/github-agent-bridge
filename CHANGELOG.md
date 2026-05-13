@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.4 (2026-05-13)
+
+### Bug Fixes
+
+- Skip comments not addressed to bot
+  ([`3e18d92`](https://github.com/pilipilisbot/github-agent-bridge/commit/3e18d920306e67c1cdafd28c0a6bbf9475efa8ac))
+
+
 ## v0.5.3 (2026-05-13)
 
 ### Bug Fixes

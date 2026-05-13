@@ -1,7 +1,7 @@
 from dataclasses import replace
 from importlib import resources
 
-from github_agent_bridge.dispatch import OpenClawDispatcher, PR_REVIEW_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
+from github_agent_bridge.dispatch import COMMENT_VALUE_RULES, OpenClawDispatcher, PR_REVIEW_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
 from github_agent_bridge.models import GitHubContext, Job
 from github_agent_bridge.policy import Policy
 
@@ -13,7 +13,7 @@ def make_job(work_intent="work_allowed", action="reply_comment"):
 
 def test_prompt_rule_markdown_files_are_packaged_resources():
     package = resources.files("github_agent_bridge.prompt_rules")
-    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md", "pr_review.md"}
+    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md", "pr_review.md", "comment_value.md"}
     found = {p.name for p in package.iterdir() if p.name.endswith(".md")}
     assert expected <= found
     for name in expected:
@@ -28,6 +28,9 @@ def test_build_prompt_reads_packaged_markdown_rules():
     prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job("review_only"))
     assert "[AUTO_GITHUB_WORK]" in prompt
     assert "Trusted GitHub event detected" in prompt
+    assert "# Comment value rule" in prompt
+    assert "Post a comment only when it adds" in prompt
+    assert COMMENT_VALUE_RULES in prompt
     assert "# Worktree rule" in prompt
     assert "# PR metadata rule" in prompt
     assert "# Human reviewer rule" in prompt
@@ -91,6 +94,9 @@ def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
     assert "# Custom review-only intent" in prompt
     assert "# Repository role: owner" not in prompt
     assert "# Review-only rule" not in prompt
+    assert "# Comment value rule" in prompt
+    assert "Post a comment only when it adds" in prompt
+    assert COMMENT_VALUE_RULES in prompt
     assert "# Worktree rule" in prompt
     assert "# PR metadata rule" in prompt
     assert "# Human reviewer rule" in prompt

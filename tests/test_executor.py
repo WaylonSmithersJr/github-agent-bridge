@@ -6,10 +6,10 @@ from github_agent_bridge.queue import JobQueue
 
 
 class FakeGitHub:
-    def __init__(self, assigned: bool, mentioned: bool = True, non_actionable_copilot_review: bool = False):
+    def __init__(self, assigned: bool, mentioned: bool = True, non_actionable_review: bool = False):
         self.assigned = assigned
         self.mentioned = mentioned
-        self.non_actionable_copilot_review = non_actionable_copilot_review
+        self.non_actionable_review = non_actionable_review
         self.eyes = 0
         self.acks = 0
 
@@ -19,8 +19,8 @@ class FakeGitHub:
     def issue_comment_addresses_current_user(self, ctx):
         return self.mentioned
 
-    def is_non_actionable_copilot_review(self, ctx):
-        return self.non_actionable_copilot_review
+    def is_non_actionable_review(self, ctx):
+        return self.non_actionable_review
 
     def react_eyes(self, ctx):
         self.eyes += 1
@@ -117,11 +117,11 @@ def test_unassigned_unmentioned_pr_comment_reacts_without_dispatch(tmp_path):
     assert stored.status == "done"
 
 
-def test_non_actionable_copilot_review_reacts_without_dispatch_even_when_assigned(tmp_path):
+def test_non_actionable_review_reacts_without_dispatch_even_when_assigned(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     job = enqueue_pr_review(queue)
     dispatcher = RecordingDispatcher()
-    github = FakeGitHub(assigned=True, non_actionable_copilot_review=True)
+    github = FakeGitHub(assigned=True, non_actionable_review=True)
 
     pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
     assert pool.work_one("worker-test") is True

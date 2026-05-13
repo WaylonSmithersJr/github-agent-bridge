@@ -42,6 +42,7 @@ HUMAN_REVIEWER_RULES = load_prompt_rule("human_reviewer.md")
 REVIEW_ONLY_RULES = load_prompt_rule("review_only.md")
 SYNC_AFTER_MERGE_RULES = load_prompt_rule("sync_after_merge.md")
 PR_REVIEW_RULES = load_prompt_rule("pr_review.md")
+COMMENT_VALUE_RULES = load_prompt_rule("comment_value.md")
 
 
 class RunMode(StrEnum):
@@ -90,21 +91,24 @@ class GitHubClient:
         except json.JSONDecodeError:
             return None
 
-    def is_non_actionable_copilot_review(self, ctx: GitHubContext) -> bool:
+    def is_non_actionable_review(self, ctx: GitHubContext) -> bool:
         review = self.pull_request_review(ctx)
         if not review:
             return False
-        user = (review.get("user") or {}).get("login", "").lower()
         body = (review.get("body") or "").lower()
-        if "copilot" not in user:
-            return False
         non_actionable_markers = (
             "generated no new comments",
             "wasn't able to review any files",
             "was not able to review any files",
-            "no comments",
+            "no actionable comments",
+            "no actionable findings",
+            "no action required",
+            "nothing to change",
         )
         return any(marker in body for marker in non_actionable_markers)
+
+    def is_non_actionable_copilot_review(self, ctx: GitHubContext) -> bool:
+        return self.is_non_actionable_review(ctx)
 
     def issue_comment_body(self, ctx: GitHubContext) -> str | None:
         if not ctx.repo or not ctx.comment_id:
@@ -219,7 +223,7 @@ class OpenClawDispatcher:
             message_id=job.message_id,
             subject=job.subject,
         )
-        return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}"
+        return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{COMMENT_VALUE_RULES}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}"
 
     def route_for(self, job: Job, policy: Policy) -> tuple[str | None, str, str]:
         route: Route = policy.route_for(job.repo)

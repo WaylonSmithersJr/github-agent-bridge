@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.2 (2026-05-13)
+
+### Bug Fixes
+
+- Allow assigned PR work to mutate
+  ([`30265ed`](https://github.com/pilipilisbot/github-agent-bridge/commit/30265ed6c238dd000919160316926045a16be240))
+
+
 ## v0.5.1 (2026-05-13)
 
 ### Bug Fixes

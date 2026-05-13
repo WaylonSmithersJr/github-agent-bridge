@@ -45,3 +45,11 @@ def test_pr_followup_can_still_request_explicit_implementation():
 
     assert classify_github_action(subject, body) == "reply_comment"
     assert classify_work_intent(subject, body) == "work_allowed"
+
+
+def test_pr_assignment_allows_work():
+    subject = "Re: [gisce/erp] Permitir caller en los dominios (PR #27315)"
+    body = "ecarreras assigned @pilipilisbot to this pull request."
+
+    assert classify_github_action(subject, body) == "open_issue"
+    assert classify_work_intent(subject, body) == "work_allowed"

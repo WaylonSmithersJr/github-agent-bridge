@@ -54,11 +54,12 @@ def classify_work_intent(subject: str, body: str) -> str:
     text = f"{subject}\n{body}".lower()
     flags = github_event_flags(subject, body)
     asks_review = flags["review_requested"] or _contains_any(text, REVIEW_ONLY_PATTERNS)
-    asks_implementation = _contains_any(text, IMPLEMENTATION_PATTERNS)
+    asks_implementation = flags["assigned"] or _contains_any(text, IMPLEMENTATION_PATTERNS)
     if asks_review and not asks_implementation:
         return "review_only"
     # PR threads are review/discussion by default. Do not mutate a contributor's
-    # branch from PR comments unless the human explicitly asks for implementation.
+    # branch from PR comments unless the human explicitly asks for implementation
+    # or assigns the bot to own the PR/issue work.
     if _looks_like_pr_thread(subject, body) and not asks_implementation:
         return "review_only"
     return "work_allowed"

@@ -141,4 +141,4 @@ docs: clarify canary rollout
 
 ## PR review read-only invariant
 
-PR review follow-ups must stay read-only by default. A comment on a PR that mentions the bot but does not explicitly ask to implement/apply/fix/push should be classified as `review_only`, even when the repository role is `maintainer` or `owner`. Maintainer/owner controls judgment; `review_only` forbids editing, committing, pushing, merging, or updating the PR branch.
+PR review follow-ups must stay read-only by default. A comment on a PR that mentions the bot but does not explicitly ask to implement/apply/fix/push and is not an assignment should be classified as `review_only`, even when the repository role is `maintainer` or `owner`. If the bot is assigned to the PR/issue, classify as `work_allowed` because assignment means ownership of the work. Maintainer/owner controls judgment; `review_only` forbids editing, committing, pushing, merging, or updating the PR branch.

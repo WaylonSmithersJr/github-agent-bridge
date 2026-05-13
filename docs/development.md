@@ -90,6 +90,7 @@ Prompt resources are packaged with the Python distribution and loaded through `i
 | --- | --- |
 | `prompt_rules/base.md` | Base GitHub work prompt. |
 | `prompt_rules/review_only.md` | Review-only action constraints. |
+| `prompt_rules/pr_review.md` | Formal PR review verdict constraints for review-request notifications. |
 | `prompt_rules/sync_after_merge.md` | Post-merge workspace cleanup constraints. |
 | `prompt_rules/worktree.md` | Worktree behavior. |
 | `prompt_rules/pr_metadata.md` | PR metadata behavior. |
@@ -114,6 +115,7 @@ Role and work intent are separate.
 | --- | --- | --- |
 | Repository role | judgment and authority | `owner`, `maintainer`, `contributor`, `reviewer` |
 | Work intent | allowed actions | `review_only`, `work_allowed` |
+| Action | GitHub workflow | `submit_review`, `reply_comment`, `open_issue`, `sync_after_merge`, `archive_notification` |
 
 `owner` + `review_only` should preserve owner-level judgment while forbidding code and metadata changes. Do not auto-convert review-only work to the `reviewer` role.
 

@@ -47,7 +47,8 @@ def github_event_flags(subject: str, body: str) -> dict[str, bool]:
 
 def classify_work_intent(subject: str, body: str) -> str:
     text = f"{subject}\n{body}".lower()
-    asks_review = _contains_any(text, REVIEW_ONLY_PATTERNS)
+    flags = github_event_flags(subject, body)
+    asks_review = flags["review_requested"] or _contains_any(text, REVIEW_ONLY_PATTERNS)
     asks_implementation = _contains_any(text, IMPLEMENTATION_PATTERNS)
     return "review_only" if asks_review and not asks_implementation else "work_allowed"
 
@@ -59,7 +60,9 @@ def classify_github_action(subject: str, body: str) -> str:
         return "sync_after_merge"
     # PR reviews/comments should be handled as replies even when GitHub's footer
     # also says the bot was assigned to the thread.
-    if flags["review_requested"] or flags["copilot_review"] or "pullrequestreview" in text:
+    if flags["review_requested"]:
+        return "submit_review"
+    if flags["copilot_review"] or "pullrequestreview" in text:
         return "reply_comment"
     if flags["assigned"]:
         return "open_issue"

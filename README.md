@@ -107,7 +107,7 @@ The bridge is conservative by default. `policy.json` decides what is trusted, wh
   },
   "actions": {
     "auto": ["archive_notification"],
-    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"],
     "ask": []
   }
 }

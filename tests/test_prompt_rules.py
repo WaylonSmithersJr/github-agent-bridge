@@ -1,19 +1,19 @@
 from dataclasses import replace
 from importlib import resources
 
-from github_agent_bridge.dispatch import OpenClawDispatcher, REVIEW_ONLY_RULES, WORKTREE_RULES
+from github_agent_bridge.dispatch import OpenClawDispatcher, PR_REVIEW_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
 from github_agent_bridge.models import GitHubContext, Job
 from github_agent_bridge.policy import Policy
 
 
-def make_job(work_intent="work_allowed"):
+def make_job(work_intent="work_allowed", action="reply_comment"):
     ctx = GitHubContext(["https://github.com/gisce/erp/pull/1#issuecomment-2"], "gisce/erp", 1, comment_id=2)
-    return Job(1, ctx.work_key, ctx.repo, ctx.issue_number, "running", "reply_comment", work_intent, "subject", "<x@github.com>", 1, ctx)
+    return Job(1, ctx.work_key, ctx.repo, ctx.issue_number, "running", action, work_intent, "subject", "<x@github.com>", 1, ctx)
 
 
 def test_prompt_rule_markdown_files_are_packaged_resources():
     package = resources.files("github_agent_bridge.prompt_rules")
-    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md"}
+    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md", "pr_review.md"}
     found = {p.name for p in package.iterdir() if p.name.endswith(".md")}
     assert expected <= found
     for name in expected:
@@ -106,6 +106,18 @@ def test_sync_after_merge_prompt_includes_cleanup_rule():
     assert "Do not remove the canonical repository checkout." in prompt
 
 
+def test_submit_review_prompt_includes_formal_pr_review_rule():
+    prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job("review_only", action="submit_review"), Policy(repo_roles={"gisce/erp": "maintainer"}))
+
+    assert "# Repository role: maintainer" in prompt
+    assert "# Review-only rule" in prompt
+    assert "# PR review rule" in prompt
+    assert "gh pr review" in prompt
+    assert "formal GitHub review verdict" in prompt
+    assert PR_REVIEW_RULES in prompt
+
+
 def test_non_merge_prompt_does_not_include_cleanup_rule():
     prompt = OpenClawDispatcher(mode="shadow").build_prompt(make_job(), Policy())
     assert "# Sync-after-merge rule" not in prompt
+    assert "# PR review rule" not in prompt

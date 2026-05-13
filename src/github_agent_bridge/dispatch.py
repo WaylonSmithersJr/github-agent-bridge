@@ -39,6 +39,7 @@ PR_METADATA_RULES = load_prompt_rule("pr_metadata.md")
 HUMAN_REVIEWER_RULES = load_prompt_rule("human_reviewer.md")
 REVIEW_ONLY_RULES = load_prompt_rule("review_only.md")
 SYNC_AFTER_MERGE_RULES = load_prompt_rule("sync_after_merge.md")
+PR_REVIEW_RULES = load_prompt_rule("pr_review.md")
 
 
 class RunMode(StrEnum):
@@ -123,7 +124,11 @@ class OpenClawDispatcher:
         intent_rules = ""
         if job.work_intent == "review_only":
             intent_rules = load_prompt_override(intent_override) if intent_override else REVIEW_ONLY_RULES
-        action_rules = SYNC_AFTER_MERGE_RULES if job.action == "sync_after_merge" else ""
+        action_rules = ""
+        if job.action == "sync_after_merge":
+            action_rules = SYNC_AFTER_MERGE_RULES
+        elif job.action == "submit_review":
+            action_rules = PR_REVIEW_RULES
         base_prompt = base_template.format(
             repo=repo,
             thread=thread,

@@ -33,6 +33,7 @@
     "trustedAuto": [
       "reply_comment",
       "open_issue",
+      "submit_review",
       "sync_after_merge",
       "docs_update",
       "content_change"

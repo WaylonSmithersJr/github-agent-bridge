@@ -21,3 +21,11 @@ def test_copilot_comment_is_actionable():
 def test_review_only_intent():
     assert classify_work_intent("", "com veus els canvis? fes-ne una review") == "review_only"
     assert classify_work_intent("", "fes-ne una review i aplica el fix") == "work_allowed"
+
+
+def test_review_request_uses_formal_review_flow():
+    subject = "Re: [gisce/erp] Permitir caller en los dominios (PR #27315)"
+    body = "ecarreras requested review from @pilipilisbot on this pull request."
+
+    assert classify_github_action(subject, body) == "submit_review"
+    assert classify_work_intent(subject, body) == "review_only"

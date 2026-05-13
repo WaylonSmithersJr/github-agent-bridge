@@ -73,7 +73,7 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
   "actions": {
     "auto": ["archive_notification"],
     "ask": [],
-    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge", "docs_update", "content_change"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "docs_update", "content_change"],
     "deny": ["merge_main", "org_permissions_change", "manage_secrets", "delete_remote_repo_or_branch"]
   }
 }
@@ -370,7 +370,8 @@ Supported action names currently produced by the parser:
 | --- | --- | --- |
 | `archive_notification` | Notification is routine and does not mention/assign/request the bot. | Persist as handled without agent work. |
 | `sync_after_merge` | Notification text contains `merged`. | Dispatch trusted post-merge workspace cleanup to the agent. |
-| `reply_comment` | Bot mentioned, review requested, Copilot review, or PR review notification. | React 👀 and dispatch agent work/reply. |
+| `submit_review` | GitHub requested a review from the bot. | React 👀 and dispatch review-only work that must end with a formal PR review verdict. |
+| `reply_comment` | Bot mentioned, Copilot review, or PR review/comment notification. | React 👀 and dispatch agent work/reply. |
 | `open_issue` | Bot assigned to an issue/PR. | React 👀 and dispatch agent work for the assigned thread. |
 
 Other action names can appear in policy, but they have no effect until parser/dispatcher code produces or handles them.
@@ -415,13 +416,15 @@ Typical values:
 
 ```json
 {
-  "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"]
+  "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"]
 }
 ```
 
 The example policy may include future action labels such as `docs_update` or `content_change`. Those are harmless until the parser emits them.
 
 ### Post-merge workspace cleanup
+
+`submit_review` is classified from GitHub review-request notifications and is part of `trustedAuto` by default. It dispatches a `review_only` prompt with the packaged `pr_review` rule: the agent must use GitHub's formal Pull Request Review flow (`approve`, `comment`, or `request changes`) instead of leaving only a normal PR comment.
 
 `sync_after_merge` is classified from GitHub merge notifications and is part of `trustedAuto` by default. It dispatches an agent prompt with the packaged `sync_after_merge` rule.
 
@@ -504,7 +507,7 @@ Use lowercase in policy files for readability.
   "trustedOrgs": ["gisce"],
   "actions": {
     "auto": ["archive_notification"],
-    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"],
     "ask": []
   }
 }
@@ -531,7 +534,7 @@ Use lowercase in policy files for readability.
   },
   "actions": {
     "auto": ["archive_notification"],
-    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"],
     "ask": []
   }
 }
@@ -545,7 +548,7 @@ Use lowercase in policy files for readability.
   "trustedOrgs": [],
   "actions": {
     "auto": ["archive_notification"],
-    "trustedAuto": ["reply_comment", "open_issue", "sync_after_merge"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"],
     "ask": ["reply_comment", "open_issue"]
   }
 }

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.1 (2026-05-13)
+
+### Bug Fixes
+
+- Keep PR review followups read-only
+  ([`a41458b`](https://github.com/pilipilisbot/github-agent-bridge/commit/a41458bf4ce01d43307db5a79fd7cd2d12d0931b))
+
+
 ## v0.5.0 (2026-05-13)
 
 ### Features

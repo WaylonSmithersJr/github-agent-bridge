@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.5.8 (2026-05-14)
+
+### Bug Fixes
+
+- Install systemd reader wrapper
+  ([`563fb34`](https://github.com/pilipilisbot/github-agent-bridge/commit/563fb341a9f03ea0740e880e780e7d576c932fa3))
+
+### Documentation
+
+- Add bridge installation guide
+  ([`5fb3e8a`](https://github.com/pilipilisbot/github-agent-bridge/commit/5fb3e8a784e7557406ed327cc3c5b234c6134641))
+
+
 ## v0.5.7 (2026-05-13)
 
 ### Bug Fixes

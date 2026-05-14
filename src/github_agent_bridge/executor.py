@@ -33,6 +33,7 @@ class ExecutorPool:
             return False
         try:
             assigned_to_bot = self.github.is_assigned_to_current_user(job.context)
+            authored_by_bot = self.github.is_pull_request_authored_by_current_user(job.context)
             if job.action == "reply_comment" and job.context.review_id and self.github.is_non_actionable_review(job.context):
                 reaction_ok = self.github.react_eyes(job.context)
                 ack_ok = self.github.react_ack_no_comment(job.context)
@@ -47,8 +48,9 @@ class ExecutorPool:
                 detail = f"eyes={reaction_ok} ack={ack_ok}"
                 self.queue.finish(job.id, "done", summary, detail)
                 return True
-            if job.action == "reply_comment" and job.work_intent == "review_only" and assigned_to_bot:
-                job = self.queue.update_work_intent(job.id, "work_allowed", "PR/issue assigned to authenticated bot; upgraded review-only comment to work_allowed") or job
+            if job.action == "reply_comment" and job.work_intent == "review_only" and (assigned_to_bot or authored_by_bot):
+                reason = "PR/issue assigned to authenticated bot" if assigned_to_bot else "PR authored by authenticated bot"
+                job = self.queue.update_work_intent(job.id, "work_allowed", f"{reason}; upgraded review-only comment to work_allowed") or job
             reaction_ok = self.github.react_eyes(job.context)
             result = self.dispatcher.dispatch(job, self.policy, reaction_ok=reaction_ok)
             if result.ok:

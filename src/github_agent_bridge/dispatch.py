@@ -163,6 +163,23 @@ class GitHubClient:
             return False
         return login in {a.get("login") for a in data.get("assignees", []) if isinstance(a, dict)}
 
+    def is_pull_request_authored_by_current_user(self, ctx: GitHubContext) -> bool:
+        repo, issue = ctx.repo, ctx.issue_number
+        if not repo or not issue:
+            return False
+        login = self.current_login()
+        if not login:
+            return False
+        result = self._run(["api", f"repos/{repo}/pulls/{issue}"])
+        if result.returncode != 0:
+            return False
+        try:
+            data = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return False
+        author = data.get("user") if isinstance(data, dict) else None
+        return isinstance(author, dict) and author.get("login") == login
+
     def react_eyes(self, ctx: GitHubContext) -> bool:
         return self.react(ctx, "eyes")
 

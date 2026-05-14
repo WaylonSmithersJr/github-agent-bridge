@@ -6,15 +6,19 @@ from github_agent_bridge.queue import JobQueue
 
 
 class FakeGitHub:
-    def __init__(self, assigned: bool, mentioned: bool = True, non_actionable_review: bool = False):
+    def __init__(self, assigned: bool, mentioned: bool = True, non_actionable_review: bool = False, authored: bool = False):
         self.assigned = assigned
         self.mentioned = mentioned
         self.non_actionable_review = non_actionable_review
+        self.authored = authored
         self.eyes = 0
         self.acks = 0
 
     def is_assigned_to_current_user(self, ctx):
         return self.assigned
+
+    def is_pull_request_authored_by_current_user(self, ctx):
+        return self.authored
 
     def issue_comment_addresses_current_user(self, ctx):
         return self.mentioned
@@ -98,6 +102,20 @@ def test_unassigned_mentioned_pr_comment_stays_review_only(tmp_path):
     stored = queue.get(dispatcher.jobs[0].id)
     assert stored is not None
     assert stored.work_intent == "review_only"
+
+
+def test_bot_authored_pr_review_comment_upgrades_to_work_allowed(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=FakeGitHub(assigned=False, mentioned=True, authored=True), config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert dispatcher.jobs[0].work_intent == "work_allowed"
+    stored = queue.get(dispatcher.jobs[0].id)
+    assert stored is not None
+    assert stored.work_intent == "work_allowed"
 
 
 def test_unassigned_unmentioned_pr_comment_reacts_without_dispatch(tmp_path):

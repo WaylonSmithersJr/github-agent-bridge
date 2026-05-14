@@ -23,18 +23,19 @@ python3 -m pip install --user \
   'git+https://github.com/pilipilisbot/github-agent-bridge.git'
 ```
 
-Make sure the script directory is on `PATH`:
+Make sure the script directory is on `PATH` and both installed entrypoints are available:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 gab --help
+command -v github-agent-bridge-reader-run
 ```
 
-For a pinned install, use a release tag:
+For a pinned install, replace `vX.Y.Z` with a release tag:
 
 ```bash
 python3 -m pip install --user \
-  'git+https://github.com/pilipilisbot/github-agent-bridge.git@v0.5.7'
+  'git+https://github.com/pilipilisbot/github-agent-bridge.git@vX.Y.Z'
 ```
 
 ## Create runtime directories
@@ -112,9 +113,26 @@ Leave `GITHUB_AGENT_BRIDGE_MARK_SEEN` empty until the bridge owns GitHub notific
 
 If `openclaw` is not on the systemd PATH, set `GITHUB_AGENT_BRIDGE_OPENCLAW_BIN` to the absolute path from `command -v openclaw`.
 
+Check prerequisites explicitly before continuing:
+
+```bash
+gh auth status
+openclaw agent --help >/dev/null
+gab --help >/dev/null
+```
+
 ## Validate without side effects
 
-First enqueue a known GitHub comment URL and process it in shadow mode:
+First confirm the policy parses and the database is readable:
+
+```bash
+python3 -m json.tool ~/.config/github-agent-bridge/policy.json >/dev/null
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  --policy ~/.config/github-agent-bridge/policy.json \
+  monitor --no-systemd
+```
+
+Then enqueue a known GitHub comment URL and process it in shadow mode:
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
@@ -198,6 +216,8 @@ systemctl --user enable --now github-agent-bridge.service
 systemctl --user enable --now github-agent-bridge-reader.timer
 systemctl --user enable --now github-agent-bridge-monitor.timer
 ```
+
+The reader timer calls the installed `github-agent-bridge-reader-run` wrapper. That wrapper reads `~/.config/github-agent-bridge/env` through the systemd unit and only adds `--mark-seen` when `GITHUB_AGENT_BRIDGE_MARK_SEEN` is explicitly enabled.
 
 Inspect status and logs:
 

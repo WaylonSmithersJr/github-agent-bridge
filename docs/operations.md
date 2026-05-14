@@ -15,6 +15,9 @@ This guide is for running and monitoring the bridge.
 
 ## Production commands
 
+The reader systemd timer uses `github-agent-bridge-reader-run`, a small installed wrapper around `gab read-imap-once` that reads `GITHUB_AGENT_BRIDGE_*` environment variables and conditionally adds `--mark-seen`.
+
+
 Executor pool:
 
 ```bash

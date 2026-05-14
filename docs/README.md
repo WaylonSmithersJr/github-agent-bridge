@@ -7,6 +7,7 @@ A compact map of the `github-agent-bridge` documentation set.
 | Need | Document | Type |
 | --- | --- | --- |
 | Understand what this project is | [`../README.md`](../README.md) | Overview |
+| Install a deployment | [`installation.md`](installation.md) | How-to |
 | Understand system design | [`architecture.md`](architecture.md) | Explanation |
 | Configure policy | [`policy-reference.md`](policy-reference.md) | Reference |
 | Roll out safely | [`shadow-canary.md`](shadow-canary.md) | How-to |
@@ -21,7 +22,8 @@ A compact map of the `github-agent-bridge` documentation set.
 ```mermaid
 flowchart TD
     A[Scope] --> B[Architecture]
-    B --> C[Policy]
+    B --> I[Installation]
+    I --> C[Policy]
     C --> D[Shadow/canary rollout]
     D --> E[Operations]
     B --> F[Development]

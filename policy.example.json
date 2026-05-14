@@ -11,17 +11,17 @@
   },
   "trustedRepos": [],
   "trustedOrgs": [
-    "gisce"
+    "your-org"
   ],
   "enabledRepos": [
-    "gisce/erp"
+    "your-org/your-repo"
   ],
   "repoRoutes": {},
   "orgRoutes": {
-    "gisce": {
-      "agent": "gisce-developer",
+    "your-org": {
+      "agent": "your-openclaw-agent",
       "channel": "telegram",
-      "to": "-1003972920100"
+      "to": "YOUR_CHAT_ID"
     }
   },
   "actions": {
@@ -46,9 +46,9 @@
     ]
   },
   "repoRoles": {
-    "gisce/erp": "owner"
+    "your-org/your-repo": "maintainer"
   },
   "orgRoles": {
-    "pilipilisbot": "maintainer"
+    "your-org": "contributor"
   }
 }

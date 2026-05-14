@@ -42,9 +42,13 @@ flowchart LR
 
 ## Installation
 
+Install from GitHub:
+
 ```bash
 python -m pip install git+https://github.com/pilipilisbot/github-agent-bridge.git
 ```
+
+For a full operator install, including policy, IMAP, rollout, and systemd units, see [`docs/installation.md`](docs/installation.md).
 
 For local development:
 
@@ -93,17 +97,17 @@ The bridge is conservative by default. `policy.json` decides what is trusted, wh
 
 ```json
 {
-  "trustedOrgs": ["gisce"],
-  "enabledRepos": ["gisce/erp"],
+  "trustedOrgs": ["your-org"],
+  "enabledRepos": ["your-org/your-repo"],
   "orgRoutes": {
-    "gisce": {
-      "agent": "gisce-developer",
+    "your-org": {
+      "agent": "your-openclaw-agent",
       "channel": "telegram",
-      "to": "-1003972920100"
+      "to": "YOUR_CHAT_ID"
     }
   },
   "repoRoles": {
-    "gisce/erp": "owner"
+    "your-org/your-repo": "maintainer"
   },
   "actions": {
     "auto": ["archive_notification"],
@@ -137,6 +141,7 @@ See [`docs/shadow-canary.md`](docs/shadow-canary.md).
 
 | If you want to... | Read |
 | --- | --- |
+| Install a deployment | [`docs/installation.md`](docs/installation.md) |
 | Understand the system shape | [`docs/architecture.md`](docs/architecture.md) |
 | Develop or test changes | [`docs/development.md`](docs/development.md) |
 | Operate the bridge | [`docs/operations.md`](docs/operations.md) |
@@ -154,7 +159,7 @@ This project is **GitHub-only**. Generic email triage, calendar/status emails, r
 
 ## Current status
 
-The bridge has reusable components, tests, packaged prompt resources, systemd units, and an automated release pipeline. Production deployment still requires an explicit operator rollout using the policy and systemd units in this repository.
+The bridge has reusable components, tests, packaged prompt resources, systemd units, and an automated release pipeline. Production deployment is reusable by other OpenClaw operators, but it still requires operator-specific policy, routes, GitHub/IMAP credentials, and rollout using the policy and systemd units in this repository.
 
 For PR/issue comments not addressed to the bot and where the bot is not assigned, the bridge reacts 👀 + 👍 and skips dispatch to avoid low-value extra comments.
 

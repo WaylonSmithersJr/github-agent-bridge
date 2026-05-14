@@ -30,7 +30,7 @@ DB=/tmp/github-agent-bridge-dev.sqlite3
 
 gab --db "$DB" init-db
 gab --db "$DB" --policy ./policy.example.json enqueue-comment-url \
-  'https://github.com/gisce/erp/pull/27675#issuecomment-4419572864'
+  'https://github.com/your-org/your-repo/pull/123#issuecomment-456'
 gab --db "$DB" --policy ./policy.example.json jobs --limit 5
 ```
 
@@ -75,8 +75,8 @@ Full policy schema and semantics are documented in [`policy-reference.md`](polic
 
 ```json
 {
-  "trustedOrgs": ["gisce"],
-  "enabledRepos": ["gisce/erp"]
+  "trustedOrgs": ["your-org"],
+  "enabledRepos": ["your-org/your-repo"]
 }
 ```
 

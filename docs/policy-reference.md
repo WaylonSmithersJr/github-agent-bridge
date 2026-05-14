@@ -47,28 +47,28 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
     "requiredUrlPrefix": "https://github.com/",
     "messageIdDomain": "github.com"
   },
-  "trustedRepos": ["vermutech/stats"],
-  "trustedOrgs": ["gisce"],
-  "enabledRepos": ["gisce/erp"],
+  "trustedRepos": ["your-org/your-repo"],
+  "trustedOrgs": ["your-org"],
+  "enabledRepos": ["your-org/your-repo"],
   "repoRoutes": {
-    "canprats/governance": {
-      "agent": "canprats-core",
+    "another-org/another-repo": {
+      "agent": "another-openclaw-agent",
       "channel": "telegram",
-      "to": "-1003731933363"
+      "to": "ANOTHER_CHAT_ID"
     }
   },
   "orgRoutes": {
-    "gisce": {
-      "agent": "gisce-developer",
+    "your-org": {
+      "agent": "your-openclaw-agent",
       "channel": "telegram",
-      "to": "-1003972920100"
+      "to": "YOUR_CHAT_ID"
     }
   },
   "repoRoles": {
-    "gisce/erp": "owner"
+    "your-org/your-repo": "maintainer"
   },
   "orgRoles": {
-    "pilipilisbot": "maintainer"
+    "your-bot-user": "maintainer"
   },
   "actions": {
     "auto": ["archive_notification"],
@@ -132,7 +132,7 @@ Example:
 
 ```json
 {
-  "trustedRepos": ["gisce/erp", "vermutech/stats"]
+  "trustedRepos": ["your-org/your-repo", "another-org/another-repo"]
 }
 ```
 
@@ -146,11 +146,11 @@ Example:
 
 ```json
 {
-  "trustedOrgs": ["gisce", "canprats"]
+  "trustedOrgs": ["your-org", "another-org"]
 }
 ```
 
-`gisce` trusts `gisce/erp`, `gisce/other`, etc., unless `enabledRepos` narrows the active scope.
+`your-org` trusts `your-org/your-repo`, `your-org/another-repo`, etc., unless `enabledRepos` narrows the active scope.
 
 ## `enabledRepos`
 
@@ -174,8 +174,8 @@ Example canary policy:
 
 ```json
 {
-  "trustedOrgs": ["gisce"],
-  "enabledRepos": ["gisce/erp"]
+  "trustedOrgs": ["your-org"],
+  "enabledRepos": ["your-org/your-repo"]
 }
 ```
 
@@ -183,9 +183,9 @@ Result:
 
 | Repo | Result |
 | --- | --- |
-| `gisce/erp` | Eligible for normal decisions. |
-| `gisce/other` | `deny`. |
-| `canprats/governance` | `deny`. |
+| `your-org/your-repo` | Eligible for normal decisions. |
+| `your-org/another-repo` | `deny`. |
+| `another-org/another-repo` | `deny`. |
 
 This is the preferred key for staged rollout from the legacy inbox worker to the bridge.
 
@@ -197,7 +197,7 @@ Route object:
 
 | Key | Type | Meaning |
 | --- | --- | --- |
-| `agent` | string or null | OpenClaw agent id, for example `gisce-developer`. |
+| `agent` | string or null | OpenClaw agent id, for example `your-openclaw-agent`. |
 | `channel` | string or null | Delivery channel, for example `telegram`. |
 | `to` | string or null | Delivery target, for example a Telegram chat id. |
 
@@ -214,17 +214,17 @@ Example:
 ```json
 {
   "repoRoutes": {
-    "canprats/governance": {
-      "agent": "canprats-core",
+    "another-org/another-repo": {
+      "agent": "another-openclaw-agent",
       "channel": "telegram",
-      "to": "-1003731933363"
+      "to": "ANOTHER_CHAT_ID"
     }
   },
   "orgRoutes": {
-    "gisce": {
-      "agent": "gisce-developer",
+    "your-org": {
+      "agent": "your-openclaw-agent",
       "channel": "telegram",
-      "to": "-1003972920100"
+      "to": "YOUR_CHAT_ID"
     }
   }
 }
@@ -234,8 +234,8 @@ With this policy:
 
 | Repo | Route |
 | --- | --- |
-| `canprats/governance` | `canprats-core` to `-1003731933363`. |
-| `gisce/erp` | `gisce-developer` to `-1003972920100`, because `orgRoutes.gisce` defines that route. |
+| `another-org/another-repo` | `another-openclaw-agent` to `ANOTHER_CHAT_ID`, because `repoRoutes` takes precedence. |
+| `your-org/your-repo` | `your-openclaw-agent` to `YOUR_CHAT_ID`, because `orgRoutes.your-org` defines that route. |
 | `other/repo` | CLI default channel/target, no configured agent unless dispatch fallback applies. |
 
 Routes do not grant trust. A repo can have a route and still be denied by source/action/scope policy.
@@ -273,10 +273,10 @@ Example:
 ```json
 {
   "repoRoles": {
-    "gisce/erp": "owner"
+    "your-org/your-repo": "maintainer"
   },
   "orgRoles": {
-    "pilipilisbot": "maintainer"
+    "your-bot-user": "maintainer"
   }
 }
 ```
@@ -339,7 +339,7 @@ The base prompt is a Python `str.format` template. It may use these placeholders
 
 | Placeholder | Meaning |
 | --- | --- |
-| `{repo}` | Repository name, for example `gisce/erp`. |
+| `{repo}` | Repository name, for example `your-org/your-repo`. |
 | `{thread}` | Issue or PR number. |
 | `{action}` | Classified bridge action. |
 | `{work_intent}` | Work intent, for example `work_allowed` or `review_only`. |
@@ -352,7 +352,7 @@ Example with defaults for everything except the owner role:
 ```json
 {
   "repoRoles": {
-    "gisce/erp": "owner"
+    "your-org/your-repo": "maintainer"
   },
   "promptOverrides": {
     "roles": {
@@ -506,7 +506,7 @@ Use lowercase in policy files for readability.
 
 ```json
 {
-  "trustedOrgs": ["gisce"],
+  "trustedOrgs": ["your-org"],
   "actions": {
     "auto": ["archive_notification"],
     "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"],
@@ -519,20 +519,20 @@ Use lowercase in policy files for readability.
 
 ```json
 {
-  "trustedOrgs": ["gisce"],
-  "enabledRepos": ["gisce/erp"],
+  "trustedOrgs": ["your-org"],
+  "enabledRepos": ["your-org/your-repo"],
   "orgRoutes": {
-    "gisce": {
-      "agent": "gisce-developer",
+    "your-org": {
+      "agent": "your-openclaw-agent",
       "channel": "telegram",
-      "to": "-1003972920100"
+      "to": "YOUR_CHAT_ID"
     }
   },
   "repoRoles": {
-    "gisce/erp": "owner"
+    "your-org/your-repo": "maintainer"
   },
   "orgRoles": {
-    "pilipilisbot": "maintainer"
+    "your-bot-user": "maintainer"
   },
   "actions": {
     "auto": ["archive_notification"],

@@ -56,8 +56,8 @@ Use `enabledRepos` to constrain live scope to one repo.
 
 ```json
 {
-  "trustedOrgs": ["gisce"],
-  "enabledRepos": ["gisce/erp"]
+  "trustedOrgs": ["your-org"],
+  "enabledRepos": ["your-org/your-repo"]
 }
 ```
 

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.6.1 (2026-05-16)
+
+### Bug Fixes
+
+- Make feedback learner path configurable
+  ([`a45d9d5`](https://github.com/pilipilisbot/github-agent-bridge/commit/a45d9d5e11edda90d354a01eb0e7841b6b95becb))
+
+
 ## v0.6.0 (2026-05-16)
 
 ### Bug Fixes

@@ -96,7 +96,7 @@ Prompt resources are packaged with the Python distribution and loaded through `i
 | `prompt_rules/worktree.md` | Worktree behavior. |
 | `prompt_rules/pr_metadata.md` | PR metadata behavior. |
 | `prompt_rules/human_reviewer.md` | Reviewer-request behavior. |
-| `prompt_rules/feedback_learning.md` | Consult synthesized local feedback rules before GitHub work. |
+| `prompt_rules/feedback_learning.md` | Consult curated local feedback rules before GitHub work. |
 | `prompt_rules/roles/*.md` | Repository operating postures. |
 | `sql/schema.sql` | SQLite schema. |
 

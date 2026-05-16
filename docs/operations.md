@@ -81,8 +81,15 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 jobs --limit 20
 
 ### Inspect feedback learning rules
 
-Trusted actionable GitHub notifications are captured into the bridge database.
-The compact rules shown to agents can be inspected with:
+Trusted actionable GitHub notifications are captured into the bridge database as
+feedback candidates. Inspect candidates with:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  feedback-events --scope repo:owner/name --limit 20
+```
+
+Curated rules shown to agents can be inspected with:
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
@@ -91,6 +98,18 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 
 Capture is controlled by `policy.json` `feedbackLearning.enabled`; the prompt
 threshold comes from `feedbackLearning.minConfidence`.
+
+Add a curated rule with:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  feedback-rule-add \
+  --scope repo:owner/name \
+  --type style_preference \
+  --confidence 0.8 \
+  --source-event github-agent-bridge-... \
+  --rule 'Answer with concrete repository-specific evidence.'
+```
 
 ### Retry a blocked job
 

@@ -206,6 +206,17 @@ def cmd_feedback_rules(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_feedback_events(args: argparse.Namespace) -> int:
+    print(json.dumps({"events": feedback.list_events(args.db, args.scope, args.limit)}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_feedback_rule_add(args: argparse.Namespace) -> int:
+    rule = feedback.add_rule(args.db, args.scope, args.type, args.rule, args.confidence, args.source_event)
+    print(json.dumps({"rule": rule}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog=Path(sys.argv[0]).name)
     p.add_argument("--db", default=DEFAULT_DB)
@@ -251,10 +262,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--review-running-warn-seconds", type=int, default=1200)
     s.add_argument("--work-running-warn-seconds", type=int, default=4200)
     s.set_defaults(func=cmd_monitor)
-    s = sub.add_parser("feedback-rules", help="list synthesized feedback rules captured from GitHub notifications")
+    s = sub.add_parser("feedback-rules", help="list curated feedback rules")
     s.add_argument("--scope", default="", help="filter by exact scope or scope prefix, e.g. repo:owner/name")
     s.add_argument("--min-confidence", type=float, default=None)
     s.set_defaults(func=cmd_feedback_rules)
+    s = sub.add_parser("feedback-events", help="list captured feedback candidates")
+    s.add_argument("--scope", default="", help="filter by exact scope or scope prefix, e.g. repo:owner/name")
+    s.add_argument("--limit", type=int, default=20)
+    s.set_defaults(func=cmd_feedback_events)
+    s = sub.add_parser("feedback-rule-add", help="add or reinforce a curated feedback rule")
+    s.add_argument("--scope", required=True, help="rule scope, e.g. repo:owner/name")
+    s.add_argument("--type", required=True, help="rule category, e.g. style_preference or operating_rule")
+    s.add_argument("--rule", required=True, help="curated rule text")
+    s.add_argument("--confidence", type=float, default=0.8)
+    s.add_argument("--source-event", action="append", default=[], help="feedback event id that supports this rule")
+    s.set_defaults(func=cmd_feedback_rule_add)
     return p
 
 

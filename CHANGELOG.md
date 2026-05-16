@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.6.3 (2026-05-16)
+
+### Bug Fixes
+
+- Make feedback learning policy-driven
+  ([`c73091a`](https://github.com/pilipilisbot/github-agent-bridge/commit/c73091a247289d26cbe31f99c6a53ebd122e3b98))
+
+
 ## v0.6.2 (2026-05-16)
 
 ### Bug Fixes

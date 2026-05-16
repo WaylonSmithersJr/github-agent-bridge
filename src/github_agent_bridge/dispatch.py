@@ -242,7 +242,8 @@ class OpenClawDispatcher:
             message_id=job.message_id,
             subject=job.subject,
         )
-        feedback_rules = FEEDBACK_LEARNING_RULES.format(repo=repo)
+        feedback_min_confidence = policy.feedback_learning.min_confidence if policy else 0.5
+        feedback_rules = FEEDBACK_LEARNING_RULES.format(repo=repo, min_confidence=feedback_min_confidence)
         return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{PROMPT_INJECTION_RULES}{COMMENT_VALUE_RULES}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}{feedback_rules}"
 
     def route_for(self, job: Job, policy: Policy) -> tuple[str | None, str, str]:

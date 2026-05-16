@@ -32,6 +32,12 @@ class PromptOverrides:
 
 
 @dataclass(frozen=True)
+class FeedbackLearning:
+    enabled: bool = True
+    min_confidence: float = 0.5
+
+
+@dataclass(frozen=True)
 class Policy:
     source_from: str = "notifications@github.com"
     required_url_prefix: str = "https://github.com/"
@@ -47,6 +53,7 @@ class Policy:
     repo_roles: dict[str, str] = field(default_factory=dict)
     org_roles: dict[str, str] = field(default_factory=dict)
     prompt_overrides: PromptOverrides = field(default_factory=PromptOverrides)
+    feedback_learning: FeedbackLearning = field(default_factory=FeedbackLearning)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Policy":
@@ -93,6 +100,13 @@ class Policy:
                 intents={str(k).lower(): prompt_path(v) for k, v in raw_intents.items()},
             )
 
+        def feedback_learning(raw: dict) -> FeedbackLearning:
+            raw = raw or {}
+            min_confidence = float(raw.get("minConfidence", 0.5))
+            if min_confidence < 0 or min_confidence > 1:
+                raise ValueError("feedbackLearning.minConfidence must be between 0 and 1")
+            return FeedbackLearning(enabled=bool(raw.get("enabled", True)), min_confidence=min_confidence)
+
         return cls(
             source_from=source.get("from", cls.source_from),
             required_url_prefix=source.get("requiredUrlPrefix", cls.required_url_prefix),
@@ -106,6 +120,7 @@ class Policy:
             repo_routes=routes(data.get("repoRoutes", {})), org_routes=routes(data.get("orgRoutes", {})),
             repo_roles=roles(data.get("repoRoles", {})), org_roles=roles(data.get("orgRoles", {})),
             prompt_overrides=prompt_overrides(data.get("promptOverrides", {})),
+            feedback_learning=feedback_learning(data.get("feedbackLearning", {})),
         )
 
     def trusted_source(self, n: Notification, ctx: GitHubContext) -> bool:

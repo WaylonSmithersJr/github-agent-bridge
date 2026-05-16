@@ -1,6 +1,6 @@
 # `policy.json` reference
 
-`policy.json` controls which GitHub notifications the bridge trusts, which repositories are in scope, which actions are automatic, where OpenClaw agent work is delivered, and which operating posture the agent uses.
+`policy.json` controls which GitHub notifications the bridge trusts, which repositories are in scope, which actions are automatic, where OpenClaw agent work is delivered, which operating posture the agent uses, and whether feedback learning is captured.
 
 ## Quick map
 
@@ -11,7 +11,8 @@ flowchart TD
     C --> D[repoRoutes/orgRoutes]
     D --> E[repoRoles/orgRoles]
     E --> F[promptOverrides]
-    F --> G[OpenClaw dispatch]
+    F --> G[feedbackLearning]
+    G --> H[OpenClaw dispatch]
 ```
 
 | Question | Policy area |
@@ -22,6 +23,7 @@ flowchart TD
 | Where should accepted work be delivered? | `repoRoutes`, `orgRoutes` |
 | How much authority should the agent use? | `repoRoles`, `orgRoles` |
 | Which prompt text should be customized? | `promptOverrides` |
+| Should feedback-like GitHub comments become scoped rules? | `feedbackLearning` |
 
 Default path in the packaged CLI/systemd examples:
 
@@ -75,6 +77,10 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
     "ask": [],
     "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "docs_update", "content_change"],
     "deny": ["merge_main", "org_permissions_change", "manage_secrets", "delete_remote_repo_or_branch"]
+  },
+  "feedbackLearning": {
+    "enabled": true,
+    "minConfidence": 0.5
   }
 }
 ```
@@ -93,6 +99,7 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 | `orgRoles` | object | `{}` | Per-owner operating role used when no `repoRoles` entry matches. |
 | `actions` | object | built-in action defaults | Maps classified notification actions to policy decisions. |
 | `promptOverrides` | object | `{}` | Optional Markdown files that replace selected packaged prompt resources. |
+| `feedbackLearning` | object | `{ "enabled": true, "minConfidence": 0.5 }` | Controls capture and prompt threshold for synthesized feedback rules. |
 
 Unknown top-level keys are ignored by the current implementation.
 
@@ -577,7 +584,18 @@ Agents must also apply the comment value rule before posting: comment only when 
 
 ## Feedback learning
 
-The bridge captures trusted actionable GitHub notifications into its SQLite database and synthesizes compact, scoped rules from feedback-like comments. Raw events are stored in `feedback_events`; agent-facing rules are stored in `feedback_rules`.
+`feedbackLearning` controls whether the bridge captures trusted actionable GitHub notifications into its SQLite database and synthesizes compact, scoped rules from feedback-like comments:
+
+```json
+{
+  "feedbackLearning": {
+    "enabled": true,
+    "minConfidence": 0.5
+  }
+}
+```
+
+Raw events are stored in `feedback_events`; agent-facing rules are stored in `feedback_rules`.
 
 Agents receive a packaged prompt rule that tells them to consult synthesized repo-scoped rules before working:
 

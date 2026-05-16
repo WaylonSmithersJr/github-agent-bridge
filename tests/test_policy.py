@@ -46,6 +46,28 @@ def test_policy_from_file_loads_roles_and_rejects_unknown(tmp_path):
         raise AssertionError("expected ValueError for unknown repo role")
 
 
+def test_policy_from_file_loads_feedback_learning(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text('{"feedbackLearning": {"enabled": false, "minConfidence": 0.7}}')
+
+    policy = Policy.from_file(policy_file)
+
+    assert policy.feedback_learning.enabled is False
+    assert policy.feedback_learning.min_confidence == 0.7
+
+
+def test_policy_from_file_rejects_invalid_feedback_learning_confidence(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text('{"feedbackLearning": {"minConfidence": 1.7}}')
+
+    try:
+        Policy.from_file(policy_file)
+    except ValueError as exc:
+        assert "feedbackLearning.minConfidence" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for invalid feedback confidence")
+
+
 def test_policy_from_file_loads_prompt_overrides_relative_to_policy(tmp_path):
     prompts = tmp_path / "prompts"
     prompts.mkdir()

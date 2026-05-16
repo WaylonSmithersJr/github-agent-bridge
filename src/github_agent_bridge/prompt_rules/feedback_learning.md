@@ -4,7 +4,7 @@ Before doing GitHub work, consult synthesized local feedback rules when the
 bridge database is available:
 
 ```bash
-gab feedback-rules --scope repo:{repo} --min-confidence 0.5
+gab feedback-rules --scope repo:{repo} --min-confidence {min_confidence}
 ```
 
 Apply relevant scoped rules to tone, process, and repository-specific behavior.

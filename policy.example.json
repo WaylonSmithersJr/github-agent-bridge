@@ -50,5 +50,9 @@
   },
   "orgRoles": {
     "your-org": "contributor"
+  },
+  "feedbackLearning": {
+    "enabled": true,
+    "minConfidence": 0.5
   }
 }

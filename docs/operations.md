@@ -89,6 +89,9 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   feedback-rules --scope repo:owner/name --min-confidence 0.5
 ```
 
+Capture is controlled by `policy.json` `feedbackLearning.enabled`; the prompt
+threshold comes from `feedbackLearning.minConfidence`.
+
 ### Retry a blocked job
 
 ```bash

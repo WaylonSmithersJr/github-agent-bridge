@@ -1,5 +1,5 @@
 from github_agent_bridge.models import Notification
-from github_agent_bridge.policy import Policy
+from github_agent_bridge.policy import FeedbackLearning, Policy
 from github_agent_bridge.queue import JobQueue
 
 BODY1 = "@pilipilisbot one https://github.com/gisce/erp/pull/1#issuecomment-10"
@@ -60,3 +60,13 @@ def test_duplicate_enqueue_does_not_recapture_feedback(tmp_path, monkeypatch):
     q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
 
     assert len(captured) == 1
+
+
+def test_enqueue_skips_feedback_when_policy_disables_it(tmp_path, monkeypatch):
+    captured = []
+    monkeypatch.setattr("github_agent_bridge.feedback.capture_feedback", lambda *args: captured.append(args) or True)
+
+    q = JobQueue(tmp_path / "q.sqlite3")
+    q.enqueue(notif(1, "<1@github.com>", BODY1), Policy(trusted_orgs={"gisce"}, feedback_learning=FeedbackLearning(enabled=False)))
+
+    assert captured == []

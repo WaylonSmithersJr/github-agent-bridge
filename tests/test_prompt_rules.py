@@ -3,7 +3,7 @@ from importlib import resources
 
 from github_agent_bridge.dispatch import COMMENT_VALUE_RULES, FEEDBACK_LEARNING_RULES, OpenClawDispatcher, PR_REVIEW_RULES, PROMPT_INJECTION_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
 from github_agent_bridge.models import GitHubContext, Job
-from github_agent_bridge.policy import Policy
+from github_agent_bridge.policy import FeedbackLearning, Policy
 
 
 def make_job(work_intent="work_allowed", action="reply_comment"):
@@ -48,7 +48,16 @@ def test_build_prompt_reads_packaged_markdown_rules():
     assert "# Review-only rule" in prompt
     assert WORKTREE_RULES in prompt
     assert REVIEW_ONLY_RULES in prompt
-    assert FEEDBACK_LEARNING_RULES.format(repo="gisce/erp") in prompt
+    assert FEEDBACK_LEARNING_RULES.format(repo="gisce/erp", min_confidence=0.5) in prompt
+
+
+def test_build_prompt_uses_feedback_learning_policy_threshold():
+    prompt = OpenClawDispatcher(mode="shadow").build_prompt(
+        make_job("review_only"),
+        Policy(feedback_learning=FeedbackLearning(min_confidence=0.8)),
+    )
+
+    assert "feedback-rules --scope repo:gisce/erp --min-confidence 0.8" in prompt
 
 
 def test_role_prompt_markdown_files_are_packaged_resources():

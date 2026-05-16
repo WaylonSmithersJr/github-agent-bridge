@@ -1,0 +1,11 @@
+[Unit]
+Description=Run GitHub Agent Bridge feedback learning periodically
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

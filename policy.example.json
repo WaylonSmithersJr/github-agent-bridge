@@ -53,6 +53,10 @@
   },
   "feedbackLearning": {
     "enabled": true,
-    "minConfidence": 0.5
+    "minConfidence": 0.5,
+    "autoApproveConfidence": 0.8,
+    "maxEventsPerRun": 10,
+    "thinking": "low",
+    "sessionId": "github-agent-bridge-feedback"
   }
 }

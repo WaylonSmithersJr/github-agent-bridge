@@ -35,6 +35,11 @@ class PromptOverrides:
 class FeedbackLearning:
     enabled: bool = True
     min_confidence: float = 0.5
+    auto_approve_confidence: float = 0.8
+    max_events_per_run: int = 10
+    model: str | None = None
+    thinking: str = "low"
+    session_id: str = "github-agent-bridge-feedback"
 
 
 @dataclass(frozen=True)
@@ -105,7 +110,22 @@ class Policy:
             min_confidence = float(raw.get("minConfidence", 0.5))
             if min_confidence < 0 or min_confidence > 1:
                 raise ValueError("feedbackLearning.minConfidence must be between 0 and 1")
-            return FeedbackLearning(enabled=bool(raw.get("enabled", True)), min_confidence=min_confidence)
+            auto_approve_confidence = float(raw.get("autoApproveConfidence", 0.8))
+            if auto_approve_confidence < 0 or auto_approve_confidence > 1:
+                raise ValueError("feedbackLearning.autoApproveConfidence must be between 0 and 1")
+            max_events_per_run = int(raw.get("maxEventsPerRun", 10))
+            if max_events_per_run < 1:
+                raise ValueError("feedbackLearning.maxEventsPerRun must be at least 1")
+            model = raw.get("model")
+            return FeedbackLearning(
+                enabled=bool(raw.get("enabled", True)),
+                min_confidence=min_confidence,
+                auto_approve_confidence=auto_approve_confidence,
+                max_events_per_run=max_events_per_run,
+                model=str(model) if model else None,
+                thinking=str(raw.get("thinking", "low")),
+                session_id=str(raw.get("sessionId", "github-agent-bridge-feedback")),
+            )
 
         return cls(
             source_from=source.get("from", cls.source_from),

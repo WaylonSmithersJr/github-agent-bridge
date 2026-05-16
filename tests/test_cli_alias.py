@@ -48,3 +48,32 @@ def test_feedback_events_cli_lists_events(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert '"events": []' in captured.out
+
+
+def test_feedback_learn_cli_uses_policy_and_lists_result(tmp_path, capsys, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    policy = tmp_path / "policy.json"
+    JobQueue(db)
+    policy.write_text('{"feedbackLearning": {"enabled": true, "maxEventsPerRun": 2, "autoApproveConfidence": 0.85}}')
+
+    def fake_learn(**kwargs):
+        assert kwargs["limit"] == 2
+        assert kwargs["auto_approve_confidence"] == 0.85
+        return {"processed": 0, "approved": 0, "proposed": 0, "rejected": 0, "errors": 0, "proposals": []}
+
+    monkeypatch.setattr("github_agent_bridge.feedback.learn_from_events", lambda *args, **kwargs: fake_learn(**kwargs))
+
+    cli.main(["--db", str(db), "--policy", str(policy), "feedback-learn"])
+
+    captured = capsys.readouterr()
+    assert '"processed": 0' in captured.out
+
+
+def test_feedback_proposals_cli_lists_proposals(tmp_path, capsys):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+
+    cli.main(["--db", str(db), "feedback-proposals"])
+
+    captured = capsys.readouterr()
+    assert '"proposals": []' in captured.out

@@ -99,7 +99,27 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 Capture is controlled by `policy.json` `feedbackLearning.enabled`; the prompt
 threshold comes from `feedbackLearning.minConfidence`.
 
-Add a curated rule with:
+Run an autonomous learning pass with:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  --policy ~/.config/github-agent-bridge/policy.json \
+  feedback-learn
+```
+
+The learning pass calls an LLM through OpenClaw, classifies unprocessed
+`feedback_events`, and writes `feedback_rule_proposals`. High-confidence
+reusable lessons are promoted automatically to `feedback_rules`; task-specific
+comments are rejected and never reach agent prompts. It uses the dedicated
+`feedbackLearning.sessionId` OpenClaw session and does not deliver chat output.
+
+For unattended operation, install and enable:
+
+```bash
+systemctl --user enable --now github-agent-bridge-feedback.timer
+```
+
+Manual rule insertion remains available for operator backfills:
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \

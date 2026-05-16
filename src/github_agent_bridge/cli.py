@@ -217,6 +217,30 @@ def cmd_feedback_rule_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_feedback_learn(args: argparse.Namespace) -> int:
+    policy = load_policy(args.policy)
+    if not policy.feedback_learning.enabled:
+        print(json.dumps({"processed": 0, "disabled": True}, ensure_ascii=False, indent=2))
+        return 0
+    result = feedback.learn_from_events(
+        args.db,
+        openclaw_bin=args.openclaw_bin,
+        model=args.model or policy.feedback_learning.model,
+        thinking=args.thinking or policy.feedback_learning.thinking,
+        session_id=args.session_id or policy.feedback_learning.session_id,
+        limit=args.limit or policy.feedback_learning.max_events_per_run,
+        auto_approve_confidence=args.auto_approve_confidence if args.auto_approve_confidence is not None else policy.feedback_learning.auto_approve_confidence,
+        timeout=args.timeout,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_feedback_proposals(args: argparse.Namespace) -> int:
+    print(json.dumps({"proposals": feedback.list_proposals(args.db, args.status, args.limit)}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog=Path(sys.argv[0]).name)
     p.add_argument("--db", default=DEFAULT_DB)
@@ -277,6 +301,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--confidence", type=float, default=0.8)
     s.add_argument("--source-event", action="append", default=[], help="feedback event id that supports this rule")
     s.set_defaults(func=cmd_feedback_rule_add)
+    s = sub.add_parser("feedback-learn", help="autonomously classify feedback candidates and promote high-confidence rules")
+    s.add_argument("--limit", type=int, default=None)
+    s.add_argument("--openclaw-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_OPENCLAW_BIN", os.getenv("OPENCLAW_BIN", "openclaw")))
+    s.add_argument("--model", default=None)
+    s.add_argument("--thinking", default=None)
+    s.add_argument("--session-id", default=None)
+    s.add_argument("--timeout", type=int, default=180)
+    s.add_argument("--auto-approve-confidence", type=float, default=None)
+    s.set_defaults(func=cmd_feedback_learn)
+    s = sub.add_parser("feedback-proposals", help="list autonomous feedback learning proposals")
+    s.add_argument("--status", choices=["", "approved", "rejected", "proposed", "error"], default="")
+    s.add_argument("--limit", type=int, default=20)
+    s.set_defaults(func=cmd_feedback_proposals)
     return p
 
 

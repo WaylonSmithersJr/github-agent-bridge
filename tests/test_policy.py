@@ -48,12 +48,17 @@ def test_policy_from_file_loads_roles_and_rejects_unknown(tmp_path):
 
 def test_policy_from_file_loads_feedback_learning(tmp_path):
     policy_file = tmp_path / "policy.json"
-    policy_file.write_text('{"feedbackLearning": {"enabled": false, "minConfidence": 0.7}}')
+    policy_file.write_text('{"feedbackLearning": {"enabled": false, "minConfidence": 0.7, "autoApproveConfidence": 0.9, "maxEventsPerRun": 3, "model": "test-model", "thinking": "medium", "sessionId": "feedback-test"}}')
 
     policy = Policy.from_file(policy_file)
 
     assert policy.feedback_learning.enabled is False
     assert policy.feedback_learning.min_confidence == 0.7
+    assert policy.feedback_learning.auto_approve_confidence == 0.9
+    assert policy.feedback_learning.max_events_per_run == 3
+    assert policy.feedback_learning.model == "test-model"
+    assert policy.feedback_learning.thinking == "medium"
+    assert policy.feedback_learning.session_id == "feedback-test"
 
 
 def test_policy_from_file_rejects_invalid_feedback_learning_confidence(tmp_path):
@@ -66,6 +71,18 @@ def test_policy_from_file_rejects_invalid_feedback_learning_confidence(tmp_path)
         assert "feedbackLearning.minConfidence" in str(exc)
     else:
         raise AssertionError("expected ValueError for invalid feedback confidence")
+
+
+def test_policy_from_file_rejects_invalid_feedback_learning_auto_approve(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text('{"feedbackLearning": {"autoApproveConfidence": -0.1}}')
+
+    try:
+        Policy.from_file(policy_file)
+    except ValueError as exc:
+        assert "feedbackLearning.autoApproveConfidence" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for invalid auto approve confidence")
 
 
 def test_policy_from_file_loads_prompt_overrides_relative_to_policy(tmp_path):

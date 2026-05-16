@@ -84,3 +84,62 @@ def test_add_rule_rejects_invalid_confidence(tmp_path):
 
     with pytest.raises(ValueError, match="confidence"):
         feedback.add_rule(db, "repo:gisce/erp", "style_preference", "Rule", 1.7)
+
+
+def test_openclaw_json_payload_text_is_extracted():
+    raw = '{"result":{"payloads":[{"text":"{\\\"is_feedback\\\":false,\\\"scope\\\":\\\"global\\\",\\\"type\\\":\\\"domain_context\\\",\\\"rule\\\":\\\"\\\",\\\"confidence\\\":0,\\\"reason\\\":\\\"shape test\\\"}"}]}}'
+
+    assert feedback._extract_json_object(feedback._openclaw_text_from_json(raw))["reason"] == "shape test"
+
+
+def test_learn_from_events_auto_approves_high_confidence_feedback(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+
+    def fake_classify(event, **kwargs):
+        return {
+            "event_id": event["id"],
+            "is_feedback": True,
+            "scope": event["scope"],
+            "type": "operating_rule",
+            "rule": "Read the repository guide before changing project architecture.",
+            "confidence": 0.91,
+            "reason": "The comment criticizes a process failure that can recur.",
+        }
+
+    monkeypatch.setattr(feedback, "classify_event_with_llm", fake_classify)
+
+    result = feedback.learn_from_events(db, limit=5, auto_approve_confidence=0.8)
+
+    assert result["processed"] == 1
+    assert result["approved"] == 1
+    rules = feedback.list_rules(db, "repo:gisce/erp", min_confidence=0.8)
+    assert len(rules) == 1
+    assert rules[0]["rule"] == "Read the repository guide before changing project architecture."
+
+
+def test_learn_from_events_rejects_task_specific_comments(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+
+    def fake_classify(event, **kwargs):
+        return {
+            "event_id": event["id"],
+            "is_feedback": False,
+            "scope": event["scope"],
+            "type": "domain_context",
+            "rule": "",
+            "confidence": 0.2,
+            "reason": "Only about this PR.",
+        }
+
+    monkeypatch.setattr(feedback, "classify_event_with_llm", fake_classify)
+
+    result = feedback.learn_from_events(db, limit=5, auto_approve_confidence=0.8)
+
+    assert result["processed"] == 1
+    assert result["rejected"] == 1
+    assert feedback.list_rules(db) == []
+    assert feedback.list_proposals(db, status="rejected")[0]["reason"] == "Only about this PR."

@@ -69,3 +69,19 @@ CREATE TABLE IF NOT EXISTS feedback_rules (
   observations INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_rules_scope_confidence ON feedback_rules(scope, confidence);
+CREATE TABLE IF NOT EXISTS feedback_rule_proposals (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES feedback_events(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('approved','rejected','proposed','error')),
+  scope TEXT NOT NULL,
+  type TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  rule TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_rule_proposals_status ON feedback_rule_proposals(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_rule_proposals_event ON feedback_rule_proposals(event_id);

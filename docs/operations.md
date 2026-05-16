@@ -79,6 +79,16 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 status
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 jobs --limit 20
 ```
 
+### Inspect feedback learning rules
+
+Trusted actionable GitHub notifications are captured into the bridge database.
+The compact rules shown to agents can be inspected with:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  feedback-rules --scope repo:owner/name --min-confidence 0.5
+```
+
 ### Retry a blocked job
 
 ```bash

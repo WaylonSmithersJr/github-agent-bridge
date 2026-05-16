@@ -43,3 +43,29 @@ CREATE TABLE IF NOT EXISTS worklog (
   summary TEXT NOT NULL,
   detail TEXT
 );
+CREATE TABLE IF NOT EXISTS feedback_events (
+  id TEXT PRIMARY KEY,
+  occurred_at TEXT NOT NULL,
+  captured_at TEXT NOT NULL,
+  source TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  comment TEXT NOT NULL,
+  context_json TEXT NOT NULL DEFAULT '{}',
+  classification TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  memorable INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_events_scope_seen ON feedback_events(scope, occurred_at);
+CREATE TABLE IF NOT EXISTS feedback_rules (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  type TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  rule TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  source_events_json TEXT NOT NULL DEFAULT '[]',
+  observations INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_rules_scope_confidence ON feedback_rules(scope, confidence);

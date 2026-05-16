@@ -44,7 +44,7 @@ def test_build_prompt_reads_packaged_markdown_rules():
     assert "# PR metadata rule" in prompt
     assert "# Human reviewer rule" in prompt
     assert "# Feedback learning rule" in prompt
-    assert "list-rules --scope repo:gisce/erp" in prompt
+    assert "feedback-rules --scope repo:gisce/erp" in prompt
     assert "# Review-only rule" in prompt
     assert WORKTREE_RULES in prompt
     assert REVIEW_ONLY_RULES in prompt

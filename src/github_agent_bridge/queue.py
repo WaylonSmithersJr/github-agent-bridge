@@ -59,7 +59,7 @@ class JobQueue:
                     self._log(con, existing["id"], ctx.work_key, "coalesced", "Notification coalesced into active job", n.message_id)
                     con.commit()
                     if existing["message_id"] != n.message_id:
-                        feedback.capture_feedback(n, ctx, action, decision, intent)
+                        feedback.capture_feedback(self.path, n, ctx, action, decision, intent)
                     return self._row_to_job(existing), "coalesced"
                 con.execute(
                     "INSERT INTO jobs(work_key,repo,thread,status,action,decision,work_intent,subject,message_id,uid,context_json,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -68,7 +68,7 @@ class JobQueue:
                 job_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
                 self._log(con, job_id, ctx.work_key, "queued" if status == "pending" else status, f"decision={decision} action={action}", n.message_id)
                 con.commit()
-                feedback.capture_feedback(n, ctx, action, decision, intent)
+                feedback.capture_feedback(self.path, n, ctx, action, decision, intent)
                 return self.get(job_id), "enqueued"
             except sqlite3.IntegrityError:
                 con.rollback()

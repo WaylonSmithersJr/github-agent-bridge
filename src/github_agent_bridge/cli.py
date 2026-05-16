@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import feedback
 from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
 from .executor import ExecutorConfig, ExecutorPool
 from .models import Notification, utc_now
@@ -200,6 +201,11 @@ def cmd_monitor(args: argparse.Namespace) -> int:
     return 0 if report.ok else 2
 
 
+def cmd_feedback_rules(args: argparse.Namespace) -> int:
+    print(json.dumps({"rules": feedback.list_rules(args.db, args.scope, args.min_confidence)}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog=Path(sys.argv[0]).name)
     p.add_argument("--db", default=DEFAULT_DB)
@@ -245,6 +251,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--review-running-warn-seconds", type=int, default=1200)
     s.add_argument("--work-running-warn-seconds", type=int, default=4200)
     s.set_defaults(func=cmd_monitor)
+    s = sub.add_parser("feedback-rules", help="list synthesized feedback rules captured from GitHub notifications")
+    s.add_argument("--scope", default="", help="filter by exact scope or scope prefix, e.g. repo:owner/name")
+    s.add_argument("--min-confidence", type=float, default=None)
+    s.set_defaults(func=cmd_feedback_rules)
     return p
 
 

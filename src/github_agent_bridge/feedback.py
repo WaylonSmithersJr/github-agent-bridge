@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -11,15 +12,19 @@ from .models import GitHubContext, Notification
 
 ACTIONABLE_FEEDBACK_ACTIONS = {"reply_comment", "open_issue", "submit_review", "docs_update", "content_change"}
 FEEDBACK_DECISIONS = {"auto_trusted", "ask"}
-DEFAULT_LEARNER = "/home/openclaw/.openclaw/workspace/scripts/pilipilis_feedback_learner.py"
+DEFAULT_LEARNER_BIN = "github-agent-feedback-learner"
 
 
 def enabled() -> bool:
     return os.environ.get("GITHUB_AGENT_BRIDGE_FEEDBACK_LEARNING", "1") != "0"
 
 
-def learner_path() -> Path:
-    return Path(os.environ.get("GITHUB_AGENT_BRIDGE_FEEDBACK_LEARNER", os.environ.get("PILIPILIS_FEEDBACK_LEARNER", DEFAULT_LEARNER)))
+def learner_path() -> Path | None:
+    configured = os.environ.get("GITHUB_AGENT_BRIDGE_FEEDBACK_LEARNER")
+    if configured:
+        return Path(configured)
+    discovered = shutil.which(DEFAULT_LEARNER_BIN)
+    return Path(discovered) if discovered else None
 
 
 def compact(text: str, limit: int = 1600) -> str:
@@ -45,7 +50,9 @@ def capture_feedback(n: Notification, ctx: GitHubContext, action: str, decision:
         return False
 
     path = learner_path()
-    if not path.exists():
+    if path is None:
+        return False
+    if path.is_absolute() and not path.exists():
         return False
 
     repo = ctx.repo or "unknown/repo"

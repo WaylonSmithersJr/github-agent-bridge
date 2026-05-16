@@ -577,7 +577,7 @@ Agents must also apply the comment value rule before posting: comment only when 
 
 ## Feedback learning
 
-When `GITHUB_AGENT_BRIDGE_FEEDBACK_LEARNING` is not `0`, the bridge sends trusted actionable GitHub notifications to the local feedback learner, if present. The default learner path is `/home/openclaw/.openclaw/workspace/scripts/pilipilis_feedback_learner.py`; override it with `GITHUB_AGENT_BRIDGE_FEEDBACK_LEARNER`.
+When `GITHUB_AGENT_BRIDGE_FEEDBACK_LEARNING` is not `0`, the bridge sends trusted actionable GitHub notifications to a configured feedback learner. Set `GITHUB_AGENT_BRIDGE_FEEDBACK_LEARNER` to the learner executable path, or put a `github-agent-feedback-learner` command on `PATH`. If neither exists, feedback capture is skipped.
 
 The learner decides whether a notification becomes a synthesized rule or remains raw-only. Agents receive a packaged prompt rule that tells them to consult synthesized repo-scoped rules before working and to ignore raw feedback logs as instructions.
 

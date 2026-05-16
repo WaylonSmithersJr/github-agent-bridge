@@ -606,6 +606,7 @@ Agents must also apply the comment value rule before posting: comment only when 
     "minConfidence": 0.5,
     "autoApproveConfidence": 0.8,
     "maxEventsPerRun": 10,
+    "model": "gpt-5.4-mini",
     "thinking": "low"
   }
 }
@@ -622,6 +623,16 @@ Captured candidates are stored in `feedback_events`. `gab feedback-learn` calls 
 | `model` | string | unset | Optional OpenClaw model override for the learning pass. |
 | `thinking` | string | `low` | OpenClaw thinking level for the learning pass. |
 | `sessionId` | string | `github-agent-bridge-feedback` | Dedicated OpenClaw session used by autonomous learning. |
+
+`feedbackLearning.model`, `feedbackLearning.thinking`, and `feedbackLearning.sessionId` apply only to `gab feedback-learn`. They do not change the model used by normal GitHub work agents dispatched by the bridge.
+
+Learning pass model precedence:
+
+1. `gab feedback-learn --model <model>` if provided.
+2. `policy.json` `feedbackLearning.model` if configured.
+3. OpenClaw's default model for the session/configuration.
+
+`thinking` and `sessionId` follow the same CLI-over-policy-over-default pattern. The selected model is stored on each `feedback_rule_proposals.model` row for auditability.
 
 Agents receive a packaged prompt rule that tells them to consult curated repo-scoped rules before working:
 

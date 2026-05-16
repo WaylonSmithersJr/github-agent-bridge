@@ -115,6 +115,30 @@ comments are rejected and never reach agent prompts. It uses the dedicated
 The classifier prompt defaults to packaged `prompt_rules/feedback_classifier.md`;
 override it with `policy.json` `promptOverrides.rules.feedback_classifier`.
 
+The learning pass model is independent from the model used by normal GitHub
+work agents. Configure it in `policy.json`:
+
+```json
+{
+  "feedbackLearning": {
+    "model": "gpt-5.4-mini",
+    "thinking": "low",
+    "sessionId": "github-agent-bridge-feedback"
+  }
+}
+```
+
+For one-off runs, CLI flags take precedence over policy:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  --policy ~/.config/github-agent-bridge/policy.json \
+  feedback-learn --model gpt-5.4-mini --thinking low
+```
+
+If no model is set by CLI or policy, OpenClaw uses its default model. The model
+used for each classification is stored in `feedback_rule_proposals.model`.
+
 For unattended operation, install and enable:
 
 ```bash

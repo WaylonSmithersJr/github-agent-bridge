@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.6.2 (2026-05-16)
+
+### Bug Fixes
+
+- Store feedback learning in bridge database
+  ([`e3f65aa`](https://github.com/pilipilisbot/github-agent-bridge/commit/e3f65aa30bc7b2e7ee794bc440233c1df6a6f921))
+
+
 ## v0.6.1 (2026-05-16)
 
 ### Bug Fixes

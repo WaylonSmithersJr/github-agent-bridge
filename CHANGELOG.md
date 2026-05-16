@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.1 (2026-05-16)
+
+### Bug Fixes
+
+- Move feedback classifier prompt to resource
+  ([`b698888`](https://github.com/pilipilisbot/github-agent-bridge/commit/b698888dc02c6ad2015826dbf52fc48e69b51c46))
+
+
 ## v0.7.0 (2026-05-16)
 
 ### Features

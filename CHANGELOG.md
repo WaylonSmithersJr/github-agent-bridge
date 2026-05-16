@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-05-16)
+
+### Features
+
+- Add autonomous feedback learning pass
+  ([`8669357`](https://github.com/pilipilisbot/github-agent-bridge/commit/866935700bb5d744d1979a117a8645908107b725))
+
+
 ## v0.6.4 (2026-05-16)
 
 ### Bug Fixes

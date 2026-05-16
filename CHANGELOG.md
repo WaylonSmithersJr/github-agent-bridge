@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.2 (2026-05-16)
+
+### Bug Fixes
+
+- Make prompt rules overrideable
+  ([`5c79175`](https://github.com/pilipilisbot/github-agent-bridge/commit/5c7917570b609d7ac573d40705669ececf5a0f5f))
+
+
 ## v0.7.1 (2026-05-16)
 
 ### Bug Fixes

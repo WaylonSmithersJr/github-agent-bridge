@@ -35,6 +35,12 @@ def load_prompt_override(path) -> str:
     return path.read_text(encoding="utf-8").strip() + "\n"
 
 
+def prompt_rule(name: str, default: str, policy: Policy | None) -> str:
+    """Read a packaged prompt rule or a policy-configured override."""
+    override = policy.prompt_overrides.rule_path(name) if policy else None
+    return load_prompt_override(override) if override else default
+
+
 BASE_PROMPT = load_prompt_rule("base.md")
 WORKTREE_RULES = load_prompt_rule("worktree.md")
 PR_METADATA_RULES = load_prompt_rule("pr_metadata.md")
@@ -230,9 +236,9 @@ class OpenClawDispatcher:
             intent_rules = load_prompt_override(intent_override) if intent_override else REVIEW_ONLY_RULES
         action_rules = ""
         if job.action == "sync_after_merge":
-            action_rules = SYNC_AFTER_MERGE_RULES
+            action_rules = prompt_rule("sync_after_merge", SYNC_AFTER_MERGE_RULES, policy)
         elif job.action == "submit_review":
-            action_rules = PR_REVIEW_RULES
+            action_rules = prompt_rule("pr_review", PR_REVIEW_RULES, policy)
         base_prompt = base_template.format(
             repo=repo,
             thread=thread,
@@ -243,8 +249,14 @@ class OpenClawDispatcher:
             subject=job.subject,
         )
         feedback_min_confidence = policy.feedback_learning.min_confidence if policy else 0.5
-        feedback_rules = FEEDBACK_LEARNING_RULES.format(repo=repo, min_confidence=feedback_min_confidence)
-        return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{PROMPT_INJECTION_RULES}{COMMENT_VALUE_RULES}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}{feedback_rules}"
+        feedback_rules_template = prompt_rule("feedback_learning", FEEDBACK_LEARNING_RULES, policy)
+        feedback_rules = feedback_rules_template.format(repo=repo, min_confidence=feedback_min_confidence)
+        prompt_injection_rules = prompt_rule("prompt_injection", PROMPT_INJECTION_RULES, policy)
+        comment_value_rules = prompt_rule("comment_value", COMMENT_VALUE_RULES, policy)
+        worktree_rules = prompt_rule("worktree", WORKTREE_RULES, policy)
+        pr_metadata_rules = prompt_rule("pr_metadata", PR_METADATA_RULES, policy)
+        human_reviewer_rules = prompt_rule("human_reviewer", HUMAN_REVIEWER_RULES, policy)
+        return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{prompt_injection_rules}{comment_value_rules}{worktree_rules}{pr_metadata_rules}{human_reviewer_rules}{feedback_rules}"
 
     def route_for(self, job: Job, policy: Policy) -> tuple[str | None, str, str]:
         route: Route = policy.route_for(job.repo)

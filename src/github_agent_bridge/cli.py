@@ -222,6 +222,7 @@ def cmd_feedback_learn(args: argparse.Namespace) -> int:
     if not policy.feedback_learning.enabled:
         print(json.dumps({"processed": 0, "disabled": True}, ensure_ascii=False, indent=2))
         return 0
+    classifier_override = policy.prompt_overrides.rule_path("feedback_classifier")
     result = feedback.learn_from_events(
         args.db,
         openclaw_bin=args.openclaw_bin,
@@ -231,6 +232,7 @@ def cmd_feedback_learn(args: argparse.Namespace) -> int:
         limit=args.limit or policy.feedback_learning.max_events_per_run,
         auto_approve_confidence=args.auto_approve_confidence if args.auto_approve_confidence is not None else policy.feedback_learning.auto_approve_confidence,
         timeout=args.timeout,
+        prompt_template=feedback.load_prompt_override(classifier_override) if classifier_override else None,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

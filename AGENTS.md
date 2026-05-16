@@ -74,6 +74,13 @@ Important invariants:
 - `monitor.py`: operational health checks.
 - `cli.py`: operational entrypoints and developer tooling.
 
+## Prompt resource contract
+
+- Do not put substantial LLM prompt text inline in Python. Prompt text belongs in `src/github_agent_bridge/prompt_rules/*.md` or `src/github_agent_bridge/prompt_rules/roles/*.md`.
+- If a new prompt can reasonably vary by deployment, add a `policy.json` `promptOverrides` key for it instead of hardcoding a resource path as the only source.
+- Packaged prompt resources are defaults. Operator override files are first-class configuration and must be honored wherever prompts are built, including background learning commands such as `feedback-learn`.
+- Add or update tests for both the packaged default and the override path whenever prompt loading changes.
+
 ## Test expectations
 
 Run before handing off or pushing:

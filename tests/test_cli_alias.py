@@ -53,12 +53,16 @@ def test_feedback_events_cli_lists_events(tmp_path, capsys):
 def test_feedback_learn_cli_uses_policy_and_lists_result(tmp_path, capsys, monkeypatch):
     db = tmp_path / "q.sqlite3"
     policy = tmp_path / "policy.json"
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / "feedback_classifier.md").write_text("custom classifier {event_json}\n")
     JobQueue(db)
-    policy.write_text('{"feedbackLearning": {"enabled": true, "maxEventsPerRun": 2, "autoApproveConfidence": 0.85}}')
+    policy.write_text('{"feedbackLearning": {"enabled": true, "maxEventsPerRun": 2, "autoApproveConfidence": 0.85}, "promptOverrides": {"rules": {"feedback_classifier": "prompts/feedback_classifier.md"}}}')
 
     def fake_learn(**kwargs):
         assert kwargs["limit"] == 2
         assert kwargs["auto_approve_confidence"] == 0.85
+        assert kwargs["prompt_template"] == "custom classifier {event_json}\n"
         return {"processed": 0, "approved": 0, "proposed": 0, "rejected": 0, "errors": 0, "proposals": []}
 
     monkeypatch.setattr("github_agent_bridge.feedback.learn_from_events", lambda *args, **kwargs: fake_learn(**kwargs))

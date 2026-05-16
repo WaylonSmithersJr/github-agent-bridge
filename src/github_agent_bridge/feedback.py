@@ -22,6 +22,10 @@ def load_prompt_rule(name: str) -> str:
     return resources.files(PROMPT_RULES_PACKAGE).joinpath(name).read_text(encoding="utf-8").strip() + "\n"
 
 
+def load_prompt_override(path: str | Path) -> str:
+    return Path(path).read_text(encoding="utf-8").strip() + "\n"
+
+
 FEEDBACK_CLASSIFIER_PROMPT = load_prompt_rule("feedback_classifier.md")
 
 
@@ -188,8 +192,9 @@ def _openclaw_text_from_json(raw: str) -> str:
     return raw
 
 
-def build_learning_prompt(event: dict[str, Any]) -> str:
-    return FEEDBACK_CLASSIFIER_PROMPT.format(event_json=json.dumps(event, ensure_ascii=False, sort_keys=True))
+def build_learning_prompt(event: dict[str, Any], prompt_template: str | None = None) -> str:
+    template = prompt_template or FEEDBACK_CLASSIFIER_PROMPT
+    return template.format(event_json=json.dumps(event, ensure_ascii=False, sort_keys=True))
 
 
 def classify_event_with_llm(
@@ -199,8 +204,9 @@ def classify_event_with_llm(
     thinking: str = "low",
     session_id: str = "github-agent-bridge-feedback",
     timeout: int = 180,
+    prompt_template: str | None = None,
 ) -> dict[str, Any]:
-    cmd = [openclaw_bin, "agent", "--json", "--session-id", session_id, "--timeout", str(timeout), "--thinking", thinking, "--message", build_learning_prompt(event)]
+    cmd = [openclaw_bin, "agent", "--json", "--session-id", session_id, "--timeout", str(timeout), "--thinking", thinking, "--message", build_learning_prompt(event, prompt_template)]
     if model:
         cmd.extend(["--model", model])
     proc = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout + 30)
@@ -290,12 +296,13 @@ def learn_from_events(
     limit: int = 10,
     auto_approve_confidence: float = 0.8,
     timeout: int = 180,
+    prompt_template: str | None = None,
 ) -> dict[str, Any]:
     events = pending_events(db_path, limit=limit)
     proposals = []
     for event in events:
         try:
-            proposal = classify_event_with_llm(event, openclaw_bin=openclaw_bin, model=model, thinking=thinking, session_id=session_id, timeout=timeout)
+            proposal = classify_event_with_llm(event, openclaw_bin=openclaw_bin, model=model, thinking=thinking, session_id=session_id, timeout=timeout, prompt_template=prompt_template)
             proposals.append(store_proposal(db_path, proposal, auto_approve_confidence, model=model or ""))
         except Exception as exc:
             fallback = {

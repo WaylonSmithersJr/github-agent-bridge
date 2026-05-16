@@ -112,6 +112,8 @@ The learning pass calls an LLM through OpenClaw, classifies unprocessed
 reusable lessons are promoted automatically to `feedback_rules`; task-specific
 comments are rejected and never reach agent prompts. It uses the dedicated
 `feedbackLearning.sessionId` OpenClaw session and does not deliver chat output.
+The classifier prompt defaults to packaged `prompt_rules/feedback_classifier.md`;
+override it with `policy.json` `promptOverrides.rules.feedback_classifier`.
 
 For unattended operation, install and enable:
 

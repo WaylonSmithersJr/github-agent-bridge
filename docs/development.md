@@ -110,6 +110,8 @@ If you add or rename a packaged resource:
 
 Operators can customize selected prompt resources through `policy.json` `promptOverrides`. Keep packaged defaults usable on their own; overrides are deployment configuration, not a replacement for sane defaults.
 
+Prompt text must not be embedded inline in Python when it belongs to bridge behavior. Put it in `prompt_rules/*.md`, load the packaged resource as the default, and wire an explicit `promptOverrides` path when operators may need to replace it. This applies to background prompts too, including the feedback classifier used by `gab feedback-learn`.
+
 ## Role and intent semantics
 
 Role and work intent are separate.

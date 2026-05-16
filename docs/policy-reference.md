@@ -306,6 +306,10 @@ Supported shape:
     },
     "intents": {
       "review_only": "path/to/review_only.md"
+    },
+    "rules": {
+      "feedback_classifier": "path/to/feedback-classifier.md",
+      "feedback_learning": "path/to/feedback-learning.md"
     }
   }
 }
@@ -321,6 +325,15 @@ Supported fields:
 | `roles.contributor` | string | Replaces the packaged `contributor` role prompt. |
 | `roles.reviewer` | string | Replaces the packaged `reviewer` role prompt. |
 | `intents.review_only` | string | Replaces the packaged review-only intent prompt. |
+| `rules.comment_value` | string | Replaces the packaged comment-value rule. |
+| `rules.feedback_classifier` | string | Replaces the packaged autonomous feedback classifier prompt used by `feedback-learn`. |
+| `rules.feedback_learning` | string | Replaces the packaged rule that tells agents to consult learned feedback. |
+| `rules.human_reviewer` | string | Replaces the packaged human-reviewer rule. |
+| `rules.pr_metadata` | string | Replaces the packaged PR metadata rule. |
+| `rules.pr_review` | string | Replaces the packaged formal PR review rule. |
+| `rules.prompt_injection` | string | Replaces the packaged prompt-injection hardening rule. |
+| `rules.sync_after_merge` | string | Replaces the packaged post-merge cleanup rule. |
+| `rules.worktree` | string | Replaces the packaged worktree rule. |
 
 Path semantics:
 
@@ -333,14 +346,14 @@ Validation semantics:
 - Missing override keys fall back to packaged defaults.
 - Configured override files must exist.
 - Configured override files must contain non-whitespace text.
-- Unknown role names or intent names are rejected.
+- Unknown role, intent, or rule override names are rejected.
 
 Prompt assembly order:
 
 1. base prompt, packaged or `promptOverrides.base`;
 2. repository role prompt, packaged or `promptOverrides.roles[role]`;
 3. work-intent prompt, currently only `review_only`, packaged or `promptOverrides.intents.review_only`;
-4. packaged operational rules such as worktree, PR metadata, and human reviewer handling.
+4. packaged operational prompt rules such as prompt-injection, comment value, worktree, PR metadata, feedback learning, and human reviewer handling; each can be replaced by the matching `promptOverrides.rules.*` file.
 
 The base prompt is a Python `str.format` template. It may use these placeholders:
 
@@ -598,7 +611,7 @@ Agents must also apply the comment value rule before posting: comment only when 
 }
 ```
 
-Captured candidates are stored in `feedback_events`. `gab feedback-learn` calls an LLM through OpenClaw, classifies unprocessed events, writes `feedback_rule_proposals`, and automatically promotes high-confidence reusable lessons to `feedback_rules`.
+Captured candidates are stored in `feedback_events`. `gab feedback-learn` calls an LLM through OpenClaw, classifies unprocessed events using the packaged `prompt_rules/feedback_classifier.md` prompt or `promptOverrides.rules.feedback_classifier`, writes `feedback_rule_proposals`, and automatically promotes high-confidence reusable lessons to `feedback_rules`.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |

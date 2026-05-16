@@ -91,13 +91,15 @@ def test_policy_from_file_loads_prompt_overrides_relative_to_policy(tmp_path):
     (prompts / "base.md").write_text("custom base {repo}\n")
     (prompts / "owner.md").write_text("custom owner\n")
     (prompts / "review_only.md").write_text("custom review only\n")
+    (prompts / "feedback_classifier.md").write_text("custom feedback {event_json}\n")
     policy_file = tmp_path / "policy.json"
     policy_file.write_text(
         """{
           "promptOverrides": {
             "base": "prompts/base.md",
             "roles": {"owner": "prompts/owner.md"},
-            "intents": {"review_only": "prompts/review_only.md"}
+            "intents": {"review_only": "prompts/review_only.md"},
+            "rules": {"feedback_classifier": "prompts/feedback_classifier.md"}
           }
         }"""
     )
@@ -107,6 +109,7 @@ def test_policy_from_file_loads_prompt_overrides_relative_to_policy(tmp_path):
     assert policy.prompt_overrides.base == prompts / "base.md"
     assert policy.prompt_overrides.role_path("OWNER") == prompts / "owner.md"
     assert policy.prompt_overrides.intent_path("review_only") == prompts / "review_only.md"
+    assert policy.prompt_overrides.rule_path("feedback_classifier") == prompts / "feedback_classifier.md"
 
 
 def test_policy_from_file_rejects_invalid_prompt_overrides(tmp_path):
@@ -129,6 +132,15 @@ def test_policy_from_file_rejects_invalid_prompt_overrides(tmp_path):
         assert "unknown prompt override role" in str(exc)
     else:
         raise AssertionError("expected ValueError for unknown prompt override role")
+
+    unknown_rule = tmp_path / "unknown-rule.json"
+    unknown_rule.write_text('{"promptOverrides": {"rules": {"boss": "prompt.md"}}}')
+    try:
+        Policy.from_file(unknown_rule)
+    except ValueError as exc:
+        assert "unknown prompt override rule" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for unknown prompt override rule")
 
     empty = tmp_path / "empty.md"
     empty.write_text("   \n")

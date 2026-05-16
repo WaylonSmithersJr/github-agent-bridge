@@ -8,6 +8,17 @@ from .models import GitHubContext, Notification
 
 ALLOWED_REPO_ROLES = {"owner", "maintainer", "contributor", "reviewer"}
 ALLOWED_PROMPT_INTENTS = {"review_only"}
+ALLOWED_PROMPT_RULES = {
+    "comment_value",
+    "feedback_classifier",
+    "feedback_learning",
+    "human_reviewer",
+    "pr_metadata",
+    "pr_review",
+    "prompt_injection",
+    "sync_after_merge",
+    "worktree",
+}
 DEFAULT_REPO_ROLE = "contributor"
 
 
@@ -23,12 +34,16 @@ class PromptOverrides:
     base: Path | None = None
     roles: dict[str, Path] = field(default_factory=dict)
     intents: dict[str, Path] = field(default_factory=dict)
+    rules: dict[str, Path] = field(default_factory=dict)
 
     def role_path(self, role: str) -> Path | None:
         return self.roles.get(role.lower())
 
     def intent_path(self, intent: str) -> Path | None:
         return self.intents.get(intent.lower())
+
+    def rule_path(self, rule: str) -> Path | None:
+        return self.rules.get(rule.lower())
 
 
 @dataclass(frozen=True)
@@ -99,10 +114,16 @@ class Policy:
             unknown_intents = sorted(intent_names - ALLOWED_PROMPT_INTENTS)
             if unknown_intents:
                 raise ValueError(f"unknown prompt override intent(s): {unknown_intents}; allowed intents: {sorted(ALLOWED_PROMPT_INTENTS)}")
+            raw_rules = raw.get("rules", {}) or {}
+            rule_names = {str(k).lower() for k in raw_rules}
+            unknown_rules = sorted(rule_names - ALLOWED_PROMPT_RULES)
+            if unknown_rules:
+                raise ValueError(f"unknown prompt override rule(s): {unknown_rules}; allowed rules: {sorted(ALLOWED_PROMPT_RULES)}")
             return PromptOverrides(
                 base=base,
                 roles={str(k).lower(): prompt_path(v) for k, v in raw_roles.items()},
                 intents={str(k).lower(): prompt_path(v) for k, v in raw_intents.items()},
+                rules={str(k).lower(): prompt_path(v) for k, v in raw_rules.items()},
             )
 
         def feedback_learning(raw: dict) -> FeedbackLearning:

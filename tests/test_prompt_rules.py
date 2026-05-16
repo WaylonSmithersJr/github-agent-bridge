@@ -92,9 +92,11 @@ def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
     base = tmp_path / "base.md"
     owner = tmp_path / "owner.md"
     review_only = tmp_path / "review_only.md"
+    feedback_learning = tmp_path / "feedback_learning.md"
     base.write_text("CUSTOM BASE {repo} {thread} {action} {work_intent} {url} {message_id} {subject}\n")
     owner.write_text("# Custom owner role\nBe ownerish.\n")
     review_only.write_text("# Custom review-only intent\nNo writes.\n")
+    feedback_learning.write_text("# Custom feedback learning {repo} {min_confidence}\n")
     policy_file = tmp_path / "policy.json"
     policy_file.write_text(
         """{
@@ -102,7 +104,8 @@ def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
           "promptOverrides": {
             "base": "base.md",
             "roles": {"owner": "owner.md"},
-            "intents": {"review_only": "review_only.md"}
+            "intents": {"review_only": "review_only.md"},
+            "rules": {"feedback_learning": "feedback_learning.md"}
           }
         }"""
     )
@@ -115,13 +118,14 @@ def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
     assert "# Custom review-only intent" in prompt
     assert "# Repository role: owner" not in prompt
     assert "# Review-only rule" not in prompt
+    assert "# Custom feedback learning gisce/erp 0.5" in prompt
+    assert "# Feedback learning rule" not in prompt
     assert "# Comment value rule" in prompt
     assert "Post a comment only when it adds" in prompt
     assert COMMENT_VALUE_RULES in prompt
     assert "# Worktree rule" in prompt
     assert "# PR metadata rule" in prompt
     assert "# Human reviewer rule" in prompt
-    assert "# Feedback learning rule" in prompt
 
 
 def test_sync_after_merge_prompt_includes_cleanup_rule():

@@ -103,6 +103,16 @@ def test_learning_prompt_uses_packaged_prompt_resource():
     assert "You are classifying GitHub agent feedback" in feedback.FEEDBACK_CLASSIFIER_PROMPT
 
 
+def test_learning_prompt_accepts_policy_override_template():
+    event = {"id": "e1", "scope": "repo:gisce/erp", "comment": "Read AGENTS.md first"}
+
+    prompt = feedback.build_learning_prompt(event, "CUSTOM CLASSIFIER {event_json}\n")
+
+    assert prompt.startswith("CUSTOM CLASSIFIER ")
+    assert "Read AGENTS.md first" in prompt
+    assert "# Feedback classifier prompt" not in prompt
+
+
 def test_learn_from_events_auto_approves_high_confidence_feedback(tmp_path, monkeypatch):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)

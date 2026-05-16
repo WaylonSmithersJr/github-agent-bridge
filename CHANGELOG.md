@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.6.4 (2026-05-16)
+
+### Bug Fixes
+
+- Remove heuristic feedback synthesis
+  ([`bb924f2`](https://github.com/pilipilisbot/github-agent-bridge/commit/bb924f2df9079dfe17e9e1f09c6c1e95f59153f5))
+
+
 ## v0.6.3 (2026-05-16)
 
 ### Bug Fixes

@@ -62,6 +62,7 @@ gab --db "$DB" --policy ./policy.example.json run --mode shadow --once
 | Queue schema/state | `src/github_agent_bridge/queue.py`, `src/github_agent_bridge/sql/schema.sql`, `tests/test_queue.py` |
 | Dispatch/prompt construction | `src/github_agent_bridge/dispatch.py`, `tests/test_modes_cli.py`, `tests/test_prompt_rules.py` |
 | Prompt rules | `src/github_agent_bridge/prompt_rules/*.md`, policy `promptOverrides` loader in `src/github_agent_bridge/policy.py` |
+| Feedback learning | `src/github_agent_bridge/feedback.py`, `src/github_agent_bridge/prompt_rules/feedback_learning.md`, `tests/test_feedback.py` |
 | Repository roles | `src/github_agent_bridge/prompt_rules/roles/*.md` |
 | CLI behavior | `src/github_agent_bridge/cli.py`, CLI tests |
 | Monitoring | `src/github_agent_bridge/monitor.py`, `tests/test_monitor.py` |
@@ -95,6 +96,7 @@ Prompt resources are packaged with the Python distribution and loaded through `i
 | `prompt_rules/worktree.md` | Worktree behavior. |
 | `prompt_rules/pr_metadata.md` | PR metadata behavior. |
 | `prompt_rules/human_reviewer.md` | Reviewer-request behavior. |
+| `prompt_rules/feedback_learning.md` | Consult synthesized local feedback rules before GitHub work. |
 | `prompt_rules/roles/*.md` | Repository operating postures. |
 | `sql/schema.sql` | SQLite schema. |
 

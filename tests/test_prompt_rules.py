@@ -1,7 +1,7 @@
 from dataclasses import replace
 from importlib import resources
 
-from github_agent_bridge.dispatch import COMMENT_VALUE_RULES, OpenClawDispatcher, PR_REVIEW_RULES, PROMPT_INJECTION_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
+from github_agent_bridge.dispatch import COMMENT_VALUE_RULES, FEEDBACK_LEARNING_RULES, OpenClawDispatcher, PR_REVIEW_RULES, PROMPT_INJECTION_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
 from github_agent_bridge.models import GitHubContext, Job
 from github_agent_bridge.policy import Policy
 
@@ -13,7 +13,7 @@ def make_job(work_intent="work_allowed", action="reply_comment"):
 
 def test_prompt_rule_markdown_files_are_packaged_resources():
     package = resources.files("github_agent_bridge.prompt_rules")
-    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md", "pr_review.md", "comment_value.md", "prompt_injection.md"}
+    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md", "pr_review.md", "comment_value.md", "prompt_injection.md", "feedback_learning.md"}
     found = {p.name for p in package.iterdir() if p.name.endswith(".md")}
     assert expected <= found
     for name in expected:
@@ -43,9 +43,12 @@ def test_build_prompt_reads_packaged_markdown_rules():
     assert "# Worktree rule" in prompt
     assert "# PR metadata rule" in prompt
     assert "# Human reviewer rule" in prompt
+    assert "# Feedback learning rule" in prompt
+    assert "list-rules --scope repo:gisce/erp" in prompt
     assert "# Review-only rule" in prompt
     assert WORKTREE_RULES in prompt
     assert REVIEW_ONLY_RULES in prompt
+    assert FEEDBACK_LEARNING_RULES.format(repo="gisce/erp") in prompt
 
 
 def test_role_prompt_markdown_files_are_packaged_resources():
@@ -109,6 +112,7 @@ def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
     assert "# Worktree rule" in prompt
     assert "# PR metadata rule" in prompt
     assert "# Human reviewer rule" in prompt
+    assert "# Feedback learning rule" in prompt
 
 
 def test_sync_after_merge_prompt_includes_cleanup_rule():

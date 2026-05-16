@@ -44,6 +44,7 @@ SYNC_AFTER_MERGE_RULES = load_prompt_rule("sync_after_merge.md")
 PR_REVIEW_RULES = load_prompt_rule("pr_review.md")
 COMMENT_VALUE_RULES = load_prompt_rule("comment_value.md")
 PROMPT_INJECTION_RULES = load_prompt_rule("prompt_injection.md")
+FEEDBACK_LEARNING_RULES = load_prompt_rule("feedback_learning.md")
 
 
 class RunMode(StrEnum):
@@ -241,7 +242,8 @@ class OpenClawDispatcher:
             message_id=job.message_id,
             subject=job.subject,
         )
-        return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{PROMPT_INJECTION_RULES}{COMMENT_VALUE_RULES}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}"
+        feedback_rules = FEEDBACK_LEARNING_RULES.format(repo=repo)
+        return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{PROMPT_INJECTION_RULES}{COMMENT_VALUE_RULES}{WORKTREE_RULES}{PR_METADATA_RULES}{HUMAN_REVIEWER_RULES}{feedback_rules}"
 
     def route_for(self, job: Job, policy: Policy) -> tuple[str | None, str, str]:
         route: Route = policy.route_for(job.repo)

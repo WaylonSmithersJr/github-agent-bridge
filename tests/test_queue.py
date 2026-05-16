@@ -34,3 +34,29 @@ def test_claim_parallel_different_work_keys_but_not_same(tmp_path):
     j2 = q.claim_next("w2")
     assert {j1.work_key, j2.work_key} == {"gisce/erp#1", "gisce/erp#2"}
     assert q.claim_next("w3") is None
+
+
+def test_enqueue_captures_feedback_for_actionable_jobs(tmp_path, monkeypatch):
+    captured = []
+
+    def fake_capture(n, ctx, action, decision, work_intent):
+        captured.append((n.message_id, ctx.work_key, action, decision, work_intent))
+        return True
+
+    monkeypatch.setattr("github_agent_bridge.feedback.capture_feedback", fake_capture)
+
+    q = JobQueue(tmp_path / "q.sqlite3")
+    q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
+
+    assert captured == [("<1@github.com>", "gisce/erp#1", "reply_comment", "auto_trusted", "review_only")]
+
+
+def test_duplicate_enqueue_does_not_recapture_feedback(tmp_path, monkeypatch):
+    captured = []
+    monkeypatch.setattr("github_agent_bridge.feedback.capture_feedback", lambda *args: captured.append(args) or True)
+
+    q = JobQueue(tmp_path / "q.sqlite3")
+    q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
+    q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
+
+    assert len(captured) == 1

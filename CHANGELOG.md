@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.6.0 (2026-05-16)
+
+### Bug Fixes
+
+- Allow bot-authored PR review followups to work
+  ([`74b764f`](https://github.com/pilipilisbot/github-agent-bridge/commit/74b764f7ca3368c0a4617bbc4213ec31f7470529))
+
+### Features
+
+- Capture feedback learning events
+  ([`8dbd055`](https://github.com/pilipilisbot/github-agent-bridge/commit/8dbd0556425f419068c9e5b496fee757ddd8e99c))
+
+
 ## v0.5.8 (2026-05-14)
 
 ### Bug Fixes

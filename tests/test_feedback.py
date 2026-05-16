@@ -92,6 +92,17 @@ def test_openclaw_json_payload_text_is_extracted():
     assert feedback._extract_json_object(feedback._openclaw_text_from_json(raw))["reason"] == "shape test"
 
 
+def test_learning_prompt_uses_packaged_prompt_resource():
+    event = {"id": "e1", "scope": "repo:gisce/erp", "comment": "Read AGENTS.md first"}
+
+    prompt = feedback.build_learning_prompt(event)
+
+    assert "# Feedback classifier prompt" in prompt
+    assert "Event JSON:" in prompt
+    assert "Read AGENTS.md first" in prompt
+    assert "You are classifying GitHub agent feedback" in feedback.FEEDBACK_CLASSIFIER_PROMPT
+
+
 def test_learn_from_events_auto_approves_high_confidence_feedback(tmp_path, monkeypatch):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)

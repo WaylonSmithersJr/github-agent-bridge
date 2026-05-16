@@ -13,7 +13,7 @@ def make_job(work_intent="work_allowed", action="reply_comment"):
 
 def test_prompt_rule_markdown_files_are_packaged_resources():
     package = resources.files("github_agent_bridge.prompt_rules")
-    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md", "pr_review.md", "comment_value.md", "prompt_injection.md", "feedback_learning.md"}
+    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md", "pr_review.md", "comment_value.md", "prompt_injection.md", "feedback_learning.md", "feedback_classifier.md"}
     found = {p.name for p in package.iterdir() if p.name.endswith(".md")}
     assert expected <= found
     for name in expected:

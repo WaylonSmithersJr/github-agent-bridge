@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.6 (2026-05-17)
+
+### Bug Fixes
+
+- Do not coalesce into running jobs
+  ([`421ee9f`](https://github.com/pilipilisbot/github-agent-bridge/commit/421ee9ff935aa63a34d1d49030dfc538d6ecdd18))
+
+
 ## v0.7.5 (2026-05-17)
 
 ### Bug Fixes

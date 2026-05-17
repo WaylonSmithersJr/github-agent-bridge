@@ -149,6 +149,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         review_timeout_seconds=args.review_timeout,
         work_timeout_seconds=args.work_timeout,
         cli_grace_seconds=args.cli_grace,
+        feedback_db_path=args.db,
     )
     pool = ExecutorPool(q, policy, dispatcher, GitHubClient(args.gh_bin, mode=mode), ExecutorConfig(args.workers, args.idle_sleep, args.once))
     pool.run()

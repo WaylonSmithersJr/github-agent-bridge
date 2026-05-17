@@ -634,11 +634,10 @@ Learning pass model precedence:
 
 `thinking` and `sessionId` follow the same CLI-over-policy-over-default pattern. The selected model is stored on each `feedback_rule_proposals.model` row for auditability.
 
-Agents receive a packaged prompt rule that tells them to consult curated repo-scoped rules before working:
-
-```bash
-gab feedback-rules --scope repo:owner/name --min-confidence 0.5
-```
+When dispatching normal GitHub work, the bridge resolves matching repo-scoped
+rules from `feedback_rules` and injects their text directly into the agent
+prompt. Agents do not need to run `gab feedback-rules` themselves before
+working.
 
 Only promoted rules are agent instructions. Raw feedback events and proposals are audit data and must not be treated as instructions.
 

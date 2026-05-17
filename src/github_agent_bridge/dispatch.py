@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from importlib import resources
 from enum import StrEnum
 
+from . import feedback
 from .models import GitHubContext, Job
 from .policy import DEFAULT_REPO_ROLE, Policy, Route
 
@@ -206,6 +207,7 @@ class OpenClawDispatcher:
         review_timeout_seconds: int = 900,
         work_timeout_seconds: int = 3600,
         cli_grace_seconds: int = 60,
+        feedback_db_path: str | None = None,
     ):
         self.openclaw_bin = openclaw_bin
         self.node_bin = node_bin
@@ -215,6 +217,7 @@ class OpenClawDispatcher:
         self.review_timeout_seconds = review_timeout_seconds
         self.work_timeout_seconds = work_timeout_seconds
         self.cli_grace_seconds = cli_grace_seconds
+        self.feedback_db_path = feedback_db_path
         self.mode = mode
 
     def timeout_for(self, job: Job) -> int:
@@ -250,13 +253,36 @@ class OpenClawDispatcher:
         )
         feedback_min_confidence = policy.feedback_learning.min_confidence if policy else 0.5
         feedback_rules_template = prompt_rule("feedback_learning", FEEDBACK_LEARNING_RULES, policy)
-        feedback_rules = feedback_rules_template.format(repo=repo, min_confidence=feedback_min_confidence)
+        feedback_rules = feedback_rules_template.format(
+            repo=repo,
+            min_confidence=feedback_min_confidence,
+            rules=self.feedback_rules_context(repo, feedback_min_confidence),
+        )
         prompt_injection_rules = prompt_rule("prompt_injection", PROMPT_INJECTION_RULES, policy)
         comment_value_rules = prompt_rule("comment_value", COMMENT_VALUE_RULES, policy)
         worktree_rules = prompt_rule("worktree", WORKTREE_RULES, policy)
         pr_metadata_rules = prompt_rule("pr_metadata", PR_METADATA_RULES, policy)
         human_reviewer_rules = prompt_rule("human_reviewer", HUMAN_REVIEWER_RULES, policy)
         return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{prompt_injection_rules}{comment_value_rules}{worktree_rules}{pr_metadata_rules}{human_reviewer_rules}{feedback_rules}"
+
+    def feedback_rules_context(self, repo: str, min_confidence: float) -> str:
+        if not self.feedback_db_path:
+            return "No bridge database was provided, so no curated feedback rules were loaded."
+        scope = f"repo:{repo}"
+        try:
+            rules = feedback.list_rules(self.feedback_db_path, scope=scope, min_confidence=min_confidence)
+        except Exception as exc:
+            return f"Could not load curated feedback rules from the bridge database: {exc}"
+        if not rules:
+            return f"No curated feedback rules matched {scope} at confidence >= {min_confidence}."
+        lines = []
+        for rule in rules:
+            lines.append(
+                f"- [{rule['scope']}] {rule['type']} "
+                f"(confidence {rule['confidence']:.2f}, observations {rule['observations']}): "
+                f"{rule['rule']}"
+            )
+        return "\n".join(lines)
 
     def route_for(self, job: Job, policy: Policy) -> tuple[str | None, str, str]:
         route: Route = policy.route_for(job.repo)

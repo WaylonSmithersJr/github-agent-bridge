@@ -1,9 +1,11 @@
 from dataclasses import replace
 from importlib import resources
 
+from github_agent_bridge import feedback
 from github_agent_bridge.dispatch import COMMENT_VALUE_RULES, FEEDBACK_LEARNING_RULES, OpenClawDispatcher, PR_REVIEW_RULES, PROMPT_INJECTION_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
 from github_agent_bridge.models import GitHubContext, Job
 from github_agent_bridge.policy import FeedbackLearning, Policy
+from github_agent_bridge.queue import JobQueue
 
 
 def make_job(work_intent="work_allowed", action="reply_comment"):
@@ -44,11 +46,12 @@ def test_build_prompt_reads_packaged_markdown_rules():
     assert "# PR metadata rule" in prompt
     assert "# Human reviewer rule" in prompt
     assert "# Feedback learning rule" in prompt
-    assert "feedback-rules --scope repo:gisce/erp" in prompt
+    assert "Repository: `repo:gisce/erp`" in prompt
+    assert "No bridge database was provided" in prompt
     assert "# Review-only rule" in prompt
     assert WORKTREE_RULES in prompt
     assert REVIEW_ONLY_RULES in prompt
-    assert FEEDBACK_LEARNING_RULES.format(repo="gisce/erp", min_confidence=0.5) in prompt
+    assert FEEDBACK_LEARNING_RULES.format(repo="gisce/erp", min_confidence=0.5, rules="No bridge database was provided, so no curated feedback rules were loaded.") in prompt
 
 
 def test_build_prompt_uses_feedback_learning_policy_threshold():
@@ -57,7 +60,29 @@ def test_build_prompt_uses_feedback_learning_policy_threshold():
         Policy(feedback_learning=FeedbackLearning(min_confidence=0.8)),
     )
 
-    assert "feedback-rules --scope repo:gisce/erp --min-confidence 0.8" in prompt
+    assert "Minimum confidence: `0.8`" in prompt
+
+
+def test_build_prompt_inlines_curated_feedback_rules(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    feedback.add_rule(
+        db,
+        "repo:gisce/erp",
+        "technical_criterion",
+        "Use the ORM\'s upsert when it is available.",
+        0.84,
+        ["event-1"],
+    )
+
+    prompt = OpenClawDispatcher(mode="shadow", feedback_db_path=str(db)).build_prompt(
+        make_job("review_only"),
+        Policy(feedback_learning=FeedbackLearning(min_confidence=0.8)),
+    )
+
+    assert "Use the ORM\'s upsert when it is available." in prompt
+    assert "[repo:gisce/erp] technical_criterion (confidence 0.84, observations 1)" in prompt
+    assert "feedback-rules --scope" not in prompt
 
 
 def test_role_prompt_markdown_files_are_packaged_resources():

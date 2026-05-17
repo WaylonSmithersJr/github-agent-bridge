@@ -89,7 +89,7 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   feedback-events --scope repo:owner/name --limit 20
 ```
 
-Curated rules shown to agents can be inspected with:
+Curated rules injected into agent prompts can be inspected with:
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \

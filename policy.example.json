@@ -56,6 +56,7 @@
     "minConfidence": 0.5,
     "autoApproveConfidence": 0.8,
     "maxEventsPerRun": 10,
+    "model": "gpt-5.4-mini",
     "thinking": "low",
     "sessionId": "github-agent-bridge-feedback"
   }

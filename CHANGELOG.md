@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.7 (2026-05-17)
+
+### Bug Fixes
+
+- Avoid duplicate dispatch on retry
+  ([`f028db2`](https://github.com/pilipilisbot/github-agent-bridge/commit/f028db22ffe33b4fa124a0ea69006104b971b2e4))
+
+
 ## v0.7.6 (2026-05-17)
 
 ### Bug Fixes

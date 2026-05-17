@@ -217,7 +217,11 @@ systemctl --user enable --now github-agent-bridge-reader.timer
 systemctl --user enable --now github-agent-bridge-monitor.timer
 ```
 
-The reader timer calls the installed `github-agent-bridge-reader-run` wrapper. That wrapper reads `~/.config/github-agent-bridge/env` through the systemd unit and only adds `--mark-seen` when `GITHUB_AGENT_BRIDGE_MARK_SEEN` is explicitly enabled.
+The reader timer calls the packaged `github-agent-bridge-reader-run` console
+script installed by `pip`. That wrapper reads `~/.config/github-agent-bridge/env`
+through the systemd unit, quotes Gmail mailbox names with spaces for IMAP, and
+only adds `--mark-seen` when `GITHUB_AGENT_BRIDGE_MARK_SEEN` is explicitly
+enabled.
 
 Inspect status and logs:
 

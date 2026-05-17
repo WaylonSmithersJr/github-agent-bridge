@@ -55,6 +55,38 @@ def test_reader_run_adds_mark_seen_only_when_enabled(monkeypatch):
     assert captured["argv"][-1] == "--mark-seen"
 
 
+def test_reader_run_quotes_mailbox_with_spaces(monkeypatch):
+    captured = {}
+
+    def fake_cli_main(argv):
+        captured["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(reader_run, "cli_main", fake_cli_main)
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_EMAIL", "bot@example.com")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_PASSWORD", "secret")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_MAILBOX", "[Gmail]/All Mail")
+
+    assert reader_run.main() == 0
+    assert captured["argv"][captured["argv"].index("--mailbox") + 1] == '"[Gmail]/All Mail"'
+
+
+def test_reader_run_keeps_prequoted_mailbox(monkeypatch):
+    captured = {}
+
+    def fake_cli_main(argv):
+        captured["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(reader_run, "cli_main", fake_cli_main)
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_EMAIL", "bot@example.com")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_PASSWORD", "secret")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_MAILBOX", '"[Gmail]/All Mail"')
+
+    assert reader_run.main() == 0
+    assert captured["argv"][captured["argv"].index("--mailbox") + 1] == '"[Gmail]/All Mail"'
+
+
 def test_reader_run_requires_email_and_password(monkeypatch, capsys):
     monkeypatch.delenv("GITHUB_AGENT_BRIDGE_EMAIL", raising=False)
     monkeypatch.delenv("GITHUB_AGENT_BRIDGE_PASSWORD", raising=False)

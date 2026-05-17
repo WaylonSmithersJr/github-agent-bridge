@@ -10,6 +10,13 @@ def env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
 
 
+def imap_mailbox_arg(value: str) -> str:
+    """Quote Gmail-style mailbox names with spaces for imaplib.select."""
+    if " " in value and not value.startswith('"'):
+        return f'"{value}"'
+    return value
+
+
 def main() -> int:
     """Run one IMAP reader pass from GITHUB_AGENT_BRIDGE_* environment.
 
@@ -37,7 +44,7 @@ def main() -> int:
         "--password",
         env("GITHUB_AGENT_BRIDGE_PASSWORD"),
         "--mailbox",
-        env("GITHUB_AGENT_BRIDGE_MAILBOX", "INBOX"),
+        imap_mailbox_arg(env("GITHUB_AGENT_BRIDGE_MAILBOX", "INBOX")),
     ]
     if env("GITHUB_AGENT_BRIDGE_MARK_SEEN") in {"1", "true", "TRUE", "yes", "YES", "--mark-seen"}:
         argv.append("--mark-seen")

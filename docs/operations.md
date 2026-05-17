@@ -12,10 +12,14 @@ This guide is for running and monitoring the bridge.
 | Policy | `~/.config/github-agent-bridge/policy.json` |
 | Environment | `systemd/env.example` copied to a private env file |
 | Units | `systemd/*.service`, `systemd/*.timer` |
+| Reader wrapper | packaged `github-agent-bridge-reader-run` console script |
 
 ## Production commands
 
-The reader systemd timer uses `github-agent-bridge-reader-run`, a small installed wrapper around `gab read-imap-once` that reads `GITHUB_AGENT_BRIDGE_*` environment variables and conditionally adds `--mark-seen`.
+The reader systemd timer uses `github-agent-bridge-reader-run`, a small packaged
+wrapper around `gab read-imap-once` that reads `GITHUB_AGENT_BRIDGE_*`
+environment variables, quotes Gmail mailbox names with spaces for IMAP, and
+conditionally adds `--mark-seen`.
 
 
 Executor pool:

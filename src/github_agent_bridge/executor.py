@@ -35,14 +35,14 @@ class ExecutorPool:
             assigned_to_bot = self.github.is_assigned_to_current_user(job.context)
             authored_by_bot = self.github.is_pull_request_authored_by_current_user(job.context)
             if job.action == "reply_comment" and job.context.review_id and self.github.is_non_actionable_review(job.context):
-                reaction_ok = self.github.react_eyes(job.context)
+                reaction_ok = self.react_eyes_for_job_contexts(job)
                 ack_ok = self.github.react_ack_no_comment(job.context)
                 summary = "non-actionable review; skipped dispatch"
                 detail = f"eyes={reaction_ok} ack={ack_ok}"
                 self.queue.finish(job.id, "done", summary, detail)
                 return True
             if job.action == "reply_comment" and job.context.comment_id and not assigned_to_bot and not self.github.issue_comment_addresses_current_user(job.context):
-                reaction_ok = self.github.react_eyes(job.context)
+                reaction_ok = self.react_eyes_for_job_contexts(job)
                 ack_ok = self.github.react_ack_no_comment(job.context)
                 summary = "comment not addressed to bot and bot not assigned; skipped dispatch"
                 detail = f"eyes={reaction_ok} ack={ack_ok}"
@@ -51,7 +51,7 @@ class ExecutorPool:
             if job.action == "reply_comment" and job.work_intent == "review_only" and (assigned_to_bot or authored_by_bot):
                 reason = "PR/issue assigned to authenticated bot" if assigned_to_bot else "PR authored by authenticated bot"
                 job = self.queue.update_work_intent(job.id, "work_allowed", f"{reason}; upgraded review-only comment to work_allowed") or job
-            reaction_ok = self.github.react_eyes(job.context)
+            reaction_ok = self.react_eyes_for_job_contexts(job)
             result = self.dispatcher.dispatch(job, self.policy, reaction_ok=reaction_ok)
             if result.ok:
                 summary = "👀 reaction ok + agent dispatch queued" if reaction_ok else "agent dispatch queued; reaction failed or unavailable"
@@ -62,6 +62,18 @@ class ExecutorPool:
         except Exception as exc:
             self.queue.finish(job.id, "blocked", f"executor exception: {type(exc).__name__}", str(exc))
         return True
+
+    def react_eyes_for_job_contexts(self, job) -> bool:
+        contexts = [job.context, *self.queue.coalesced_contexts(job.id)]
+        ok = True
+        seen = set()
+        for ctx in contexts:
+            key = (ctx.repo, ctx.issue_number, ctx.comment_id, ctx.review_comment_id, ctx.review_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            ok = self.github.react_eyes(ctx) and ok
+        return ok
 
     def _loop(self, worker_id: str) -> None:
         while not self.stop_event.is_set():

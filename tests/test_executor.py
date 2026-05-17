@@ -13,6 +13,7 @@ class FakeGitHub:
         self.authored = authored
         self.eyes = 0
         self.acks = 0
+        self.eye_comment_ids = []
 
     def is_assigned_to_current_user(self, ctx):
         return self.assigned
@@ -28,6 +29,7 @@ class FakeGitHub:
 
     def react_eyes(self, ctx):
         self.eyes += 1
+        self.eye_comment_ids.append(ctx.comment_id)
         return True
 
     def react_ack_no_comment(self, ctx):
@@ -102,6 +104,29 @@ def test_unassigned_mentioned_pr_comment_stays_review_only(tmp_path):
     stored = queue.get(dispatcher.jobs[0].id)
     assert stored is not None
     assert stored.work_intent == "review_only"
+
+
+def test_coalesced_notifications_are_reacted_to_before_dispatch(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    enqueue_pr_comment(queue)
+    notification = Notification(
+        uid=2,
+        message_id="<gisce/erp/pull/27315/c2@github.com>",
+        subject="Re: [gisce/erp] Permitir caller en los dominios (PR #27315)",
+        from_addr="notifications@github.com",
+        body="@pilipilisbot segon comentari https://github.com/gisce/erp/pull/27315#issuecomment-2",
+    )
+    job, state = queue.enqueue(notification, Policy(trusted_orgs={"gisce"}))
+    assert state == "coalesced"
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=False, mentioned=True)
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert len(dispatcher.jobs) == 1
+    assert dispatcher.jobs[0].id == job.id
+    assert 2 in github.eye_comment_ids
 
 
 def test_bot_authored_pr_review_comment_upgrades_to_work_allowed(tmp_path):

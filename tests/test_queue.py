@@ -23,6 +23,9 @@ def test_enqueue_and_coalesce_same_work_key(tmp_path):
     assert state2 == "coalesced"
     assert job1.id == job2.id
     assert q.stats()["pending"] == 1
+    contexts = q.coalesced_contexts(job1.id)
+    assert len(contexts) == 1
+    assert contexts[0].comment_id == 11
 
 
 def test_claim_parallel_different_work_keys_but_not_same(tmp_path):

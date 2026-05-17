@@ -6,11 +6,12 @@ from github_agent_bridge.queue import JobQueue
 
 
 class FakeGitHub:
-    def __init__(self, assigned: bool, mentioned: bool = True, non_actionable_review: bool = False, authored: bool = False):
+    def __init__(self, assigned: bool, mentioned: bool = True, non_actionable_review: bool = False, authored: bool = False, answered_url: str | None = None):
         self.assigned = assigned
         self.mentioned = mentioned
         self.non_actionable_review = non_actionable_review
         self.authored = authored
+        self.answered_url = answered_url
         self.eyes = 0
         self.acks = 0
         self.eye_comment_ids = []
@@ -26,6 +27,9 @@ class FakeGitHub:
 
     def is_non_actionable_review(self, ctx):
         return self.non_actionable_review
+
+    def current_user_commented_after(self, ctx):
+        return self.answered_url
 
     def react_eyes(self, ctx):
         self.eyes += 1
@@ -155,6 +159,22 @@ def test_unassigned_unmentioned_pr_comment_reacts_without_dispatch(tmp_path):
     assert dispatcher.jobs == []
     assert github.eyes == 1
     assert github.acks == 1
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
+
+
+def test_retry_skips_dispatch_when_bot_already_answered(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=True, answered_url="https://github.com/gisce/erp/pull/27315#issuecomment-2")
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert dispatcher.jobs == []
+    assert github.eyes == 0
     stored = queue.get(job.id)
     assert stored is not None
     assert stored.status == "done"

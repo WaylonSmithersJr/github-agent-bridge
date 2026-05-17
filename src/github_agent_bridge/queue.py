@@ -131,6 +131,15 @@ class JobQueue:
                 self._log(con, job_id, row["work_key"] if row else None, "retry", "job requeued", None)
             return bool(cur.rowcount)
 
+    def dismiss(self, job_id: int, reason: str) -> bool:
+        now = utc_now()
+        with self.connect() as con:
+            cur = con.execute("UPDATE jobs SET status='done', locked_by=NULL, last_error=NULL, finished_at=?, updated_at=? WHERE id=? AND status IN ('blocked','denied','waiting_approval')", (now, now, job_id))
+            if cur.rowcount:
+                row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
+                self._log(con, job_id, row["work_key"] if row else None, "dismissed", "job dismissed manually", reason)
+            return bool(cur.rowcount)
+
     def unlock_stale(self, older_than_seconds: int) -> int:
         with self.connect() as con:
             rows = con.execute("SELECT id, work_key FROM jobs WHERE status='running' AND started_at IS NOT NULL AND (julianday('now') - julianday(started_at)) * 86400 > ?", (older_than_seconds,)).fetchall()

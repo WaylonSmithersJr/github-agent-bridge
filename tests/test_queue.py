@@ -86,3 +86,15 @@ def test_enqueue_skips_feedback_when_policy_disables_it(tmp_path, monkeypatch):
     q.enqueue(notif(1, "<1@github.com>", BODY1), Policy(trusted_orgs={"gisce"}, feedback_learning=FeedbackLearning(enabled=False)))
 
     assert captured == []
+
+
+def test_dismiss_blocked_job_marks_done(tmp_path):
+    q = JobQueue(tmp_path / "q.sqlite3")
+    job, _ = q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
+    q.finish(job.id, "blocked", "boom", "details")
+
+    assert q.dismiss(job.id, "already answered") is True
+    stored = q.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
+    assert stored.last_error is None

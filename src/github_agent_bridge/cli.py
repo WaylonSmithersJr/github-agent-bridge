@@ -178,6 +178,12 @@ def cmd_retry(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_dismiss(args: argparse.Namespace) -> int:
+    ok = JobQueue(args.db).dismiss(args.job_id, args.reason)
+    print(json.dumps({"job_id": args.job_id, "dismissed": ok}, ensure_ascii=False))
+    return 0 if ok else 1
+
+
 def cmd_unlock_stale(args: argparse.Namespace) -> int:
     n = JobQueue(args.db).unlock_stale(args.older_than)
     print(json.dumps({"unlocked": n}, ensure_ascii=False))
@@ -278,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("status"); s.set_defaults(func=cmd_status)
     s = sub.add_parser("jobs"); s.add_argument("--status"); s.add_argument("--limit", type=int, default=20); s.set_defaults(func=cmd_jobs)
     s = sub.add_parser("retry"); s.add_argument("job_id", type=int); s.set_defaults(func=cmd_retry)
+    s = sub.add_parser("dismiss"); s.add_argument("job_id", type=int); s.add_argument("--reason", required=True); s.set_defaults(func=cmd_dismiss)
     s = sub.add_parser("unlock-stale"); s.add_argument("--older-than", type=int, default=1800); s.set_defaults(func=cmd_unlock_stale)
     s = sub.add_parser("monitor")
     s.add_argument("--json", action="store_true", help="emit structured JSON")

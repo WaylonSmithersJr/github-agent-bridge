@@ -127,6 +127,48 @@ class GitHubClient:
             return None
         return result.stdout or ""
 
+    def issue_comment(self, ctx: GitHubContext) -> dict | None:
+        if not ctx.repo or not ctx.comment_id:
+            return None
+        result = self._run(["api", f"repos/{ctx.repo}/issues/comments/{ctx.comment_id}"])
+        if result.returncode != 0:
+            return None
+        try:
+            return json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return None
+
+    def current_user_commented_after(self, ctx: GitHubContext) -> str | None:
+        repo, issue, comment_id = ctx.repo, ctx.issue_number, ctx.comment_id
+        if not repo or not issue or not comment_id:
+            return None
+        login = self.current_login()
+        trigger = self.issue_comment(ctx)
+        trigger_created_at = trigger.get("created_at") if isinstance(trigger, dict) else None
+        if not login or not trigger_created_at:
+            return None
+        result = self._run([
+            "api",
+            "--paginate",
+            f"repos/{repo}/issues/{issue}/comments",
+            "--jq",
+            ".[] | @json",
+        ])
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            try:
+                comment = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            user = comment.get("user") if isinstance(comment, dict) else None
+            if not isinstance(user, dict) or user.get("login") != login:
+                continue
+            created_at = comment.get("created_at") or ""
+            if created_at > trigger_created_at:
+                return comment.get("html_url") or f"{repo}#{issue}"
+        return None
+
     def issue_comment_addresses_current_user(self, ctx: GitHubContext) -> bool:
         body = self.issue_comment_body(ctx)
         login = self.current_login()

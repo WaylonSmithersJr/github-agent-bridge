@@ -163,6 +163,16 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 retry <job-id>
 ```
 
+For `reply_comment` jobs, the executor checks GitHub before dispatching. If the
+authenticated bot has already commented after the triggering issue comment, the
+job is completed without dispatch to avoid duplicate replies.
+
+Dismiss an obsolete blocked job after auditing it:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 dismiss <job-id> --reason "already handled"
+```
+
 ### Unlock stale running jobs
 
 ```bash

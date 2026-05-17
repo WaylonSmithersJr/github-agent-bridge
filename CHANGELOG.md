@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.5 (2026-05-17)
+
+### Bug Fixes
+
+- React to coalesced github notifications
+  ([`45ebe3c`](https://github.com/pilipilisbot/github-agent-bridge/commit/45ebe3cab131530de4334cf47e341bd75dad5a24))
+
+
 ## v0.7.4 (2026-05-17)
 
 ### Bug Fixes

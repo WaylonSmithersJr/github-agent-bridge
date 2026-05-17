@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.4 (2026-05-17)
+
+### Bug Fixes
+
+- Reject task requests in feedback learning
+  ([`c036ba9`](https://github.com/pilipilisbot/github-agent-bridge/commit/c036ba9725af78cec09d0e17d3cbf3525488f39d))
+
+
 ## v0.7.3 (2026-05-17)
 
 ### Bug Fixes

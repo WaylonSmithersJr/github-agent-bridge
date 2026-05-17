@@ -39,6 +39,19 @@ def test_claim_parallel_different_work_keys_but_not_same(tmp_path):
     assert q.claim_next("w3") is None
 
 
+def test_enqueue_does_not_coalesce_into_running_job(tmp_path):
+    q = JobQueue(tmp_path / "q.sqlite3")
+    job1, state1 = q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
+    running = q.claim_next("worker")
+    job2, state2 = q.enqueue(notif(2, "<2@github.com>", BODY2), policy())
+
+    assert state1 == "enqueued"
+    assert running.id == job1.id
+    assert running.status == "running"
+    assert state2 == "enqueued"
+    assert job2.id != job1.id
+
+
 def test_enqueue_captures_feedback_for_actionable_jobs(tmp_path, monkeypatch):
     captured = []
 

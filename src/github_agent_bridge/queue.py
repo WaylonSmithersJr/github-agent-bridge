@@ -20,6 +20,7 @@ def load_schema() -> str:
 
 SCHEMA = load_schema()
 ACTIVE_STATUSES = ("pending", "running", "waiting_approval")
+COALESCE_STATUSES = ("pending", "waiting_approval")
 
 
 class JobQueue:
@@ -50,8 +51,8 @@ class JobQueue:
             con.execute("BEGIN IMMEDIATE")
             try:
                 existing = con.execute(
-                    f"SELECT * FROM jobs WHERE work_key=? AND status IN ({','.join('?' for _ in ACTIVE_STATUSES)}) ORDER BY id LIMIT 1",
-                    (ctx.work_key, *ACTIVE_STATUSES),
+                    f"SELECT * FROM jobs WHERE work_key=? AND status IN ({','.join('?' for _ in COALESCE_STATUSES)}) ORDER BY id LIMIT 1",
+                    (ctx.work_key, *COALESCE_STATUSES),
                 ).fetchone()
                 if existing and decision == "auto_trusted":
                     con.execute("INSERT OR IGNORE INTO coalesced_notifications(job_id,uid,message_id,subject,context_json,created_at) VALUES(?,?,?,?,?,?)", (existing["id"], n.uid, n.message_id, n.subject, ctx.to_json(), now))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -209,7 +210,11 @@ def classify_event_with_llm(
     cmd = [openclaw_bin, "agent", "--json", "--session-id", session_id, "--timeout", str(timeout), "--thinking", thinking, "--message", build_learning_prompt(event, prompt_template)]
     if model:
         cmd.extend(["--model", model])
-    proc = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout + 30)
+    env = os.environ.copy()
+    openclaw_dir = os.path.dirname(openclaw_bin)
+    if openclaw_dir:
+        env["PATH"] = openclaw_dir + os.pathsep + env.get("PATH", "")
+    proc = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout + 30, env=env)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or f"openclaw exited {proc.returncode}")
     text = _openclaw_text_from_json(proc.stdout)

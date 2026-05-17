@@ -101,6 +101,7 @@ def test_learning_prompt_uses_packaged_prompt_resource():
     assert "Event JSON:" in prompt
     assert "Read AGENTS.md first" in prompt
     assert "You are classifying GitHub agent feedback" in feedback.FEEDBACK_CLASSIFIER_PROMPT
+    assert "feature requests, work orders, or product" in feedback.FEEDBACK_CLASSIFIER_PROMPT
 
 
 def test_learning_prompt_accepts_policy_override_template():

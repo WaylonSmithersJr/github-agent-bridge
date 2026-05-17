@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.7.3 (2026-05-17)
+
+### Bug Fixes
+
+- Inline feedback rules in github task prompts
+  ([`a9f7bde`](https://github.com/pilipilisbot/github-agent-bridge/commit/a9f7bdee47739b2a8e338e4415401c9f3c019982))
+
+### Documentation
+
+- Explain feedback learning model selection
+  ([`112ade8`](https://github.com/pilipilisbot/github-agent-bridge/commit/112ade8e1ac171865b6b139e8a4c83dc664d9bf3))
+
+- Include feedback learning model in policy example
+  ([`a5e19a3`](https://github.com/pilipilisbot/github-agent-bridge/commit/a5e19a3a92183bb117e7e46ae0e376691013a24d))
+
+
 ## v0.7.2 (2026-05-16)
 
 ### Bug Fixes

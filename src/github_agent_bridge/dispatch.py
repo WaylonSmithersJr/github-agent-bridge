@@ -100,6 +100,18 @@ class GitHubClient:
         except json.JSONDecodeError:
             return None
 
+    def pull_request_review_comments(self, ctx: GitHubContext) -> list[dict]:
+        if not ctx.repo or not ctx.issue_number or not ctx.review_id:
+            return []
+        result = self._run(["api", f"repos/{ctx.repo}/pulls/{ctx.issue_number}/reviews/{ctx.review_id}/comments"])
+        if result.returncode != 0:
+            return []
+        try:
+            data = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError:
+            return []
+        return [item for item in data if isinstance(item, dict)]
+
     def is_non_actionable_review(self, ctx: GitHubContext) -> bool:
         review = self.pull_request_review(ctx)
         if not review:
@@ -195,6 +207,15 @@ class GitHubClient:
             return self._run(["api", "-X", "POST", f"repos/{repo}/issues/comments/{ctx.comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
         if ctx.review_comment_id:
             return self._run(["api", "-X", "POST", f"repos/{repo}/pulls/comments/{ctx.review_comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
+        if ctx.review_id:
+            comments = self.pull_request_review_comments(ctx)
+            if comments:
+                ok = True
+                for comment in comments:
+                    comment_id = comment.get("id")
+                    if comment_id:
+                        ok = self._run(["api", "-X", "POST", f"repos/{repo}/pulls/comments/{comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0 and ok
+                return ok
         return self._run(["api", "-X", "POST", f"repos/{repo}/issues/{issue}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
 
     def is_assigned_to_current_user(self, ctx: GitHubContext) -> bool:

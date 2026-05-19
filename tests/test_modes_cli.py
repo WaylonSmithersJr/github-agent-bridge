@@ -12,6 +12,39 @@ def test_shadow_github_reaction_has_no_external_failure():
     assert GitHubClient(gh_bin="definitely-not-present", mode=RunMode.SHADOW).react_eyes(make_job().context) is True
 
 
+class RecordingGitHubClient(GitHubClient):
+    def __init__(self):
+        super().__init__(mode=RunMode.LIVE)
+        self.calls = []
+
+    def _run(self, args):
+        self.calls.append(args)
+
+        class Result:
+            returncode = 0
+            stdout = '[{"id": 123}, {"id": 456}]' if args[-1].endswith("/comments") else "{}"
+            stderr = ""
+
+        return Result()
+
+
+def test_review_reaction_targets_review_comments():
+    client = RecordingGitHubClient()
+    ctx = GitHubContext(
+        ["https://github.com/gisce/erp/pull/1#pullrequestreview-99"],
+        "gisce/erp",
+        1,
+        review_id=99,
+        target_kind="review",
+    )
+
+    assert client.react_eyes(ctx) is True
+
+    assert any(call[-1].endswith("/reviews/99/comments") for call in client.calls)
+    assert any("pulls/comments/123/reactions" in " ".join(call) for call in client.calls)
+    assert any("pulls/comments/456/reactions" in " ".join(call) for call in client.calls)
+
+
 def test_shadow_dispatch_returns_command_without_running():
     result = OpenClawDispatcher(openclaw_bin="definitely-not-present", mode=RunMode.SHADOW).dispatch(make_job(), Policy(trusted_orgs={"gisce"}), reaction_ok=True)
     assert result.ok is True

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.5 (2026-05-19)
+
+### Bug Fixes
+
+- Block jobs without visible GitHub follow-up
+  ([`e0315dd`](https://github.com/pilipilisbot/github-agent-bridge/commit/e0315ddd12ce7caa7c1cfe15b082f255f81ae418))
+
+
 ## v0.8.4 (2026-05-19)
 
 ### Bug Fixes

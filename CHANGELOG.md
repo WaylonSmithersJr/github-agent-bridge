@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.7.8 (2026-05-19)
+
+### Bug Fixes
+
+- Handle github bridge event gaps
+  ([`4373801`](https://github.com/pilipilisbot/github-agent-bridge/commit/4373801db9646805ee0b4298f53a20a5037b1915))
+
+### Chores
+
+- Remove obsolete reader script
+  ([`68423d2`](https://github.com/pilipilisbot/github-agent-bridge/commit/68423d29c64f284a0fa41049a981b5648fc8d442))
+
+
 ## v0.7.7 (2026-05-17)
 
 ### Bug Fixes

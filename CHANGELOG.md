@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.0 (2026-05-19)
+
+### Features
+
+- Add autoskills project skills
+  ([`9ac6068`](https://github.com/pilipilisbot/github-agent-bridge/commit/9ac6068c1fd4216a374059cb70d2212ff93d1e5e))
+
+
 ## v0.7.8 (2026-05-19)
 
 ### Bug Fixes

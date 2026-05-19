@@ -1,72 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+from __future__ import annotations
 
-BRIDGE_BIN="${GITHUB_AGENT_BRIDGE_BIN:-$HOME/.local/bin/github-agent-bridge}"
-OPENCLAW_BIN="${GITHUB_AGENT_BRIDGE_OPENCLAW_BIN:-$HOME/.nvm/versions/node/v24.14.0/bin/openclaw}"
-DB="${GITHUB_AGENT_BRIDGE_DB:-$HOME/.local/state/github-agent-bridge/bridge.sqlite3}"
-POLICY="${GITHUB_AGENT_BRIDGE_POLICY:-$HOME/.config/github-agent-bridge/policy.json}"
-CHANNEL="${GITHUB_AGENT_BRIDGE_ALERT_CHANNEL:-telegram}"
-TO="${GITHUB_AGENT_BRIDGE_ALERT_TO:-43532269}"
-STATE_DIR="${GITHUB_AGENT_BRIDGE_STATE_DIR:-$HOME/.local/state/github-agent-bridge}"
-STATE_FILE="$STATE_DIR/monitor-alert.state"
-RESEND_SECONDS="${GITHUB_AGENT_BRIDGE_ALERT_RESEND_SECONDS:-900}"
-AUTO_UNLOCK_SECONDS="${GITHUB_AGENT_BRIDGE_AUTO_UNLOCK_STALE_SECONDS:-900}"
+from github_agent_bridge.monitor_alert import main
 
-PENDING_WARN="${GITHUB_AGENT_BRIDGE_PENDING_WARN_SECONDS:-300}"
-REVIEW_WARN="${GITHUB_AGENT_BRIDGE_REVIEW_RUNNING_WARN_SECONDS:-600}"
-WORK_WARN="${GITHUB_AGENT_BRIDGE_WORK_RUNNING_WARN_SECONDS:-900}"
 
-mkdir -p "$STATE_DIR"
-
-set +e
-OUTPUT="$("$BRIDGE_BIN" --db "$DB" --policy "$POLICY" monitor \
-  --pending-warn-seconds "$PENDING_WARN" \
-  --review-running-warn-seconds "$REVIEW_WARN" \
-  --work-running-warn-seconds "$WORK_WARN" 2>&1)"
-RC=$?
-set -e
-
-printf '%s\n' "$OUTPUT"
-
-if [ "$RC" -eq 0 ]; then
-  rm -f "$STATE_FILE"
-  exit 0
-fi
-
-UNLOCK_OUTPUT=""
-if [ -n "$AUTO_UNLOCK_SECONDS" ] && printf '%s\n' "$OUTPUT" | grep -q "running job "; then
-  MAIN_PID="$(systemctl --user show github-agent-bridge.service --property=MainPID --value 2>/dev/null || true)"
-  if [ -n "$MAIN_PID" ] && [ "$MAIN_PID" != "0" ] && ! pgrep -P "$MAIN_PID" >/dev/null 2>&1; then
-    UNLOCK_OUTPUT="$("$BRIDGE_BIN" --db "$DB" --policy "$POLICY" unlock-stale --older-than "$AUTO_UNLOCK_SECONDS" 2>&1 || true)"
-    printf '%s\n' "$UNLOCK_OUTPUT"
-  fi
-fi
-
-NOW="$(date +%s)"
-HASH="$(printf '%s' "$OUTPUT" | sha256sum | awk '{print $1}')"
-LAST_HASH=""
-LAST_TS=0
-if [ -f "$STATE_FILE" ]; then
-  # shellcheck disable=SC1090
-  . "$STATE_FILE" || true
-fi
-
-if [ "$HASH" = "$LAST_HASH" ] && [ $((NOW - LAST_TS)) -lt "$RESEND_SECONDS" ]; then
-  exit 0
-fi
-
-cat > "$STATE_FILE" <<EOF
-LAST_HASH='$HASH'
-LAST_TS=$NOW
-EOF
-
-"$OPENCLAW_BIN" message send \
-  --channel "$CHANNEL" \
-  --target "$TO" \
-  --message "GitHub bridge ALERTA
-
-$OUTPUT
-
-$UNLOCK_OUTPUT" >/dev/null 2>&1 || true
-
-exit 0
+if __name__ == "__main__":
+    raise SystemExit(main())

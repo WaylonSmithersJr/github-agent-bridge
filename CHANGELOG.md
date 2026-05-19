@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.4 (2026-05-19)
+
+### Bug Fixes
+
+- Remove obsolete monitor alert script
+  ([`78c6c8c`](https://github.com/pilipilisbot/github-agent-bridge/commit/78c6c8ce764f38e843c0b586e5720ac75328ab43))
+
+
 ## v0.8.3 (2026-05-19)
 
 ### Bug Fixes

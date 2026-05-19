@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.2 (2026-05-19)
+
+### Bug Fixes
+
+- Replace monitor alert shell wrapper
+  ([`3883d47`](https://github.com/pilipilisbot/github-agent-bridge/commit/3883d47a62b96c659af9192280b52c99c1e3b2b1))
+
+
 ## v0.8.1 (2026-05-19)
 
 ### Bug Fixes

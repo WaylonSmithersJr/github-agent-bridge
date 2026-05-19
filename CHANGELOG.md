@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.1 (2026-05-19)
+
+### Bug Fixes
+
+- Add bridge monitor alert command
+  ([`ab52e4b`](https://github.com/pilipilisbot/github-agent-bridge/commit/ab52e4b7e0dbfe70fd202dafd8e38f3928112f05))
+
+
 ## v0.8.0 (2026-05-19)
 
 ### Features

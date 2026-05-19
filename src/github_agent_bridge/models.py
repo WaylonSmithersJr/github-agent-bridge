@@ -18,12 +18,16 @@ class GitHubContext:
     comment_id: int | None = None
     review_id: int | None = None
     review_comment_id: int | None = None
+    commit_comment_id: int | None = None
+    commit_sha: str | None = None
     target_kind: str | None = None
 
     @property
     def work_key(self) -> str:
         if self.repo and self.issue_number:
             return f"{self.repo}#{self.issue_number}"
+        if self.repo and self.commit_sha:
+            return f"{self.repo}@{self.commit_sha[:12]}"
         return "unknown/repo#0"
 
     @property

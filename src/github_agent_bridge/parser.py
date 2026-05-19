@@ -85,8 +85,16 @@ def classify_github_action(subject: str, body: str) -> str:
 
 def extract_github_context(body: str) -> GitHubContext:
     urls = re.findall(r"https://github\.com/[^\s>]+", body)
-    repo = None; issue_number = None; comment_id = None; review_id = None; review_comment_id = None; target_kind = None
+    repo = None; issue_number = None; comment_id = None; review_id = None; review_comment_id = None; commit_comment_id = None; commit_sha = None; target_kind = None
     for url in urls:
+        commit = re.search(r"github\.com/([^/]+/[^/]+)/commit/([0-9a-fA-F]+)", url)
+        if commit:
+            repo = commit.group(1).lower(); commit_sha = commit.group(2)
+            cc = re.search(r"#r(\d+)", url)
+            if cc:
+                commit_comment_id = int(cc.group(1)); target_kind = "commit_comment"; break
+            target_kind = "commit"
+            continue
         m = re.search(r"github\.com/([^/]+/[^/]+)/(issues|pull)/(\d+)", url)
         if not m:
             continue
@@ -100,4 +108,4 @@ def extract_github_context(body: str) -> GitHubContext:
             review_id = int(rv.group(1)); target_kind = "review"; continue
         if target_kind is None:
             target_kind = "issue"
-    return GitHubContext(urls, repo, issue_number, comment_id, review_id, review_comment_id, target_kind)
+    return GitHubContext(urls, repo, issue_number, comment_id, review_id, review_comment_id, commit_comment_id, commit_sha, target_kind)

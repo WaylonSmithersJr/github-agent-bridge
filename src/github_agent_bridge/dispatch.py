@@ -139,6 +139,14 @@ class GitHubClient:
             return None
         return result.stdout or ""
 
+    def commit_comment_body(self, ctx: GitHubContext) -> str | None:
+        if not ctx.repo or not ctx.commit_comment_id:
+            return None
+        result = self._run(["api", f"repos/{ctx.repo}/comments/{ctx.commit_comment_id}", "--jq", ".body"])
+        if result.returncode != 0:
+            return None
+        return result.stdout or ""
+
     def issue_comment(self, ctx: GitHubContext) -> dict | None:
         if not ctx.repo or not ctx.comment_id:
             return None
@@ -201,12 +209,14 @@ class GitHubClient:
         if self.mode != RunMode.LIVE:
             return True
         repo, issue = ctx.repo, ctx.issue_number
-        if not repo or not issue:
+        if not repo:
             return False
         if ctx.comment_id:
             return self._run(["api", "-X", "POST", f"repos/{repo}/issues/comments/{ctx.comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
         if ctx.review_comment_id:
             return self._run(["api", "-X", "POST", f"repos/{repo}/pulls/comments/{ctx.review_comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
+        if ctx.commit_comment_id:
+            return self._run(["api", "-X", "POST", f"repos/{repo}/comments/{ctx.commit_comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
         if ctx.review_id:
             comments = self.pull_request_review_comments(ctx)
             if comments:
@@ -216,6 +226,8 @@ class GitHubClient:
                     if comment_id:
                         ok = self._run(["api", "-X", "POST", f"repos/{repo}/pulls/comments/{comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0 and ok
                 return ok
+        if not issue:
+            return False
         return self._run(["api", "-X", "POST", f"repos/{repo}/issues/{issue}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
 
     def is_assigned_to_current_user(self, ctx: GitHubContext) -> bool:

@@ -9,6 +9,16 @@ def test_extract_review_comment_context():
     assert ctx.work_key == "gisce/erp#27592"
 
 
+def test_extract_commit_comment_context():
+    ctx = extract_github_context("@pilipilisbot mira https://github.com/pilipilisbot/github-agent-bridge/commit/fbd7bc190e4f63b00785671144e834a3c99c3fb1#r185806568")
+    assert ctx.repo == "pilipilisbot/github-agent-bridge"
+    assert ctx.issue_number is None
+    assert ctx.commit_sha == "fbd7bc190e4f63b00785671144e834a3c99c3fb1"
+    assert ctx.commit_comment_id == 185806568
+    assert ctx.target_kind == "commit_comment"
+    assert ctx.work_key == "pilipilisbot/github-agent-bridge@fbd7bc190e4f"
+
+
 def test_mentions_are_actionable():
     assert classify_github_action("Re: [x] PR", "@pilipilisbot fes-ho") == "reply_comment"
     assert classify_github_action("Re: [x] PR", "You are receiving this because you were mentioned.") == "reply_comment"

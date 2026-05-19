@@ -5,7 +5,4 @@ After=github-agent-bridge.service
 [Service]
 Type=oneshot
 EnvironmentFile=-%h/.config/github-agent-bridge/env
-Environment=GITHUB_AGENT_BRIDGE_REVIEW_RUNNING_WARN_SECONDS=600
-Environment=GITHUB_AGENT_BRIDGE_WORK_RUNNING_WARN_SECONDS=900
-Environment=GITHUB_AGENT_BRIDGE_AUTO_UNLOCK_STALE_SECONDS=900
 ExecStart=%h/.local/bin/github-agent-bridge-monitor-alert

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.3 (2026-05-19)
+
+### Bug Fixes
+
+- Make monitor alert wrapper self-contained
+  ([`be4ccf1`](https://github.com/pilipilisbot/github-agent-bridge/commit/be4ccf1b932a1131e47741f3a63b42b4ec8a4dc8))
+
+
 ## v0.8.2 (2026-05-19)
 
 ### Bug Fixes

@@ -61,8 +61,15 @@ class ExecutorPool:
             reaction_ok = self.react_eyes_for_job_contexts(job)
             result = self.dispatcher.dispatch(job, self.policy, reaction_ok=reaction_ok)
             if result.ok:
+                followup_url = self.github.visible_followup_after_trigger(job.context)
+                if job.work_intent == "work_allowed" and job.action != "archive_notification" and not followup_url:
+                    summary = "agent finished without visible GitHub follow-up"
+                    detail = result.detail or "OpenClaw command succeeded, but no new bot comment was found in the GitHub thread."
+                    self.queue.finish(job.id, "blocked", summary, detail)
+                    return True
                 summary = "👀 reaction ok + agent dispatch queued" if reaction_ok else "agent dispatch queued; reaction failed or unavailable"
-                self.queue.finish(job.id, "done", summary, result.detail)
+                detail = f"followup_url={followup_url}; {result.detail}" if followup_url else result.detail
+                self.queue.finish(job.id, "done", summary, detail)
             else:
                 reason = "dispatch timeout" if result.timed_out else f"dispatch failed rc={result.returncode}"
                 self.queue.finish(job.id, "blocked", reason, result.detail)

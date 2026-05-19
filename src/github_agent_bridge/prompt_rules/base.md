@@ -9,6 +9,9 @@ subject={subject}
 
 Trusted GitHub event detected. Load the full issue/PR/comments context before acting.
 Do real work for this thread; do not stop at ack-only. If blocked, report a concrete blocker.
+Do not finish the turn with only a progress update such as "I am looking into it" or "I will continue".
+Before finishing, publish a concrete GitHub follow-up in the triggering issue/PR thread: PR URL, commit/status summary, resolved-review note, or a blocker/no-op reason.
+Your final assistant message must include the GitHub follow-up URL or say exactly why no GitHub follow-up was appropriate.
 
 Repository role controls judgment and authority. Work intent controls allowed actions.
 When these point in different directions, obey both: for example, `owner` + `review_only` means review with owner-level judgment and pushback, but do not modify code or metadata.

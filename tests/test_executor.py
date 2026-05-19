@@ -12,6 +12,7 @@ class FakeGitHub:
         self.non_actionable_review = non_actionable_review
         self.authored = authored
         self.answered_url = answered_url
+        self.followup_url = answered_url or "https://github.com/gisce/erp/issues/27315#issuecomment-2"
         self.eyes = 0
         self.acks = 0
         self.eye_comment_ids = []
@@ -30,6 +31,9 @@ class FakeGitHub:
 
     def current_user_commented_after(self, ctx):
         return self.answered_url
+
+    def visible_followup_after_trigger(self, ctx):
+        return self.followup_url
 
     def react_eyes(self, ctx):
         self.eyes += 1
@@ -178,6 +182,23 @@ def test_retry_skips_dispatch_when_bot_already_answered(tmp_path):
     stored = queue.get(job.id)
     assert stored is not None
     assert stored.status == "done"
+
+
+def test_work_allowed_dispatch_blocks_without_visible_github_followup(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=True)
+    github.followup_url = None
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert dispatcher.jobs
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "blocked"
+    assert stored.last_error == "ok"
 
 
 def test_non_actionable_review_reacts_without_dispatch_even_when_assigned(tmp_path):

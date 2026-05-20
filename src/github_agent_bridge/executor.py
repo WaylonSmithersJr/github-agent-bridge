@@ -15,6 +15,7 @@ class ExecutorConfig:
     workers: int = 4
     idle_sleep_seconds: float = 1.0
     run_once: bool = False
+    missing_followup_retries: int = 1
 
 
 class ExecutorPool:
@@ -65,6 +66,9 @@ class ExecutorPool:
                 if job.work_intent == "work_allowed" and job.action != "archive_notification" and not followup_url:
                     summary = "agent finished without visible GitHub follow-up"
                     detail = result.detail or "OpenClaw command succeeded, but no new bot comment was found in the GitHub thread."
+                    if job.attempts <= self.config.missing_followup_retries:
+                        self.queue.requeue_running(job.id, "agent finished without visible GitHub follow-up; auto-requeued", detail)
+                        return True
                     self.queue.finish(job.id, "blocked", summary, detail)
                     return True
                 summary = "👀 reaction ok + agent dispatch queued" if reaction_ok else "agent dispatch queued; reaction failed or unavailable"

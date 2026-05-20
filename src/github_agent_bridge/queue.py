@@ -100,6 +100,15 @@ class JobQueue:
             row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
             self._log(con, job_id, row["work_key"] if row else None, status, summary, detail)
 
+    def requeue_running(self, job_id: int, summary: str, detail: str | None = None) -> bool:
+        now = utc_now()
+        with self.connect() as con:
+            cur = con.execute("UPDATE jobs SET status='pending', locked_by=NULL, last_error=NULL, updated_at=? WHERE id=? AND status='running'", (now, job_id))
+            if cur.rowcount:
+                row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
+                self._log(con, job_id, row["work_key"] if row else None, "retry", summary, detail)
+            return bool(cur.rowcount)
+
     def update_work_intent(self, job_id: int, work_intent: str, summary: str) -> Job | None:
         now = utc_now()
         with self.connect() as con:

@@ -184,7 +184,7 @@ def test_retry_skips_dispatch_when_bot_already_answered(tmp_path):
     assert stored.status == "done"
 
 
-def test_work_allowed_dispatch_blocks_without_visible_github_followup(tmp_path):
+def test_work_allowed_dispatch_auto_retries_once_without_visible_github_followup(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     job = enqueue_pr_comment(queue)
     dispatcher = RecordingDispatcher()
@@ -197,8 +197,28 @@ def test_work_allowed_dispatch_blocks_without_visible_github_followup(tmp_path):
     assert dispatcher.jobs
     stored = queue.get(job.id)
     assert stored is not None
+    assert stored.status == "pending"
+    assert stored.last_error is None
+    assert stored.attempts == 1
+
+
+def test_work_allowed_dispatch_blocks_after_auto_retry_without_visible_github_followup(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=True)
+    github.followup_url = None
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+    assert pool.work_one("worker-test") is True
+
+    assert len(dispatcher.jobs) == 2
+    stored = queue.get(job.id)
+    assert stored is not None
     assert stored.status == "blocked"
     assert stored.last_error == "ok"
+    assert stored.attempts == 2
 
 
 def test_non_actionable_review_reacts_without_dispatch_even_when_assigned(tmp_path):

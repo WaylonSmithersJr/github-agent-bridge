@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.8 (2026-05-20)
+
+### Bug Fixes
+
+- Include running process details in monitor
+  ([`885e3f9`](https://github.com/pilipilisbot/github-agent-bridge/commit/885e3f9f02ea778b92a12da3f8899dd5cb30f903))
+
+
 ## v0.8.7 (2026-05-20)
 
 ### Bug Fixes

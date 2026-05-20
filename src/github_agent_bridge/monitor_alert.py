@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ class AlertConfig:
     pending_warn_seconds: int
     review_running_warn_seconds: int
     work_running_warn_seconds: int
+    kill_stale_children: bool
+    terminate_grace_seconds: int
 
     @property
     def state_file(self) -> Path:
@@ -45,6 +48,8 @@ class AlertConfig:
             pending_warn_seconds=int(values.get("GITHUB_AGENT_BRIDGE_PENDING_WARN_SECONDS", "300")),
             review_running_warn_seconds=int(values.get("GITHUB_AGENT_BRIDGE_REVIEW_RUNNING_WARN_SECONDS", "600")),
             work_running_warn_seconds=int(values.get("GITHUB_AGENT_BRIDGE_WORK_RUNNING_WARN_SECONDS", "900")),
+            kill_stale_children=_parse_bool(values.get("GITHUB_AGENT_BRIDGE_KILL_STALE_CHILDREN", "")),
+            terminate_grace_seconds=int(values.get("GITHUB_AGENT_BRIDGE_TERMINATE_GRACE_SECONDS", "5")),
         )
 
 
@@ -55,6 +60,10 @@ def _parse_optional_int(value: str | None) -> int | None:
     if not value:
         return None
     return int(value)
+
+
+def _parse_bool(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _expand(path: str) -> str:
@@ -94,12 +103,80 @@ def has_child_processes(pid: str) -> bool:
     return proc.returncode == 0
 
 
+def child_pids(pid: str) -> list[int]:
+    proc = _run(["pgrep", "-P", pid])
+    pids: list[int] = []
+    for line in proc.stdout.splitlines():
+        try:
+            pids.append(int(line.strip()))
+        except ValueError:
+            continue
+    return pids
+
+
+def process_exists(pid: int) -> bool:
+    return Path(f"/proc/{pid}").exists()
+
+
+def terminate_process_group(pid: int, grace_seconds: int) -> str:
+    try:
+        pgid = os.getpgid(pid)
+    except OSError as exc:
+        return f"pid {pid}: already gone ({exc})"
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return f"pid {pid}: already gone"
+    except PermissionError as exc:
+        return f"pid {pid}: terminate denied ({exc})"
+    deadline = time.time() + grace_seconds
+    while time.time() < deadline:
+        if not process_exists(pid):
+            return f"pid {pid}: terminated"
+        time.sleep(0.2)
+    if process_exists(pid):
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            return f"pid {pid}: terminated"
+        except PermissionError as exc:
+            return f"pid {pid}: kill denied ({exc})"
+        return f"pid {pid}: killed"
+    return f"pid {pid}: terminated"
+
+
+def running_job_ids(output: str) -> list[str]:
+    return re.findall(r"running job (\d+)\b", output)
+
+
+def retry_jobs(config: AlertConfig, job_ids: list[str]) -> str:
+    lines = []
+    for job_id in dict.fromkeys(job_ids):
+        proc = _run([
+            _expand(config.bridge_bin),
+            "--db",
+            _expand(config.db),
+            "--policy",
+            _expand(config.policy),
+            "retry",
+            job_id,
+        ])
+        lines.append(proc.stdout.strip())
+    return "\n".join(line for line in lines if line) + ("\n" if lines else "")
+
+
 def maybe_unlock_stale(config: AlertConfig, output: str) -> str:
     if config.auto_unlock_seconds is None or "running job " not in output:
         return ""
     main_pid = get_main_pid()
-    if not main_pid or main_pid == "0" or has_child_processes(main_pid):
+    if not main_pid or main_pid == "0":
         return ""
+    child_output = ""
+    if has_child_processes(main_pid):
+        if not config.kill_stale_children:
+            return ""
+        results = [terminate_process_group(pid, config.terminate_grace_seconds) for pid in child_pids(main_pid)]
+        child_output = "terminated stale child processes:\n" + "\n".join(results) + "\n"
     proc = _run(
         [
             _expand(config.bridge_bin),
@@ -112,7 +189,8 @@ def maybe_unlock_stale(config: AlertConfig, output: str) -> str:
             str(config.auto_unlock_seconds),
         ]
     )
-    return proc.stdout
+    retry_output = retry_jobs(config, running_job_ids(output)) if child_output else ""
+    return child_output + proc.stdout + retry_output
 
 
 def load_state(path: Path) -> tuple[str, int]:

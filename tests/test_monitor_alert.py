@@ -19,6 +19,8 @@ def make_config(tmp_path: Path) -> monitor_alert.AlertConfig:
         pending_warn_seconds=300,
         review_running_warn_seconds=600,
         work_running_warn_seconds=900,
+        kill_stale_children=False,
+        terminate_grace_seconds=1,
     )
 
 
@@ -50,6 +52,53 @@ def test_maybe_unlock_stale_runs_when_executor_has_no_children(tmp_path, monkeyp
     output = monitor_alert.maybe_unlock_stale(config, "running job 7 owner/repo#1 age 1200s > 900s")
 
     assert output == '{"unlocked":1}\n'
+
+
+def test_maybe_unlock_stale_kills_children_and_retries_jobs_when_enabled(tmp_path, monkeypatch):
+    base = make_config(tmp_path)
+    config = monitor_alert.AlertConfig(
+        bridge_bin=base.bridge_bin,
+        openclaw_bin=base.openclaw_bin,
+        db=base.db,
+        policy=base.policy,
+        channel=base.channel,
+        target=base.target,
+        state_dir=base.state_dir,
+        resend_seconds=base.resend_seconds,
+        auto_unlock_seconds=base.auto_unlock_seconds,
+        pending_warn_seconds=base.pending_warn_seconds,
+        review_running_warn_seconds=base.review_running_warn_seconds,
+        work_running_warn_seconds=base.work_running_warn_seconds,
+        kill_stale_children=True,
+        terminate_grace_seconds=base.terminate_grace_seconds,
+    )
+    monkeypatch.setattr(monitor_alert, "get_main_pid", lambda unit="github-agent-bridge.service": "123")
+    monkeypatch.setattr(monitor_alert, "has_child_processes", lambda pid: True)
+    monkeypatch.setattr(monitor_alert, "child_pids", lambda pid: [456])
+    monkeypatch.setattr(monitor_alert, "terminate_process_group", lambda pid, grace: f"pid {pid}: killed")
+
+    def fake_run(args, check=False):
+        if args[-2:] == ["retry", "7"]:
+            return type("Proc", (), {"stdout": "{\"job_id\":7,\"requeued\":true}\n"})()
+        return type("Proc", (), {"stdout": "{\"unlocked\":0}\n"})()
+
+    monkeypatch.setattr(monitor_alert, "_run", fake_run)
+
+    output = monitor_alert.maybe_unlock_stale(config, "running job 7 owner/repo#1 age 1200s > 900s")
+
+    assert "pid 456: killed" in output
+    assert '{"unlocked":0}' in output
+    assert '{"job_id":7,"requeued":true}' in output
+
+
+def test_maybe_unlock_stale_skips_child_kill_when_disabled(tmp_path, monkeypatch):
+    config = make_config(tmp_path)
+    monkeypatch.setattr(monitor_alert, "get_main_pid", lambda unit="github-agent-bridge.service": "123")
+    monkeypatch.setattr(monitor_alert, "has_child_processes", lambda pid: True)
+
+    output = monitor_alert.maybe_unlock_stale(config, "running job 7 owner/repo#1 age 1200s > 900s")
+
+    assert output == ""
 
 
 def test_maybe_unlock_stale_skips_without_running_job_message(tmp_path, monkeypatch):

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.10 (2026-05-20)
+
+### Bug Fixes
+
+- Detect stalled jobs with proc activity
+  ([`a7605f1`](https://github.com/pilipilisbot/github-agent-bridge/commit/a7605f1270e908a854a2434e9642392503e974b1))
+
+
 ## v0.8.9 (2026-05-20)
 
 ### Bug Fixes

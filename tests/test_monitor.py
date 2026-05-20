@@ -53,6 +53,40 @@ def test_monitor_alerts_on_old_running_job(tmp_path):
     report = monitor(db, thresholds=MonitorThresholds(work_running_warn_seconds=1), check_systemd=False)
     assert report.ok is False
     assert any("running job" in a for a in report.alerts)
+    assert "running detail: job=" in report.text()
+
+
+def test_monitor_alerts_when_running_job_has_no_executor_child(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.enqueue(notif(), Policy(trusted_orgs={"gisce"}))
+    q.claim_next("worker-1")
+    monkeypatch.setattr(monitor_module, "_is_active", lambda unit: "active")
+    monkeypatch.setattr(monitor_module, "_main_pid", lambda unit: 123)
+    monkeypatch.setattr(monitor_module, "_direct_children", lambda pid: [])
+    monkeypatch.setattr(monitor_module, "_last_service_result", lambda unit: ("success", "0", 42))
+
+    report = monitor(db)
+
+    assert report.ok is False
+    assert any("running jobs exist but executor has no child process" in a for a in report.alerts)
+
+
+def test_monitor_reports_executor_child_processes(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.enqueue(notif(), Policy(trusted_orgs={"gisce"}))
+    q.claim_next("worker-1")
+    monkeypatch.setattr(monitor_module, "_is_active", lambda unit: "active")
+    monkeypatch.setattr(monitor_module, "_main_pid", lambda unit: 123)
+    monkeypatch.setattr(monitor_module, "_direct_children", lambda pid: [{"pid": 456, "cmd": "openclaw agent"}])
+    monkeypatch.setattr(monitor_module, "_last_service_result", lambda unit: ("success", "0", 42))
+
+    report = monitor(db)
+
+    assert report.metrics["executor_pid"] == 123
+    assert report.metrics["executor_children"] == [{"pid": 456, "cmd": "openclaw agent"}]
+    assert "executor children: 456:openclaw agent" in report.text()
 
 
 def test_monitor_reports_recent_reader_from_systemd_age(tmp_path, monkeypatch):

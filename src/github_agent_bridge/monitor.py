@@ -44,6 +44,20 @@ class MonitorReport:
         parts.append(" ".join(compact))
         if self.alerts:
             parts.extend(f"- {a}" for a in self.alerts)
+        for job in metrics.get("running_jobs", []):
+            last = job.get("last_worklog") or {}
+            parts.append(
+                "- running detail: "
+                f"job={job.get('id')} key={job.get('work_key')} "
+                f"intent={job.get('work_intent')} attempts={job.get('attempts')} "
+                f"worker={job.get('locked_by')} age={job.get('age_seconds')}s "
+                f"idle={job.get('idle_seconds')}s "
+                f"last={last.get('phase', '-')}/{last.get('summary', '-')}"
+            )
+        children = metrics.get("executor_children") or []
+        if children:
+            child_text = ", ".join(f"{child.get('pid')}:{child.get('cmd') or '-'}" for child in children[:5])
+            parts.append(f"- executor children: {child_text}")
         return "\n".join(parts)
 
 
@@ -83,6 +97,48 @@ def _last_service_result(unit: str) -> tuple[str, str | None, int | None]:
     return result, exit_status, age_seconds
 
 
+def _main_pid(unit: str) -> int | None:
+    proc = _run_systemctl(["show", unit, "--property=MainPID", "--value"])
+    value = (proc.stdout or "").strip()
+    try:
+        pid = int(value)
+    except ValueError:
+        return None
+    return pid or None
+
+
+def _process_exists(pid: int) -> bool:
+    return Path(f"/proc/{pid}").exists()
+
+
+def _process_cmd(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    return raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
+
+
+def _direct_children(pid: int) -> list[dict[str, Any]]:
+    proc = subprocess.run(
+        ["pgrep", "-P", str(pid)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    children = []
+    for line in proc.stdout.splitlines():
+        try:
+            child_pid = int(line.strip())
+        except ValueError:
+            continue
+        if not _process_exists(child_pid):
+            continue
+        children.append({"pid": child_pid, "cmd": _process_cmd(child_pid)})
+    return children
+
+
 def _table_exists(con: sqlite3.Connection, name: str) -> bool:
     row = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
     return row is not None
@@ -113,13 +169,28 @@ def inspect_db(path: str | Path) -> dict[str, Any]:
     out["oldest_pending_age_seconds"] = None if pending_age is None else int(pending_age)
     state = {r["key"]: r["value"] for r in con.execute("SELECT key,value FROM state")}
     out["last_uid"] = state.get("last_uid")
-    running_rows = con.execute("SELECT id, work_key, work_intent, started_at FROM jobs WHERE status='running'").fetchall()
+    running_rows = con.execute("SELECT id, work_key, work_intent, locked_by, attempts, started_at, updated_at FROM jobs WHERE status='running'").fetchall()
     now = datetime.now(UTC)
     running = []
     for row in running_rows:
         started = _parse_utc(row["started_at"])
+        updated = _parse_utc(row["updated_at"])
         age = int((now - started).total_seconds()) if started else None
-        running.append({"id": row["id"], "work_key": row["work_key"], "work_intent": row["work_intent"], "age_seconds": age})
+        idle = int((now - updated).total_seconds()) if updated else None
+        last_log = con.execute(
+            "SELECT ts, phase, summary FROM worklog WHERE job_id=? ORDER BY id DESC LIMIT 1",
+            (row["id"],),
+        ).fetchone() if _table_exists(con, "worklog") else None
+        running.append({
+            "id": row["id"],
+            "work_key": row["work_key"],
+            "work_intent": row["work_intent"],
+            "locked_by": row["locked_by"],
+            "attempts": row["attempts"],
+            "age_seconds": age,
+            "idle_seconds": idle,
+            "last_worklog": dict(last_log) if last_log else None,
+        })
     out["running_jobs"] = running
     out["running"] = len(running)
     last_log = con.execute("SELECT ts, phase, summary FROM worklog ORDER BY id DESC LIMIT 1").fetchone() if _table_exists(con, "worklog") else None
@@ -166,10 +237,14 @@ def monitor(
 
     if check_systemd:
         executor_state = _is_active(executor_unit)
+        executor_pid = _main_pid(executor_unit)
+        children = _direct_children(executor_pid) if executor_pid else []
         timer_state = _is_active(reader_timer_unit)
         reader_result, reader_exit, reader_age = _last_service_result(reader_service_unit)
         metrics.update({
             "executor_service": executor_state,
+            "executor_pid": executor_pid,
+            "executor_children": children,
             "reader_timer": timer_state,
             "reader_last_result": reader_result,
             "reader_last_exit_status": reader_exit,
@@ -177,6 +252,8 @@ def monitor(
         })
         if executor_state != "active":
             alerts.append(f"executor service is {executor_state}")
+        if metrics.get("running_jobs") and executor_state == "active" and not children:
+            alerts.append("running jobs exist but executor has no child process")
         if timer_state != "active":
             alerts.append(f"reader timer is {timer_state}")
         if reader_result not in ("success", "unknown"):

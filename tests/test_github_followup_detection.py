@@ -1,0 +1,65 @@
+import json
+import subprocess
+
+from github_agent_bridge.dispatch import GitHubClient
+from github_agent_bridge.models import GitHubContext
+
+
+class RecordingGitHubClient(GitHubClient):
+    def __init__(self, responses):
+        super().__init__()
+        self.responses = responses
+        self.calls = []
+
+    def _run(self, args):
+        self.calls.append(args)
+        key = tuple(args)
+        stdout = self.responses.get(key, "")
+        return subprocess.CompletedProcess([self.gh_bin, *args], 0, stdout, "")
+
+
+def test_visible_followup_finds_review_comment_after_review_trigger():
+    ctx = GitHubContext(
+        urls=["https://github.com/gisce/erp/pull/27805#pullrequestreview-4325056741"],
+        repo="gisce/erp",
+        issue_number=27805,
+        review_id=4325056741,
+    )
+    followup = {
+        "user": {"login": "pilipilisbot"},
+        "created_at": "2026-05-20T04:01:00Z",
+        "html_url": "https://github.com/gisce/erp/pull/27805#discussion_r3271134328",
+    }
+    github = RecordingGitHubClient(
+        {
+            ("api", "user", "--jq", ".login"): "pilipilisbot\n",
+            ("api", "repos/gisce/erp/pulls/27805/reviews/4325056741"): json.dumps({"submitted_at": "2026-05-20T03:59:00Z"}),
+            ("api", "--paginate", "repos/gisce/erp/pulls/27805/comments", "--jq", ".[] | @json"): json.dumps(followup) + "\n",
+        }
+    )
+
+    assert github.visible_followup_after_trigger(ctx) == followup["html_url"]
+
+
+def test_visible_followup_ignores_review_comment_before_trigger():
+    ctx = GitHubContext(
+        urls=["https://github.com/gisce/erp/pull/27805#pullrequestreview-4325056741"],
+        repo="gisce/erp",
+        issue_number=27805,
+        review_id=4325056741,
+    )
+    old_comment = {
+        "user": {"login": "pilipilisbot"},
+        "created_at": "2026-05-20T03:58:00Z",
+        "html_url": "https://github.com/gisce/erp/pull/27805#discussion_old",
+    }
+    github = RecordingGitHubClient(
+        {
+            ("api", "user", "--jq", ".login"): "pilipilisbot\n",
+            ("api", "repos/gisce/erp/pulls/27805/reviews/4325056741"): json.dumps({"submitted_at": "2026-05-20T03:59:00Z"}),
+            ("api", "--paginate", "repos/gisce/erp/pulls/27805/comments", "--jq", ".[] | @json"): json.dumps(old_comment) + "\n",
+            ("api", "--paginate", "repos/gisce/erp/issues/27805/comments", "--jq", ".[] | @json"): "",
+        }
+    )
+
+    assert github.visible_followup_after_trigger(ctx) is None

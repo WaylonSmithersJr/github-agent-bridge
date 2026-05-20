@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import signal
@@ -26,10 +27,15 @@ class AlertConfig:
     work_running_warn_seconds: int
     kill_stale_children: bool
     terminate_grace_seconds: int
+    proc_idle_seconds: int
 
     @property
     def state_file(self) -> Path:
         return self.state_dir / "monitor-alert.state"
+
+    @property
+    def proc_state_file(self) -> Path:
+        return self.state_dir / "monitor-proc-state.json"
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> AlertConfig:
@@ -50,6 +56,7 @@ class AlertConfig:
             work_running_warn_seconds=int(values.get("GITHUB_AGENT_BRIDGE_WORK_RUNNING_WARN_SECONDS", "900")),
             kill_stale_children=_parse_bool(values.get("GITHUB_AGENT_BRIDGE_KILL_STALE_CHILDREN", "")),
             terminate_grace_seconds=int(values.get("GITHUB_AGENT_BRIDGE_TERMINATE_GRACE_SECONDS", "5")),
+            proc_idle_seconds=int(values.get("GITHUB_AGENT_BRIDGE_PROC_IDLE_SECONDS", "240")),
         )
 
 
@@ -114,8 +121,113 @@ def child_pids(pid: str) -> list[int]:
     return pids
 
 
+def descendant_pids(pid: int) -> list[int]:
+    out: list[int] = []
+    stack = [pid]
+    while stack:
+        current = stack.pop()
+        children = child_pids(str(current))
+        out.extend(children)
+        stack.extend(children)
+    return out
+
+
 def process_exists(pid: int) -> bool:
     return Path(f"/proc/{pid}").exists()
+
+
+def proc_cmd(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    return raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
+
+
+def proc_cpu_ticks(pid: int) -> int:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    # The second field is the command in parentheses and may contain spaces.
+    fields = stat.rsplit(")", 1)[1].strip().split()
+    try:
+        return int(fields[11]) + int(fields[12])
+    except (IndexError, ValueError):
+        return 0
+
+
+def proc_io_bytes(pid: int) -> int:
+    total = 0
+    try:
+        lines = Path(f"/proc/{pid}/io").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0
+    for line in lines:
+        if line.startswith(("read_bytes:", "write_bytes:")):
+            try:
+                total += int(line.split(":", 1)[1].strip())
+            except ValueError:
+                pass
+    return total
+
+
+def sample_process_tree(root_pid: int, now: int | None = None) -> dict[str, object]:
+    now = int(time.time() if now is None else now)
+    pids = [root_pid, *descendant_pids(root_pid)]
+    live = [pid for pid in pids if process_exists(pid)]
+    return {
+        "ts": now,
+        "root_pid": root_pid,
+        "pids": live,
+        "cmds": {str(pid): proc_cmd(pid) for pid in live},
+        "cpu_ticks": sum(proc_cpu_ticks(pid) for pid in live),
+        "io_bytes": sum(proc_io_bytes(pid) for pid in live),
+    }
+
+
+def load_proc_state(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_proc_state(path: Path, state: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+
+
+def process_sample_active(previous: dict[str, object] | None, current: dict[str, object]) -> bool:
+    if not previous:
+        return True
+    if previous.get("root_pid") != current.get("root_pid"):
+        return True
+    if previous.get("pids") != current.get("pids"):
+        return True
+    return (
+        int(current.get("cpu_ticks") or 0) > int(previous.get("cpu_ticks") or 0)
+        or int(current.get("io_bytes") or 0) > int(previous.get("io_bytes") or 0)
+    )
+
+
+def sample_executor_activity(config: AlertConfig, main_pid: str | None = None, now: int | None = None) -> str:
+    main_pid = main_pid or get_main_pid()
+    if not main_pid or main_pid == "0" or not has_child_processes(main_pid):
+        return ""
+    children = child_pids(main_pid)
+    if not children:
+        return ""
+    current = sample_process_tree(children[0], now=now)
+    previous = load_proc_state(config.proc_state_file)
+    active = process_sample_active(previous, current)
+    current["active_since_last_sample"] = active
+    if not active and previous.get("ts"):
+        current["idle_seconds"] = int(current["ts"]) - int(previous["ts"])
+    save_proc_state(config.proc_state_file, current)
+    return f"proc sample: root_pid={current['root_pid']} active={active} cpu_ticks={current['cpu_ticks']} io_bytes={current['io_bytes']}\n"
 
 
 def terminate_process_group(pid: int, grace_seconds: int) -> str:
@@ -175,8 +287,13 @@ def maybe_unlock_stale(config: AlertConfig, output: str) -> str:
     if has_child_processes(main_pid):
         if not config.kill_stale_children:
             return ""
+        sample_output = sample_executor_activity(config, main_pid=main_pid)
+        sample = load_proc_state(config.proc_state_file)
+        idle_seconds = int(sample.get("idle_seconds") or 0)
+        if sample.get("active_since_last_sample", True) or idle_seconds < config.proc_idle_seconds:
+            return sample_output
         results = [terminate_process_group(pid, config.terminate_grace_seconds) for pid in child_pids(main_pid)]
-        child_output = "terminated stale child processes:\n" + "\n".join(results) + "\n"
+        child_output = sample_output + "terminated stale child processes:\n" + "\n".join(results) + "\n"
     proc = _run(
         [
             _expand(config.bridge_bin),
@@ -246,6 +363,10 @@ def main(argv: list[str] | None = None) -> int:
     print(output, end="" if output.endswith("\n") else "\n")
 
     if monitor_proc.returncode == 0:
+        if "running detail:" in output:
+            sample_output = sample_executor_activity(config)
+            if sample_output:
+                print(sample_output, end="" if sample_output.endswith("\n") else "\n")
         config.state_file.unlink(missing_ok=True)
         return 0
 

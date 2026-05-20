@@ -21,6 +21,7 @@ def make_config(tmp_path: Path) -> monitor_alert.AlertConfig:
         work_running_warn_seconds=900,
         kill_stale_children=False,
         terminate_grace_seconds=1,
+        proc_idle_seconds=240,
     )
 
 
@@ -71,10 +72,13 @@ def test_maybe_unlock_stale_kills_children_and_retries_jobs_when_enabled(tmp_pat
         work_running_warn_seconds=base.work_running_warn_seconds,
         kill_stale_children=True,
         terminate_grace_seconds=base.terminate_grace_seconds,
+        proc_idle_seconds=base.proc_idle_seconds,
     )
     monkeypatch.setattr(monitor_alert, "get_main_pid", lambda unit="github-agent-bridge.service": "123")
     monkeypatch.setattr(monitor_alert, "has_child_processes", lambda pid: True)
     monkeypatch.setattr(monitor_alert, "child_pids", lambda pid: [456])
+    monkeypatch.setattr(monitor_alert, "sample_executor_activity", lambda config, main_pid=None, now=None: "proc sample\n")
+    monkeypatch.setattr(monitor_alert, "load_proc_state", lambda path: {"active_since_last_sample": False, "idle_seconds": 300})
     monkeypatch.setattr(monitor_alert, "terminate_process_group", lambda pid, grace: f"pid {pid}: killed")
 
     def fake_run(args, check=False):
@@ -89,6 +93,35 @@ def test_maybe_unlock_stale_kills_children_and_retries_jobs_when_enabled(tmp_pat
     assert "pid 456: killed" in output
     assert '{"unlocked":0}' in output
     assert '{"job_id":7,"requeued":true}' in output
+
+
+def test_maybe_unlock_stale_does_not_kill_active_child(tmp_path, monkeypatch):
+    base = make_config(tmp_path)
+    config = monitor_alert.AlertConfig(
+        bridge_bin=base.bridge_bin,
+        openclaw_bin=base.openclaw_bin,
+        db=base.db,
+        policy=base.policy,
+        channel=base.channel,
+        target=base.target,
+        state_dir=base.state_dir,
+        resend_seconds=base.resend_seconds,
+        auto_unlock_seconds=base.auto_unlock_seconds,
+        pending_warn_seconds=base.pending_warn_seconds,
+        review_running_warn_seconds=base.review_running_warn_seconds,
+        work_running_warn_seconds=base.work_running_warn_seconds,
+        kill_stale_children=True,
+        terminate_grace_seconds=base.terminate_grace_seconds,
+        proc_idle_seconds=240,
+    )
+    monkeypatch.setattr(monitor_alert, "get_main_pid", lambda unit="github-agent-bridge.service": "123")
+    monkeypatch.setattr(monitor_alert, "has_child_processes", lambda pid: True)
+    monkeypatch.setattr(monitor_alert, "sample_executor_activity", lambda config, main_pid=None, now=None: "proc sample\n")
+    monkeypatch.setattr(monitor_alert, "load_proc_state", lambda path: {"active_since_last_sample": True, "idle_seconds": 0})
+
+    output = monitor_alert.maybe_unlock_stale(config, "running job 7 owner/repo#1 age 1200s > 900s")
+
+    assert output == "proc sample\n"
 
 
 def test_maybe_unlock_stale_skips_child_kill_when_disabled(tmp_path, monkeypatch):

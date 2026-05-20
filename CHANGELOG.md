@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.7 (2026-05-20)
+
+### Bug Fixes
+
+- Auto-retry missing follow-up jobs
+  ([`7918d31`](https://github.com/pilipilisbot/github-agent-bridge/commit/7918d31c43699a2b1dd13ce68a0117875aede6c8))
+
+
 ## v0.8.6 (2026-05-20)
 
 ### Bug Fixes

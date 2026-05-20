@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.6 (2026-05-20)
+
+### Bug Fixes
+
+- Detect PR review follow-up comments
+  ([`2989fcb`](https://github.com/pilipilisbot/github-agent-bridge/commit/2989fcbcded03803cb3f55e76064ff5a3d0bfd21))
+
+
 ## v0.8.5 (2026-05-19)
 
 ### Bug Fixes

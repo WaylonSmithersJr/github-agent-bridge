@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.9 (2026-05-20)
+
+### Bug Fixes
+
+- Watchdog stale running jobs
+  ([`520b375`](https://github.com/pilipilisbot/github-agent-bridge/commit/520b3759255e1dd9fa2e25b5705c089b26e77014))
+
+
 ## v0.8.8 (2026-05-20)
 
 ### Bug Fixes

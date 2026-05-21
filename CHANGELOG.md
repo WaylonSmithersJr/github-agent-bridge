@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.9.0 (2026-05-21)
+
+### Features
+
+- Add read-only backend service
+  ([`a890cee`](https://github.com/pilipilisbot/github-agent-bridge/commit/a890ceef2b4cdc2732594e0dcd8604ee7f710cbf))
+
+- Rework dashboard backend m1
+  ([`68623de`](https://github.com/pilipilisbot/github-agent-bridge/commit/68623de85c6e17ffba04cf472fbcd8a9816adec9))
+
+### Refactoring
+
+- Share dashboard data queries
+  ([`f3a46c3`](https://github.com/pilipilisbot/github-agent-bridge/commit/f3a46c3354cb416cc4ad8ae051509b06d6f5da75))
+
+
 ## v0.8.10 (2026-05-20)
 
 ### Bug Fixes

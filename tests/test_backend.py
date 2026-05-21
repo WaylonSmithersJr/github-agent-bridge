@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from github_agent_bridge.backend import DashboardConfig, _sign, create_app, get_job_detail, list_jobs, metrics_summary
+from github_agent_bridge.backend import DashboardConfig, _sign, create_app
+from github_agent_bridge.dashboard_data import get_job_detail, list_jobs, metrics_summary
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue

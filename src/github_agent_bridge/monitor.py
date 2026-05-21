@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import subprocess
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from .dashboard_data import inspect_db_read_only
 
 
 @dataclass(frozen=True)
@@ -139,64 +139,8 @@ def _direct_children(pid: int) -> list[dict[str, Any]]:
     return children
 
 
-def _table_exists(con: sqlite3.Connection, name: str) -> bool:
-    row = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
-    return row is not None
-
-
-def _parse_utc(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
 def inspect_db(path: str | Path) -> dict[str, Any]:
-    db = Path(path).expanduser()
-    out: dict[str, Any] = {"db_path": str(db), "db_exists": db.exists()}
-    if not db.exists():
-        return out
-    con = sqlite3.connect(db)
-    con.row_factory = sqlite3.Row
-    if not _table_exists(con, "jobs"):
-        return out | {"schema_ok": False}
-    out["schema_ok"] = True
-    stats = {r["status"]: int(r["count"]) for r in con.execute("SELECT status, count(*) count FROM jobs GROUP BY status")}
-    out.update(stats)
-    pending_age = con.execute("SELECT CAST((julianday('now') - julianday(min(created_at))) * 86400 AS INTEGER) age FROM jobs WHERE status='pending'").fetchone()["age"]
-    out["oldest_pending_age_seconds"] = None if pending_age is None else int(pending_age)
-    state = {r["key"]: r["value"] for r in con.execute("SELECT key,value FROM state")}
-    out["last_uid"] = state.get("last_uid")
-    running_rows = con.execute("SELECT id, work_key, work_intent, locked_by, attempts, started_at, updated_at FROM jobs WHERE status='running'").fetchall()
-    now = datetime.now(UTC)
-    running = []
-    for row in running_rows:
-        started = _parse_utc(row["started_at"])
-        updated = _parse_utc(row["updated_at"])
-        age = int((now - started).total_seconds()) if started else None
-        idle = int((now - updated).total_seconds()) if updated else None
-        last_log = con.execute(
-            "SELECT ts, phase, summary FROM worklog WHERE job_id=? ORDER BY id DESC LIMIT 1",
-            (row["id"],),
-        ).fetchone() if _table_exists(con, "worklog") else None
-        running.append({
-            "id": row["id"],
-            "work_key": row["work_key"],
-            "work_intent": row["work_intent"],
-            "locked_by": row["locked_by"],
-            "attempts": row["attempts"],
-            "age_seconds": age,
-            "idle_seconds": idle,
-            "last_worklog": dict(last_log) if last_log else None,
-        })
-    out["running_jobs"] = running
-    out["running"] = len(running)
-    last_log = con.execute("SELECT ts, phase, summary FROM worklog ORDER BY id DESC LIMIT 1").fetchone() if _table_exists(con, "worklog") else None
-    if last_log:
-        out["last_worklog"] = dict(last_log)
-    return out
+    return inspect_db_read_only(path)
 
 
 def monitor(

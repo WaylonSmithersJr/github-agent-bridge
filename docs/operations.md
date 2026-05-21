@@ -82,6 +82,10 @@ GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS=alice,bob
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS=example-org
 ```
 
+See [`dashboard-github-oauth.md`](dashboard-github-oauth.md) for the GitHub
+OAuth App creation steps, callback URL, scopes, allowlists, reverse proxy notes
+and troubleshooting.
+
 Run it manually:
 
 ```bash

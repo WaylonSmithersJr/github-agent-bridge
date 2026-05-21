@@ -36,6 +36,46 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
     assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"
 
 
+def test_dashboard_serves_built_react_ui_with_existing_auth(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
+    q = JobQueue(db)
+    q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    app = create_app(DashboardConfig(db=db, static_dir=static_dir, require_auth=False))
+
+    response = TestClient(app).get("/")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "root" in response.text
+
+
+def test_dashboard_ui_requires_auth_by_default(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, static_dir=static_dir, secret_key="secret", allowed_users={"alice"}))
+
+    response = TestClient(app).get("/")
+
+    assert response.status_code == 401
+
+
+def test_dashboard_ui_reports_missing_build_after_auth(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, static_dir=tmp_path / "missing-static", require_auth=False))
+
+    response = TestClient(app).get("/")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "dashboard_ui_not_built"
+
+
 def test_dashboard_missing_db_does_not_create_database(tmp_path):
     db = tmp_path / "missing.sqlite3"
     app = create_app(DashboardConfig(db=db, require_auth=False))
@@ -87,10 +127,14 @@ def test_dashboard_requires_auth_by_default(tmp_path):
 
 def test_dashboard_session_authorization_allows_configured_user(tmp_path):
     db = tmp_path / "bridge.sqlite3"
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
     JobQueue(db)
-    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}))
+    app = create_app(DashboardConfig(db=db, static_dir=static_dir, secret_key="secret", allowed_users={"alice"}))
 
     client = TestClient(app)
     client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, "alice"))
 
     assert client.get("/api/jobs").status_code == 200
+    assert client.get("/").status_code == 200

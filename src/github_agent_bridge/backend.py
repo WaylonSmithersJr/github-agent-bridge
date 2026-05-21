@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from .cli import DEFAULT_DB
 from .dashboard_data import get_job_detail, inspect_db_read_only, job_logs, list_jobs, metrics_summary
@@ -39,6 +40,7 @@ class DashboardConfig:
         allowed_users: set[str] | None = None,
         allowed_orgs: set[str] | None = None,
         require_auth: bool = True,
+        static_dir: str | Path | None = None,
     ) -> None:
         self.db = Path(db).expanduser()
         self.secret_key = secret_key or os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_SECRET_KEY", "")
@@ -47,6 +49,7 @@ class DashboardConfig:
         self.allowed_users = allowed_users if allowed_users is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS")
         self.allowed_orgs = allowed_orgs if allowed_orgs is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS")
         self.require_auth = require_auth
+        self.static_dir = Path(static_dir or os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_STATIC_DIR", Path(__file__).with_name("dashboard_static"))).expanduser()
 
     @property
     def oauth_ready(self) -> bool:
@@ -123,6 +126,9 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     config = config or DashboardConfig()
     app = FastAPI(title="GitHub Agent Bridge Dashboard API")
     app.state.dashboard_config = config
+    assets_dir = config.static_dir / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="dashboard-assets")
 
     async def current_user(request: Request) -> str:
         cfg: DashboardConfig = request.app.state.dashboard_config
@@ -151,6 +157,13 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "oauth_configured": config.oauth_ready,
             "read_only": True,
         }
+
+    @app.get("/")
+    def dashboard(_: str = Depends(current_user)) -> FileResponse:
+        index = config.static_dir / "index.html"
+        if not index.exists():
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="dashboard_ui_not_built")
+        return FileResponse(index, headers=_redacted_headers())
 
     @app.get("/api/status")
     def api_status(_: str = Depends(current_user)) -> dict[str, Any]:

@@ -1,0 +1,17 @@
+[Unit]
+Description=GitHub Agent Bridge read-only backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=GITHUB_AGENT_BRIDGE_DB=%h/.local/state/github-agent-bridge/bridge.sqlite3
+Environment=GITHUB_AGENT_BRIDGE_BACKEND_HOST=127.0.0.1
+Environment=GITHUB_AGENT_BRIDGE_BACKEND_PORT=8765
+EnvironmentFile=-%h/.config/github-agent-bridge/env
+ExecStart=%h/.local/bin/github-agent-bridge-backend
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -210,11 +210,15 @@ cp systemd/github-agent-bridge-reader.service ~/.config/systemd/user/
 cp systemd/github-agent-bridge-reader.timer ~/.config/systemd/user/
 cp systemd/github-agent-bridge-monitor.service ~/.config/systemd/user/
 cp systemd/github-agent-bridge-monitor.timer ~/.config/systemd/user/
+# Optional local read-only HTTP API for dashboards/operator tooling:
+cp systemd/github-agent-bridge-backend.service ~/.config/systemd/user/
 
 systemctl --user daemon-reload
 systemctl --user enable --now github-agent-bridge.service
 systemctl --user enable --now github-agent-bridge-reader.timer
 systemctl --user enable --now github-agent-bridge-monitor.timer
+# Optional:
+# systemctl --user enable --now github-agent-bridge-backend.service
 ```
 
 The reader timer calls the packaged `github-agent-bridge-reader-run` console
@@ -229,6 +233,14 @@ Inspect status and logs:
 systemctl --user status github-agent-bridge.service
 systemctl --user status github-agent-bridge-reader.timer
 journalctl --user -u github-agent-bridge.service -f
+```
+
+The optional backend is separate from the executor and should stay loopback-only
+by default:
+
+```bash
+systemctl --user status github-agent-bridge-backend.service
+curl http://127.0.0.1:8765/api/status
 ```
 
 ## Monitor health

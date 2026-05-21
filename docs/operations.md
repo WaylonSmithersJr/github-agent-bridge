@@ -64,6 +64,34 @@ It checks:
 - pending jobs older than 300 seconds;
 - running jobs older than review/work thresholds.
 
+## Read-only backend service
+
+`github-agent-bridge-backend` is a separate HTTP service for local dashboards and
+operator tooling. It is intentionally not part of the executor path: it does not
+import the dispatcher, does not claim jobs, does not call GitHub/OpenClaw, and
+opens the SQLite database read-only for job queries.
+
+Run it manually:
+
+```bash
+github-agent-bridge-backend \
+  --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  --host 127.0.0.1 \
+  --port 8765
+```
+
+Endpoints:
+
+```text
+GET /healthz
+GET /api/status
+GET /api/jobs?status=pending&limit=20
+```
+
+Keep it bound to `127.0.0.1` unless you put an authenticated reverse proxy in
+front of it. The packaged `systemd/github-agent-bridge-backend.service` starts
+only this backend; it does not restart or depend on `github-agent-bridge.service`.
+
 ## Operational SLOs
 
 | Signal | Target |

@@ -7,12 +7,13 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+dashboard = ["fastapi>=0.110", "uvicorn>=0.29"]
+test = ["pytest>=8", "fastapi>=0.110", "httpx>=0.27", "uvicorn>=0.29"]
 
 [project.scripts]
 gab = "github_agent_bridge.cli:main"
 github-agent-bridge = "github_agent_bridge.cli:main"
-github-agent-bridge-backend = "github_agent_bridge.backend:main"
+github-agent-bridge-dashboard = "github_agent_bridge.backend:main"
 github-agent-bridge-reader-run = "github_agent_bridge.reader_run:main"
 github-agent-bridge-monitor-alert = "github_agent_bridge.monitor_alert:main"
 

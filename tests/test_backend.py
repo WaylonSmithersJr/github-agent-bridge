@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
-import threading
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from fastapi.testclient import TestClient
 
-from github_agent_bridge.backend import list_jobs, make_server, status_payload
+from github_agent_bridge.backend import DashboardConfig, _sign, create_app, get_job_detail, list_jobs, metrics_summary
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
@@ -22,61 +19,77 @@ def notif(uid=1, mid="<1@github.com>", body="@pilipilisbot https://github.com/gi
     )
 
 
-def test_backend_status_is_read_only_and_lists_recent_jobs(tmp_path):
+def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)
     q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    app = create_app(DashboardConfig(db=db, require_auth=False))
 
-    payload = status_payload(db)
+    client = TestClient(app)
+    response = client.get("/api/status")
+    jobs = client.get("/api/jobs")
 
-    assert payload["read_only"] is True
-    assert payload["metrics"]["pending"] == 1
-    assert payload["recent_jobs"][0]["work_key"] == "gisce/erp#1"
+    assert response.status_code == 200
+    assert response.json()["read_only"] is True
+    assert response.json()["metrics"]["pending"] == 1
+    assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"
 
 
-def test_backend_missing_db_does_not_create_database(tmp_path):
+def test_dashboard_missing_db_does_not_create_database(tmp_path):
     db = tmp_path / "missing.sqlite3"
+    app = create_app(DashboardConfig(db=db, require_auth=False))
 
-    payload = status_payload(db)
+    response = TestClient(app).get("/api/health")
 
-    assert payload["metrics"]["db_exists"] is False
+    assert response.json()["db_exists"] is False
     assert db.exists() is False
 
 
-def test_backend_jobs_can_filter_by_status(tmp_path):
+def test_dashboard_jobs_can_filter_by_status_repo_action_and_intent(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)
     job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
     q.finish(job.id, "blocked", "failed", "boom")
 
-    assert [row["status"] for row in list_jobs(db, status="blocked")] == ["blocked"]
-    assert list_jobs(db, status="pending") == []
+    rows = list_jobs(db, status_filter="blocked", repo="gisce/erp", action="reply_comment", intent="review_only")
+
+    assert [row["status"] for row in rows] == ["blocked"]
+    assert list_jobs(db, status_filter="pending") == []
 
 
-def test_backend_http_endpoints_are_read_only(tmp_path):
+def test_dashboard_exposes_job_detail_logs_and_metrics(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    q.finish(job.id, "done", "completed")
+
+    detail = get_job_detail(db, job.id)
+    metrics = metrics_summary(db)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+
+    assert detail is not None
+    assert detail["worklog"][0]["phase"] == "queued"
+    assert metrics["status_counts"]["done"] == 1
+    assert client.get(f"/api/jobs/{job.id}/logs").json()["logs"][-1]["phase"] == "done"
+    assert client.get("/api/metrics/summary").json()["metrics"]["by_repo"]["gisce/erp"] == 1
+
+
+def test_dashboard_requires_auth_by_default(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     JobQueue(db)
-    server = make_server("127.0.0.1", 0, db)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    base = f"http://127.0.0.1:{server.server_port}"
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}))
 
-    try:
-        with urlopen(f"{base}/healthz") as response:
-            assert json.loads(response.read().decode("utf-8"))["ok"] is True
+    response = TestClient(app).get("/api/jobs")
 
-        with urlopen(f"{base}/api/status") as response:
-            assert json.loads(response.read().decode("utf-8"))["service"] == "github-agent-bridge-backend"
+    assert response.status_code == 401
 
-        request = Request(f"{base}/api/jobs", method="POST")
-        try:
-            urlopen(request)
-        except HTTPError as exc:
-            assert exc.code == 405
-            assert json.loads(exc.read().decode("utf-8"))["error"] == "read_only"
-        else:
-            raise AssertionError("POST unexpectedly succeeded")
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+
+def test_dashboard_session_authorization_allows_configured_user(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}))
+
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, "alice"))
+
+    assert client.get("/api/jobs").status_code == 200

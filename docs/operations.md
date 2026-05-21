@@ -64,17 +64,28 @@ It checks:
 - pending jobs older than 300 seconds;
 - running jobs older than review/work thresholds.
 
-## Read-only backend service
+## Dashboard API service
 
-`github-agent-bridge-backend` is a separate HTTP service for local dashboards and
-operator tooling. It is intentionally not part of the executor path: it does not
-import the dispatcher, does not claim jobs, does not call GitHub/OpenClaw, and
-opens the SQLite database read-only for job queries.
+`github-agent-bridge-dashboard` is a separate FastAPI service for local
+dashboards and operator tooling. It is intentionally not part of the executor
+path: it does not import the dispatcher, does not claim jobs, does not call
+OpenClaw, and opens the SQLite database read-only for job queries.
+
+The API uses GitHub OAuth sessions by default. Configure these values in
+`~/.config/github-agent-bridge/env`:
+
+```text
+GITHUB_AGENT_BRIDGE_DASHBOARD_SECRET_KEY=replace-with-random-secret
+GITHUB_OAUTH_CLIENT_ID=replace-with-github-oauth-client-id
+GITHUB_OAUTH_CLIENT_SECRET=replace-with-github-oauth-client-secret
+GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS=alice,bob
+GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS=example-org
+```
 
 Run it manually:
 
 ```bash
-github-agent-bridge-backend \
+github-agent-bridge-dashboard \
   --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   --host 127.0.0.1 \
   --port 8765
@@ -83,14 +94,26 @@ github-agent-bridge-backend \
 Endpoints:
 
 ```text
-GET /healthz
+GET /api/health
 GET /api/status
-GET /api/jobs?status=pending&limit=20
+GET /api/jobs?status=pending&repo=pilipilisbot/github-agent-bridge&limit=20
+GET /api/jobs/{id}
+GET /api/jobs/{id}/logs
+GET /api/jobs/{id}/session
+GET /api/metrics/summary
+GET /api/processes
+GET /api/alerts
+GET /api/events/stream
 ```
 
 Keep it bound to `127.0.0.1` unless you put an authenticated reverse proxy in
-front of it. The packaged `systemd/github-agent-bridge-backend.service` starts
-only this backend; it does not restart or depend on `github-agent-bridge.service`.
+front of it. The packaged `systemd/github-agent-bridge-dashboard.service` starts
+only this dashboard API; it does not restart or depend on
+`github-agent-bridge.service`.
+
+Current scope is M1: read-only API, OAuth/session guard, job detail, logs and
+summary metrics. The React UI, persistent alert storage, proc sampling and
+OpenClaw session transcript correlation remain later milestones.
 
 ## Operational SLOs
 

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.11.0 (2026-05-22)
+
+### Features
+
+- Expose dashboard process activity
+  ([`82aded0`](https://github.com/pilipilisbot/github-agent-bridge/commit/82aded0b4e8708d03d82c8862af05ea1e424b425))
+
+
 ## v0.10.0 (2026-05-22)
 
 ### Bug Fixes

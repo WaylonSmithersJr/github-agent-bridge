@@ -137,9 +137,10 @@ only this dashboard API; it does not restart or depend on
 `github-agent-bridge.service`.
 
 Current scope covers the read-only API, OAuth/session guard, job detail, logs,
-summary metrics and an initial read-only React operations UI. Persistent alert
-storage, proc sampling, richer SSE integration and OpenClaw session transcript
-correlation remain later milestones.
+summary metrics, an initial read-only React operations UI and a live `/proc`
+snapshot of executor child processes through `GET /api/processes`. Persistent
+alert storage, historical proc sample retention, richer SSE integration and
+OpenClaw session transcript correlation remain later milestones.
 
 ## Operational SLOs
 

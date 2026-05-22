@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .cli import DEFAULT_DB
 from .dashboard_data import get_job_detail, inspect_db_read_only, job_logs, list_jobs, metrics_summary
+from .monitor import monitor
 
 
 DEFAULT_HOST = os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_HOST", "127.0.0.1")
@@ -219,8 +220,18 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
 
     @app.get("/api/processes")
     def api_processes(_: str = Depends(current_user)) -> dict[str, Any]:
-        metrics = inspect_db_read_only(config.db)
-        return {"processes": metrics.get("running_jobs", []), "detail": "runtime proc sampling is planned for M3"}
+        report = monitor(config.db)
+        metrics = report.metrics
+        return {
+            "running_jobs": metrics.get("running_jobs", []),
+            "executor": {
+                "service": metrics.get("executor_service", "unknown"),
+                "pid": metrics.get("executor_pid"),
+                "children": metrics.get("executor_children", []),
+            },
+            "alerts": report.alerts,
+            "detail": "Live /proc snapshot; persistent process sample storage is planned for a later M3 increment.",
+        }
 
     @app.get("/api/alerts")
     def api_alerts(_: str = Depends(current_user)) -> dict[str, Any]:

@@ -235,7 +235,10 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         if not config.oauth_ready:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="oauth_not_configured")
         state = secrets.token_urlsafe(24)
-        params = urllib.parse.urlencode({"client_id": config.oauth_client_id, "scope": "read:user read:org", "state": state})
+        scopes = ["read:user"]
+        if config.allowed_orgs:
+            scopes.append("read:org")
+        params = urllib.parse.urlencode({"client_id": config.oauth_client_id, "scope": " ".join(scopes), "state": state})
         response = RedirectResponse(f"{GITHUB_AUTHORIZE_URL}?{params}", status_code=status.HTTP_302_FOUND)
         response.set_cookie(OAUTH_STATE_COOKIE, _sign(config, state), httponly=True, secure=True, samesite="lax", max_age=600)
         return response

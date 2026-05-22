@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlparse
+
 from fastapi.testclient import TestClient
 
 from github_agent_bridge.backend import DashboardConfig, _sign, create_app
@@ -138,3 +140,43 @@ def test_dashboard_session_authorization_allows_configured_user(tmp_path):
 
     assert client.get("/api/jobs").status_code == 200
     assert client.get("/").status_code == 200
+
+
+def test_dashboard_oauth_login_uses_minimal_scope_for_user_allowlist(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(
+        DashboardConfig(
+            db=db,
+            secret_key="secret",
+            oauth_client_id="client-id",
+            oauth_client_secret="client-secret",
+            allowed_users={"alice"},
+        )
+    )
+
+    response = TestClient(app, follow_redirects=False).get("/auth/login")
+
+    assert response.status_code == 302
+    query = parse_qs(urlparse(response.headers["location"]).query)
+    assert query["scope"] == ["read:user"]
+
+
+def test_dashboard_oauth_login_requests_org_scope_only_for_org_allowlist(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(
+        DashboardConfig(
+            db=db,
+            secret_key="secret",
+            oauth_client_id="client-id",
+            oauth_client_secret="client-secret",
+            allowed_orgs={"example"},
+        )
+    )
+
+    response = TestClient(app, follow_redirects=False).get("/auth/login")
+
+    assert response.status_code == 302
+    query = parse_qs(urlparse(response.headers["location"]).query)
+    assert query["scope"] == ["read:user read:org"]

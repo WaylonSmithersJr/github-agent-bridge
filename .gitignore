@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 *.sqlite3
 *.db
+node_modules/
+dashboard/dist/

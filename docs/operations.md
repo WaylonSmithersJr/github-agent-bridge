@@ -71,6 +71,11 @@ dashboards and operator tooling. It is intentionally not part of the executor
 path: it does not import the dispatcher, does not claim jobs, does not call
 OpenClaw, and opens the SQLite database read-only for job queries.
 
+The service also serves the built React dashboard at `/`. The UI is a Vite +
+React + TypeScript app styled with Tailwind and operational components, using
+TanStack Query for API state and Recharts for percentile charts. Production
+serves the static bundle from `src/github_agent_bridge/dashboard_static`.
+
 The API uses GitHub OAuth sessions by default. Configure these values in
 `~/.config/github-agent-bridge/env`:
 
@@ -91,9 +96,25 @@ github-agent-bridge-dashboard \
   --port 8765
 ```
 
+Frontend development:
+
+```bash
+cd dashboard
+npm install
+npm run dev
+```
+
+Build the packaged UI bundle:
+
+```bash
+cd dashboard
+npm run build
+```
+
 Endpoints:
 
 ```text
+GET /
 GET /api/health
 GET /api/status
 GET /api/jobs?status=pending&repo=pilipilisbot/github-agent-bridge&limit=20
@@ -111,9 +132,10 @@ front of it. The packaged `systemd/github-agent-bridge-dashboard.service` starts
 only this dashboard API; it does not restart or depend on
 `github-agent-bridge.service`.
 
-Current scope is M1: read-only API, OAuth/session guard, job detail, logs and
-summary metrics. The React UI, persistent alert storage, proc sampling and
-OpenClaw session transcript correlation remain later milestones.
+Current scope covers the read-only API, OAuth/session guard, job detail, logs,
+summary metrics and an initial read-only React operations UI. Persistent alert
+storage, proc sampling, richer SSE integration and OpenClaw session transcript
+correlation remain later milestones.
 
 ## Operational SLOs
 

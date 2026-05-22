@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .session_correlation import job_session_metadata
+
 
 def readonly_connect(db: str | Path) -> sqlite3.Connection:
     path = Path(db).expanduser()
@@ -205,6 +207,21 @@ def job_logs(db: str | Path, job_id: int, limit: int = 100) -> list[dict[str, An
             (job_id, coerce_limit(limit, maximum=500)),
         ).fetchall()
     return [dict(row) for row in reversed(rows)]
+
+
+def job_session(db: str | Path, job_id: int) -> dict[str, Any] | None:
+    job = get_job_detail(db, job_id)
+    if job is None:
+        return None
+    session = job_session_metadata(job)
+    session["job_id"] = job_id
+    session["work_key"] = job["work_key"]
+    session["status"] = job["status"]
+    session["detail"] = (
+        "Future dispatches use this explicit OpenClaw session id. "
+        "The dashboard exposes correlation metadata only; full transcripts are not served."
+    )
+    return session
 
 
 def metrics_summary(db: str | Path) -> dict[str, Any]:

@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v0.10.0 (2026-05-22)
+
+### Bug Fixes
+
+- Limit dashboard oauth scope
+  ([`d033b87`](https://github.com/pilipilisbot/github-agent-bridge/commit/d033b879670e1edf5417e9159954c9115c83613b))
+
+### Documentation
+
+- Document dashboard GitHub OAuth setup
+  ([`3250192`](https://github.com/pilipilisbot/github-agent-bridge/commit/3250192ae71e89d6abef78b436aba56fa929391c))
+
+### Features
+
+- Add React dashboard UI
+  ([`1bb4f9d`](https://github.com/pilipilisbot/github-agent-bridge/commit/1bb4f9d4c27abf152874a4ca3c11a7582c213060))
+
+
 ## v0.9.0 (2026-05-21)
 
 ### Features

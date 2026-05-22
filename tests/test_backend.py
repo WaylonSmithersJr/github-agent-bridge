@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from github_agent_bridge.backend import DashboardConfig, _sign, create_app
 from github_agent_bridge.dashboard_data import get_job_detail, list_jobs, metrics_summary
+from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
@@ -180,3 +181,41 @@ def test_dashboard_oauth_login_requests_org_scope_only_for_org_allowlist(tmp_pat
     assert response.status_code == 302
     query = parse_qs(urlparse(response.headers["location"]).query)
     assert query["scope"] == ["read:user read:org"]
+
+
+def test_dashboard_processes_exposes_live_executor_snapshot(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    q.claim_next("worker-1")
+
+    def fake_monitor(_db):
+        return MonitorReport(
+            ok=True,
+            metrics={
+                "running_jobs": [{"id": 1, "work_key": "gisce/erp#1"}],
+                "executor_service": "active",
+                "executor_pid": 123,
+                "executor_children": [
+                    {
+                        "pid": 456,
+                        "ppid": 123,
+                        "state": "S",
+                        "cmd": "openclaw agent",
+                        "cpu_ticks": 12,
+                        "io_bytes": {"read_bytes": 100, "write_bytes": 50},
+                        "children": [],
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr("github_agent_bridge.backend.monitor", fake_monitor)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+
+    response = client.get("/api/processes")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["executor"]["service"] == "active"
+    assert payload["executor"]["children"][0]["cpu_ticks"] == 12

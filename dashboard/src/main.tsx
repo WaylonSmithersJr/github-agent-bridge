@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle2, Clock3, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Cpu, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -56,6 +56,34 @@ type WorklogEntry = {
   phase: string;
   summary: string;
   detail: string | null;
+};
+
+type ProcessSample = {
+  pid: number;
+  ppid: number;
+  state: string;
+  cmd: string;
+  cpu_ticks: number;
+  io_bytes: { read_bytes?: number; write_bytes?: number } | null;
+  children?: ProcessSample[];
+};
+
+type ProcessesResponse = {
+  running_jobs: Array<{
+    id: number;
+    work_key: string;
+    work_intent: string;
+    locked_by: string | null;
+    age_seconds: number | null;
+    idle_seconds: number | null;
+  }>;
+  executor: {
+    service: string;
+    pid: number | null;
+    children: ProcessSample[];
+  };
+  alerts: string[];
+  detail: string;
 };
 
 type JobFilters = {
@@ -128,6 +156,7 @@ function App() {
   const [selectedJobId, setSelectedJobId] = React.useState<number | null>(null);
   const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary") });
   const jobs = useQuery({ queryKey: ["jobs", filters], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters)) });
+  const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes") });
   const detail = useQuery({
     queryKey: ["job", selectedJobId],
     queryFn: () => api<{ job: Job }>(`/api/jobs/${selectedJobId}`),
@@ -174,10 +203,17 @@ function App() {
           </Panel>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-2">
+        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+          <Panel title="Process activity" action={<RefreshButton onClick={() => processes.refetch()} />}>
+            {processes.error ? <Banner tone="error" text={processes.error.message} /> : null}
+            <ProcessActivity data={processes.data} loading={processes.isLoading} />
+          </Panel>
           <Panel title="Runtime percentiles">
             <PercentileChart label="runtime" values={metrics.data?.metrics.runtime_seconds} />
           </Panel>
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-2">
           <Panel title="Queue wait percentiles">
             <PercentileChart label="queue wait" values={metrics.data?.metrics.queue_wait_seconds} />
           </Panel>
@@ -381,6 +417,61 @@ function PercentileChart({ label, values }: { label: string; values: Percentiles
           <Bar dataKey="seconds" fill="#0969da" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefined; loading: boolean }) {
+  if (loading && !data) return <EmptyState text="Loading process activity..." />;
+  if (!data) return <EmptyState text="No process snapshot available." />;
+  const children = data.executor.children ?? [];
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        <MiniStat label="Executor" value={data.executor.service} />
+        <MiniStat label="Main PID" value={data.executor.pid ? String(data.executor.pid) : "n/a"} />
+        <MiniStat label="Running jobs" value={String(data.running_jobs.length)} />
+      </div>
+      {data.alerts.length > 0 ? <Banner tone="error" text={data.alerts[0]} /> : null}
+      <div>
+        <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+          <Cpu className="h-4 w-4" aria-hidden />
+          Executor children
+        </h3>
+        {children.length > 0 ? (
+          <div className="grid gap-2">
+            {children.map((child) => (
+              <ProcessRow key={child.pid} process={child} />
+            ))}
+          </div>
+        ) : (
+          <EmptyState text="No child process detected for the executor." />
+        )}
+      </div>
+      <p className="text-xs text-muted">{data.detail}</p>
+    </div>
+  );
+}
+
+function ProcessRow({ process }: { process: ProcessSample }) {
+  const read = process.io_bytes?.read_bytes ?? 0;
+  const written = process.io_bytes?.write_bytes ?? 0;
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-mono">pid {process.pid}</span>
+        <span className="rounded-full border border-border px-2 text-xs text-muted">state {process.state}</span>
+        <span className="rounded-full border border-border px-2 text-xs text-muted">cpu {process.cpu_ticks}</span>
+        <span className="rounded-full border border-border px-2 text-xs text-muted">I/O {read + written} B</span>
+      </div>
+      <div className="mt-2 break-words font-mono text-xs text-muted">{process.cmd || "unknown command"}</div>
+      {process.children && process.children.length > 0 ? (
+        <div className="mt-3 border-l-2 border-border pl-3">
+          {process.children.map((child) => (
+            <ProcessRow key={child.pid} process={child} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

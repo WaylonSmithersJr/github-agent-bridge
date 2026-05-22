@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .dashboard_data import inspect_db_read_only
+from .process_inspection import direct_children
 
 
 @dataclass(frozen=True)
@@ -107,36 +108,8 @@ def _main_pid(unit: str) -> int | None:
     return pid or None
 
 
-def _process_exists(pid: int) -> bool:
-    return Path(f"/proc/{pid}").exists()
-
-
-def _process_cmd(pid: int) -> str:
-    try:
-        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
-        return ""
-    return raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
-
-
 def _direct_children(pid: int) -> list[dict[str, Any]]:
-    proc = subprocess.run(
-        ["pgrep", "-P", str(pid)],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    children = []
-    for line in proc.stdout.splitlines():
-        try:
-            child_pid = int(line.strip())
-        except ValueError:
-            continue
-        if not _process_exists(child_pid):
-            continue
-        children.append({"pid": child_pid, "cmd": _process_cmd(child_pid)})
-    return children
+    return direct_children(pid)
 
 
 def inspect_db(path: str | Path) -> dict[str, Any]:

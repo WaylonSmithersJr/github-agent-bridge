@@ -247,6 +247,12 @@ GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS=your-github-login
 EOF
 ```
 
+Create the GitHub OAuth App with callback URL
+`http://127.0.0.1:8765/auth/callback` for local operation, or the same path on
+the public HTTPS origin when using a reverse proxy. See
+[`dashboard-github-oauth.md`](dashboard-github-oauth.md) for the full GitHub
+setup and security checklist.
+
 ```bash
 systemctl --user status github-agent-bridge-dashboard.service
 curl http://127.0.0.1:8765/api/health

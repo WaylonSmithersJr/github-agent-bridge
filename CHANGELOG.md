@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.13.1 (2026-05-23)
+
+### Bug Fixes
+
+- Support workflow run failure notifications
+  ([`593ac72`](https://github.com/pilipilisbot/github-agent-bridge/commit/593ac72a9d5ba921fd32da49584d4269b299e487))
+
+
 ## v0.13.0 (2026-05-23)
 
 ### Bug Fixes

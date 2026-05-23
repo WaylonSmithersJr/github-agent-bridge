@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Cpu, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Cpu, ExternalLink, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -180,9 +180,18 @@ function safeExternalUrl(value: string) {
   }
 }
 
+function jobPath(jobId: number) {
+  return `/jobs/${jobId}`;
+}
+
+function selectedJobIdFromPath(pathname = window.location.pathname) {
+  const match = pathname.match(/^\/jobs\/(\d+)\/?$/);
+  return match ? Number(match[1]) : null;
+}
+
 function App() {
   const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "" });
-  const [selectedJobId, setSelectedJobId] = React.useState<number | null>(null);
+  const [selectedJobId, setSelectedJobId] = React.useState<number | null>(() => selectedJobIdFromPath());
   const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary") });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
   const jobs = useQuery({ queryKey: ["jobs", filters], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters)) });
@@ -217,9 +226,25 @@ function App() {
     return () => source.close();
   }, [selectedJobId]);
 
+  React.useEffect(() => {
+    const syncFromPath = () => setSelectedJobId(selectedJobIdFromPath());
+    window.addEventListener("popstate", syncFromPath);
+    return () => window.removeEventListener("popstate", syncFromPath);
+  }, []);
+
+  const selectJob = React.useCallback((jobId: number) => {
+    setSelectedJobId(jobId);
+    const nextPath = jobPath(jobId);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, "", nextPath);
+    }
+  }, []);
+
   const counts = metrics.data?.metrics.status_counts ?? {};
   const jobRows = jobs.data?.jobs ?? [];
   const selectedJob = selectedJobId ? (detail.data?.job ?? null) : null;
+  const selectedJobInList = selectedJobId !== null && jobRows.some((job) => job.id === selectedJobId);
+  const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} />;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -246,11 +271,12 @@ function App() {
           <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
             <Filters filters={filters} onChange={setFilters} />
             {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-            <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} onSelect={setSelectedJobId} />
+            <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} onSelect={selectJob} />
+            {selectedJobId !== null && !selectedJobInList ? <div className="mt-4 md:hidden">{detailStatus}</div> : null}
           </Panel>
 
           <Panel title="Job detail" className="hidden xl:block xl:self-start xl:sticky xl:top-4">
-            {selectedJob ? <JobDetail job={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} /> : <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />}
+            {detailStatus}
           </Panel>
         </section>
 
@@ -275,6 +301,27 @@ function App() {
       </main>
     </div>
   );
+}
+
+function JobDetailStatus({
+  selectedJobId,
+  selectedJob,
+  loading,
+  error,
+  session,
+  sessionEvents,
+}: {
+  selectedJobId: number | null;
+  selectedJob: Job | null;
+  loading: boolean;
+  error: Error | null;
+  session: SessionCorrelation | undefined;
+  sessionEvents: SessionEvent[] | undefined;
+}) {
+  if (selectedJob) return <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} />;
+  if (selectedJobId !== null && loading) return <EmptyState text="Loading selected job..." />;
+  if (selectedJobId !== null && error) return <Banner tone="error" text={`Job #${selectedJobId}: ${error.message}`} />;
+  return <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />;
 }
 
 function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: boolean }) {
@@ -496,10 +543,17 @@ function JobCard({
 }
 
 function JobDetail({ job, session, sessionEvents, compact = false }: { job: Job; session: SessionCorrelation | undefined; sessionEvents: SessionEvent[] | undefined; compact?: boolean }) {
+  const shareHref = jobPath(job.id);
   return (
     <div className="grid gap-4">
       <div className="grid gap-2">
-        <StatusBadge status={job.status} />
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={job.status} />
+          <a className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-xs font-semibold text-foreground hover:bg-slate-50" href={shareHref}>
+            <Link className="h-3.5 w-3.5" aria-hidden />
+            Job #{job.id}
+          </a>
+        </div>
         <div className="font-mono text-sm">{job.work_key}</div>
         <p className="text-sm text-muted">{job.subject}</p>
       </div>
@@ -559,6 +613,7 @@ function JobDetail({ job, session, sessionEvents, compact = false }: { job: Job;
             job.github_urls.map((url) => (
               <li key={url}>
                 <a className="break-all text-primary hover:underline" href={safeExternalUrl(url)} rel="noreferrer" target="_blank">
+                  <ExternalLink className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
                   {url}
                 </a>
               </li>

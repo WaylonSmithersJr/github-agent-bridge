@@ -207,12 +207,19 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "read_only": True,
         }
 
-    @app.get("/")
-    def dashboard(_: str = Depends(current_user)) -> FileResponse:
+    def dashboard_index() -> FileResponse:
         index = config.static_dir / "index.html"
         if not index.exists():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="dashboard_ui_not_built")
         return FileResponse(index, headers=_redacted_headers())
+
+    @app.get("/")
+    def dashboard(_: str = Depends(current_user)) -> FileResponse:
+        return dashboard_index()
+
+    @app.get("/jobs/{job_id}")
+    def dashboard_job(job_id: int, _: str = Depends(current_user)) -> FileResponse:
+        return dashboard_index()
 
     @app.get("/api/status")
     def api_status(_: str = Depends(current_user)) -> dict[str, Any]:

@@ -117,6 +117,26 @@ type TranscriptEntry = {
   text: string;
 };
 
+type SessionEventGroup = {
+  id: string;
+  badge: string;
+  meta: string | null;
+  summary: string;
+  detail: string | null;
+  eventType: string;
+  count: number;
+};
+
+type TranscriptEntryGroup = {
+  id: string;
+  badge: string;
+  meta: string | null;
+  summary: string;
+  text: string;
+  kind: string;
+  count: number;
+};
+
 type UserProfile = {
   login: string;
   avatar_url: string;
@@ -199,6 +219,78 @@ function TimeText({ value, compact = false }: { value: string | null | undefined
       {compact ? compactDate(value) : formatDateTime(value)}
     </time>
   );
+}
+
+function firstLogLine(value: string | null | undefined) {
+  const line = (value ?? "").split(/\r?\n/).map((item) => item.trim()).find(Boolean);
+  return line ?? "";
+}
+
+function compactLogSummary(label: string, text: string | null | undefined, count = 1) {
+  const preview = firstLogLine(text);
+  const countLabel = count > 1 ? ` (${count})` : "";
+  return preview ? `${label}${countLabel}: ${preview}` : `${label}${countLabel}`;
+}
+
+function isCliOutputKind(kind: string) {
+  return kind === "openclaw_stdout" || kind === "openclaw_stderr";
+}
+
+function joinLogText(items: Array<string | null | undefined>) {
+  return items.map((item) => item?.trim()).filter(Boolean).join("\n");
+}
+
+function groupSessionEvents(events: SessionEvent[]) {
+  const groups: SessionEventGroup[] = [];
+  for (const event of events) {
+    const previous = groups[groups.length - 1];
+    if (previous && isCliOutputKind(event.event_type) && previous.eventType === event.event_type) {
+      previous.count += 1;
+      previous.meta = event.ts;
+      previous.detail = joinLogText([previous.detail, event.detail]);
+      previous.summary = compactLogSummary(event.summary, previous.detail, previous.count);
+      continue;
+    }
+    groups.push({
+      id: String(event.id),
+      badge: event.event_type,
+      meta: event.ts,
+      summary: isCliOutputKind(event.event_type) ? compactLogSummary(event.summary, event.detail) : event.summary,
+      detail: event.detail,
+      eventType: event.event_type,
+      count: 1,
+    });
+  }
+  return groups;
+}
+
+function groupTranscriptEntries(entries: TranscriptEntry[]) {
+  const groups: TranscriptEntryGroup[] = [];
+  entries.forEach((entry, index) => {
+    const previous = groups[groups.length - 1];
+    if (previous && isCliOutputKind(entry.kind) && previous.kind === entry.kind) {
+      previous.count += 1;
+      previous.meta = entry.timestamp;
+      previous.text = joinLogText([previous.text, entry.text]);
+      previous.summary = compactLogSummary(`${entry.role} · ${entry.kind}`, previous.text, previous.count);
+      return;
+    }
+    groups.push({
+      id: `${entry.timestamp ?? "entry"}-${index}`,
+      badge: entry.title,
+      meta: entry.timestamp,
+      summary: isCliOutputKind(entry.kind) ? compactLogSummary(`${entry.role} · ${entry.kind}`, entry.text) : `${entry.role} · ${entry.kind}`,
+      text: entry.text,
+      kind: entry.kind,
+      count: 1,
+    });
+  });
+  return groups;
+}
+
+function defaultLogOpen(kind: string, running: boolean, index: number, total: number) {
+  if (kind === "openclaw_stdout") return false;
+  return running || index >= total - 2;
 }
 
 function statusTone(status: string) {
@@ -644,6 +736,8 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
   const shareHref = jobPath(job.id);
   const eventRows = sessionEvents ?? [];
   const transcriptRows = transcript ?? [];
+  const activityGroups = groupSessionEvents(eventRows);
+  const transcriptGroups = groupTranscriptEntries(transcriptRows);
   return (
     <div className="grid gap-4">
       <div className="grid gap-2">
@@ -705,9 +799,9 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
       <div>
         <h3 className="mb-2 text-sm font-semibold">Agent activity</h3>
         <div className="grid max-h-[460px] gap-2 overflow-auto pr-1">
-          {eventRows.length > 0 ? (
-            eventRows.map((event, index) => (
-              <SessionEventRow key={event.id} event={event} defaultOpen={job.status === "running" || index >= eventRows.length - 2} />
+          {activityGroups.length > 0 ? (
+            activityGroups.map((event, index) => (
+              <SessionEventRow key={event.id} event={event} defaultOpen={defaultLogOpen(event.eventType, job.status === "running", index, activityGroups.length)} />
             ))
           ) : (
             <EmptyState text={job.status === "running" ? "Waiting for live agent output..." : "No agent activity has been recorded for this session."} />
@@ -717,9 +811,9 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
       <div>
         <h3 className="mb-2 text-sm font-semibold">Session transcript</h3>
         <div className="grid max-h-[620px] gap-2 overflow-auto pr-1">
-          {transcriptRows.length > 0 ? (
-            transcriptRows.map((entry, index) => (
-              <TranscriptRow key={`${entry.timestamp ?? "entry"}-${index}`} entry={entry} defaultOpen={job.status === "running" || index >= transcriptRows.length - 2} />
+          {transcriptGroups.length > 0 ? (
+            transcriptGroups.map((entry, index) => (
+              <TranscriptRow key={entry.id} entry={entry} defaultOpen={defaultLogOpen(entry.kind, job.status === "running", index, transcriptGroups.length)} />
             ))
           ) : (
             <EmptyState text={job.status === "running" ? "Waiting for live transcript entries..." : "No OpenClaw transcript entries are available for this session."} />
@@ -747,12 +841,13 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
   );
 }
 
-function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntry; defaultOpen?: boolean }) {
+function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntryGroup; defaultOpen?: boolean }) {
   return (
     <CollapsibleLogSection
-      badge={entry.title}
-      meta={<TimeText value={entry.timestamp} />}
-      summary={`${entry.role} · ${entry.kind}`}
+      badge={entry.badge}
+      meta={<TimeText value={entry.meta} />}
+      count={entry.count}
+      summary={entry.summary}
       defaultOpen={defaultOpen}
     >
       <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100">{entry.text}</pre>
@@ -760,9 +855,9 @@ function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntry; default
   );
 }
 
-function SessionEventRow({ event, defaultOpen }: { event: SessionEvent; defaultOpen?: boolean }) {
+function SessionEventRow({ event, defaultOpen }: { event: SessionEventGroup; defaultOpen?: boolean }) {
   return (
-    <CollapsibleLogSection badge={event.event_type} meta={<TimeText value={event.ts} />} summary={event.summary} defaultOpen={defaultOpen}>
+    <CollapsibleLogSection badge={event.badge} meta={<TimeText value={event.meta} />} count={event.count} summary={event.summary} defaultOpen={defaultOpen}>
       {event.detail ? <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100">{event.detail}</pre> : null}
     </CollapsibleLogSection>
   );
@@ -771,12 +866,14 @@ function SessionEventRow({ event, defaultOpen }: { event: SessionEvent; defaultO
 function CollapsibleLogSection({
   badge,
   meta,
+  count,
   summary,
   defaultOpen,
   children,
 }: {
   badge: string;
   meta: React.ReactNode;
+  count?: number;
   summary: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
@@ -789,6 +886,7 @@ function CollapsibleLogSection({
           <div className="flex min-w-0 items-center gap-1.5">
             <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted transition-transform group-open:rotate-180" aria-hidden />
             <span className="truncate font-mono text-[11px] font-semibold text-muted">{badge}</span>
+            {count && count > 1 ? <span className="rounded-sm border border-border px-1 font-mono text-[10px] text-muted">{count}</span> : null}
           </div>
           <span className="shrink-0 font-mono text-[11px] text-muted">{meta}</span>
         </div>

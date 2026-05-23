@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Cpu, RefreshCw, Search, ShieldCheck, TerminalSquare } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Cpu, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -16,6 +16,7 @@ type MetricsSummary = {
   by_repo: Record<string, number>;
   by_action: Record<string, number>;
   by_intent: Record<string, number>;
+  by_created_day: Record<string, number>;
   runtime_seconds: Percentiles;
   queue_wait_seconds: Percentiles;
 };
@@ -97,6 +98,12 @@ type SessionCorrelation = {
   detail: string;
 };
 
+type UserProfile = {
+  login: string;
+  avatar_url: string;
+  html_url: string;
+};
+
 type JobFilters = {
   status: string;
   repo: string;
@@ -166,6 +173,7 @@ function App() {
   const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "" });
   const [selectedJobId, setSelectedJobId] = React.useState<number | null>(null);
   const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary") });
+  const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
   const jobs = useQuery({ queryKey: ["jobs", filters], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters)) });
   const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes") });
   const detail = useQuery({
@@ -181,24 +189,21 @@ function App() {
 
   const counts = metrics.data?.metrics.status_counts ?? {};
   const jobRows = jobs.data?.jobs ?? [];
-  const selectedJob = selectedJobId ? detail.data?.job : null;
+  const selectedJob = selectedJobId ? (detail.data?.job ?? null) : null;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-slate-800 bg-slate-950 text-white">
-        <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-6 py-5 md:flex-row md:items-center md:justify-between">
+        <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
           <div>
             <h1 className="text-xl font-semibold">GitHub Agent Bridge</h1>
             <p className="text-sm text-slate-300">Read-only operational dashboard</p>
           </div>
-          <div className="flex items-center gap-2 text-sm text-slate-300">
-            <ShieldCheck className="h-4 w-4" aria-hidden />
-            GitHub OAuth session
-          </div>
+          <UserMenu user={me.data?.user} />
         </div>
       </header>
 
-      <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-6 py-5">
+      <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-4 py-4 md:px-6 md:py-5">
         {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Summary metrics">
           <Metric title="Pending" value={counts.pending ?? 0} icon={<Clock3 className="h-5 w-5" />} />
@@ -211,10 +216,10 @@ function App() {
           <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
             <Filters filters={filters} onChange={setFilters} />
             {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-            <JobsTable jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} onSelect={setSelectedJobId} />
+            <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} onSelect={setSelectedJobId} />
           </Panel>
 
-          <Panel title="Job detail">
+          <Panel title="Job detail" className="hidden xl:block xl:self-start xl:sticky xl:top-4">
             {selectedJob ? <JobDetail job={selectedJob} session={session.data?.session} /> : <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />}
           </Panel>
         </section>
@@ -230,6 +235,9 @@ function App() {
         </section>
 
         <section className="grid gap-4 xl:grid-cols-2">
+          <Panel title="Jobs per day">
+            <JobsPerDayChart values={metrics.data?.metrics.by_created_day} />
+          </Panel>
           <Panel title="Queue wait percentiles">
             <PercentileChart label="queue wait" values={metrics.data?.metrics.queue_wait_seconds} />
           </Panel>
@@ -239,9 +247,29 @@ function App() {
   );
 }
 
-function Panel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+function UserMenu({ user }: { user: UserProfile | undefined }) {
+  const avatar = user?.avatar_url ? (
+    <img className="h-9 w-9 rounded-full border border-slate-700 bg-slate-800" src={user.avatar_url} alt="" referrerPolicy="no-referrer" />
+  ) : (
+    <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-700 bg-slate-900">
+      <UserCircle2 className="h-5 w-5" aria-hidden />
+    </span>
+  );
   return (
-    <section className="rounded-lg border border-border bg-panel p-4 shadow-sm">
+    <div className="flex items-center gap-3 text-sm text-slate-300">
+      <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden />
+      <div className="min-w-0 text-right">
+        <div className="truncate font-medium text-white">{user?.login ?? "GitHub OAuth"}</div>
+        <div className="text-xs text-slate-400">read-only session</div>
+      </div>
+      {avatar}
+    </div>
+  );
+}
+
+function Panel({ title, action, children, className }: { title: string; action?: React.ReactNode; children: React.ReactNode; className?: string }) {
+  return (
+    <section className={cn("rounded-lg border border-border bg-panel p-4 shadow-sm", className)}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold">{title}</h2>
         {action}
@@ -317,14 +345,34 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function JobsTable({ jobs, loading, selectedJobId, onSelect }: { jobs: Job[]; loading: boolean; selectedJobId: number | null; onSelect: (id: number) => void }) {
+function JobsList({
+  jobs,
+  loading,
+  selectedJobId,
+  selectedJob,
+  session,
+  onSelect,
+}: {
+  jobs: Job[];
+  loading: boolean;
+  selectedJobId: number | null;
+  selectedJob: Job | null;
+  session: SessionCorrelation | undefined;
+  onSelect: (id: number) => void;
+}) {
   if (loading && jobs.length === 0) return <EmptyState text="Loading jobs..." />;
   if (jobs.length === 0) return <EmptyState text="No jobs match the current filters." />;
   return (
-    <div className="overflow-x-auto">
+    <>
+      <div className="grid gap-3 md:hidden">
+        {jobs.map((job) => (
+          <JobCard key={job.id} job={job} selected={selectedJobId === job.id} selectedJob={selectedJob} session={session} onSelect={onSelect} />
+        ))}
+      </div>
+      <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
       <table className="min-w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-border text-left text-xs text-muted">
+          <tr className="sticky top-0 border-b border-border bg-panel text-left text-xs text-muted">
             <th className="px-2 py-2 font-semibold">ID</th>
             <th className="px-2 py-2 font-semibold">Status</th>
             <th className="px-2 py-2 font-semibold">Repo / thread</th>
@@ -363,10 +411,49 @@ function JobsTable({ jobs, loading, selectedJobId, onSelect }: { jobs: Job[]; lo
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
-function JobDetail({ job, session }: { job: Job; session: SessionCorrelation | undefined }) {
+function JobCard({
+  job,
+  selected,
+  selectedJob,
+  session,
+  onSelect,
+}: {
+  job: Job;
+  selected: boolean;
+  selectedJob: Job | null;
+  session: SessionCorrelation | undefined;
+  onSelect: (id: number) => void;
+}) {
+  return (
+    <article className={cn("rounded-md border border-border bg-white", selected && "border-blue-300 bg-blue-50/40")}>
+      <button className="grid w-full gap-3 p-3 text-left" type="button" onClick={() => onSelect(job.id)}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-mono text-sm">#{job.id} {job.repo ?? job.work_key}</div>
+            <div className="mt-1 truncate text-xs text-muted">thread {job.thread ?? "n/a"} · {job.action}</div>
+          </div>
+          <StatusBadge status={job.status} />
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <MiniStat label="Wait" value={formatSeconds(job.queue_wait_seconds)} />
+          <MiniStat label="Runtime" value={formatSeconds(job.runtime_seconds)} />
+          <MiniStat label="Updated" value={compactDate(job.updated_at)} />
+        </div>
+      </button>
+      {selected ? (
+        <div className="border-t border-border p-3">
+          {selectedJob ? <JobDetail job={selectedJob} session={session} compact /> : <EmptyState text="Loading detail..." />}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function JobDetail({ job, session, compact = false }: { job: Job; session: SessionCorrelation | undefined; compact?: boolean }) {
   return (
     <div className="grid gap-4">
       <div className="grid gap-2">
@@ -374,7 +461,7 @@ function JobDetail({ job, session }: { job: Job; session: SessionCorrelation | u
         <div className="font-mono text-sm">{job.work_key}</div>
         <p className="text-sm text-muted">{job.subject}</p>
       </div>
-      <div className="grid grid-cols-3 gap-3 text-sm">
+      <div className={cn("grid gap-3 text-sm", compact ? "grid-cols-1" : "grid-cols-3")}>
         <MiniStat label="Queue wait" value={formatSeconds(job.queue_wait_seconds)} />
         <MiniStat label="Runtime" value={formatSeconds(job.runtime_seconds)} />
         <MiniStat label="Coalesced" value={String(job.coalesced_count)} />
@@ -454,6 +541,24 @@ function PercentileChart({ label, values }: { label: string; values: Percentiles
   );
 }
 
+function JobsPerDayChart({ values }: { values: Record<string, number> | undefined }) {
+  const data = Object.entries(values ?? {}).map(([day, count]) => ({ day, count }));
+  if (data.length === 0) return <EmptyState text="No job history available." />;
+  return (
+    <div className="h-56">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="day" minTickGap={16} />
+          <YAxis allowDecimals={false} />
+          <Tooltip formatter={(value) => [Number(value), "jobs"]} />
+          <Bar dataKey="count" fill="#16a34a" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefined; loading: boolean }) {
   if (loading && !data) return <EmptyState text="Loading process activity..." />;
   if (!data) return <EmptyState text="No process snapshot available." />;
@@ -511,9 +616,9 @@ function ProcessRow({ process }: { process: ProcessSample }) {
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-border p-3">
+    <div className="min-w-0 rounded-md border border-border p-3">
       <div className="text-xs font-semibold text-muted">{label}</div>
-      <div className="mt-1 text-sm">{value}</div>
+      <div className="mt-1 break-words text-sm">{value}</div>
     </div>
   );
 }
@@ -537,6 +642,12 @@ function RefreshButton({ onClick }: { onClick: () => void }) {
       Refresh
     </button>
   );
+}
+
+function compactDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

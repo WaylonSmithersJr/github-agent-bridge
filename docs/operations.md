@@ -160,7 +160,10 @@ records OpenClaw CLI output from flushed byte chunks rather than waiting for
 newline-terminated lines, so partial interactive output can appear before the
 OpenClaw process exits. The dashboard renders activity and transcript logs as
 compact collapsible sections so long sessions can be scanned like GitHub Actions
-or Copilot session output. Operators can read them with
+or Copilot session output. Consecutive OpenClaw stdout/stderr chunks are grouped
+into one row with a count and a one-line preview, and routine stdout groups stay
+collapsed by default so plugin startup noise does not dominate the page.
+Operators can read them with
 `GET /api/jobs/{id}/session/events` or subscribe to
 `GET /api/jobs/{id}/session/stream` for SSE updates. The stream carries new
 session events and transcript entries directly, including already-recorded live

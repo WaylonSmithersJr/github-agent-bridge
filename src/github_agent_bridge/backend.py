@@ -217,8 +217,8 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     def dashboard(_: str = Depends(current_user)) -> FileResponse:
         return dashboard_index()
 
-    @app.get("/jobs/{job_id}")
-    def dashboard_job(job_id: int, _: str = Depends(current_user)) -> FileResponse:
+    @app.get("/jobs/{job_path:path}")
+    def dashboard_job(job_path: str, _: str = Depends(current_user)) -> FileResponse:
         return dashboard_index()
 
     @app.get("/api/status")

@@ -70,6 +70,21 @@ def test_dashboard_serves_dedicated_job_frontend_route(tmp_path):
     assert "root" in response.text
 
 
+def test_dashboard_job_frontend_route_falls_back_for_deep_links(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
+    JobQueue(db).enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    app = create_app(DashboardConfig(db=db, static_dir=static_dir, require_auth=False))
+
+    response = TestClient(app).get("/jobs/1/session")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "root" in response.text
+
+
 def test_dashboard_ui_requires_auth_by_default(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     static_dir = tmp_path / "static"

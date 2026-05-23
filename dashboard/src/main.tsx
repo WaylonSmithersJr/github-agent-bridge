@@ -787,7 +787,7 @@ function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntry; default
       summary={`${entry.role} · ${entry.kind}`}
       defaultOpen={defaultOpen}
     >
-      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">{entry.text}</pre>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100">{entry.text}</pre>
     </CollapsibleLogSection>
   );
 }
@@ -795,7 +795,7 @@ function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntry; default
 function SessionEventRow({ event, defaultOpen }: { event: SessionEvent; defaultOpen?: boolean }) {
   return (
     <CollapsibleLogSection badge={event.event_type} meta={<TimeText value={event.ts} />} summary={event.summary} defaultOpen={defaultOpen}>
-      {event.detail ? <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">{event.detail}</pre> : null}
+      {event.detail ? <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100">{event.detail}</pre> : null}
     </CollapsibleLogSection>
   );
 }
@@ -815,18 +815,18 @@ function CollapsibleLogSection({
 }) {
   const [isOpen, setIsOpen] = React.useState(Boolean(defaultOpen));
   return (
-    <details className="group rounded-md border border-border bg-white" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
-      <summary className="grid cursor-pointer list-none gap-2 p-3 marker:hidden">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <ChevronDown className="h-4 w-4 shrink-0 text-muted transition-transform group-open:rotate-180" aria-hidden />
-            <span className="rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-muted">{badge}</span>
+    <details className="group rounded border border-border bg-slate-50/60" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="grid cursor-pointer list-none gap-1 px-2 py-1.5 marker:hidden hover:bg-white">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted transition-transform group-open:rotate-180" aria-hidden />
+            <span className="truncate font-mono text-[11px] font-semibold text-muted">{badge}</span>
           </div>
-          <span className="font-mono text-xs text-muted">{meta}</span>
+          <span className="shrink-0 font-mono text-[11px] text-muted">{meta}</span>
         </div>
-        <div className="break-words pl-6 text-sm">{summary}</div>
+        <div className="min-w-0 truncate pl-5 text-xs text-foreground">{summary}</div>
       </summary>
-      <div className="border-t border-border px-3 pb-3 pt-1">{children}</div>
+      <div className="border-t border-border bg-white px-2 py-2">{children}</div>
     </details>
   );
 }

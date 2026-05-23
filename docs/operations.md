@@ -158,9 +158,9 @@ records bounded, redacted bridge-side session events when a job is claimed,
 while OpenClaw stdout/stderr is emitted, dispatched and finished. The dashboard
 records OpenClaw CLI output from flushed byte chunks rather than waiting for
 newline-terminated lines, so partial interactive output can appear before the
-OpenClaw process exits. The dashboard
-renders activity and transcript logs as collapsible sections so long sessions can
-be scanned like GitHub Actions or Copilot session output. Operators can read them with
+OpenClaw process exits. The dashboard renders activity and transcript logs as
+compact collapsible sections so long sessions can be scanned like GitHub Actions
+or Copilot session output. Operators can read them with
 `GET /api/jobs/{id}/session/events` or subscribe to
 `GET /api/jobs/{id}/session/stream` for SSE updates. The stream carries new
 session events and transcript entries directly, including already-recorded live

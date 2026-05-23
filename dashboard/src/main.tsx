@@ -159,6 +159,50 @@ function formatSeconds(value: number | null | undefined) {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  timeZoneName: "short",
+});
+
+const compactDateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function parseDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  const date = parseDate(value);
+  return date ? dateTimeFormatter.format(date) : (value ?? "");
+}
+
+function compactDate(value: string | null | undefined) {
+  const date = parseDate(value);
+  return date ? compactDateFormatter.format(date) : (value ?? "");
+}
+
+function TimeText({ value, compact = false }: { value: string | null | undefined; compact?: boolean }) {
+  const date = parseDate(value);
+  if (!date) return <>{value ?? ""}</>;
+  return (
+    <time dateTime={date.toISOString()} title={`UTC: ${date.toISOString()}`}>
+      {compact ? compactDate(value) : formatDateTime(value)}
+    </time>
+  );
+}
+
 function statusTone(status: string) {
   return {
     pending: "border-amber-300 bg-amber-50 text-amber-800",
@@ -304,7 +348,7 @@ function App() {
             <h1 className="text-xl font-semibold">GitHub Agent Bridge</h1>
             <p className="text-sm text-slate-300">Read-only operational dashboard</p>
           </div>
-          <UserMenu user={me.data?.user} loading={me.isLoading} />
+          <UserMenu user={me.data?.user} loading={me.isLoading} timeZone={browserTimeZone} />
         </div>
       </header>
 
@@ -408,7 +452,7 @@ function JobDetailStatus({
   return <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />;
 }
 
-function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: boolean }) {
+function UserMenu({ user, loading, timeZone }: { user: UserProfile | undefined; loading: boolean; timeZone: string }) {
   const login = user?.login ? `@${user.login}` : loading ? "Loading profile..." : "GitHub OAuth";
   const avatar = user?.avatar_url ? (
     <img className="h-10 w-10 rounded-full border border-slate-700 bg-slate-800" src={user.avatar_url} alt={user.login ? `${user.login} avatar` : ""} referrerPolicy="no-referrer" />
@@ -429,7 +473,7 @@ function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: b
       <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden />
       <div className="min-w-0 text-right">
         {identity}
-        <div className="text-xs text-slate-400">Signed in · read-only</div>
+        <div className="text-xs text-slate-400">Signed in · read-only · {timeZone}</div>
       </div>
       {avatar}
     </div>
@@ -578,7 +622,7 @@ function JobsList({
               <td className="px-2 py-3">{job.attempts}</td>
               <td className="px-2 py-3">{formatSeconds(job.queue_wait_seconds)}</td>
               <td className="px-2 py-3">{formatSeconds(job.runtime_seconds)}</td>
-              <td className="px-2 py-3 font-mono text-xs">{job.updated_at}</td>
+              <td className="px-2 py-3 font-mono text-xs"><TimeText value={job.updated_at} compact /></td>
             </tr>
           ))}
         </tbody>
@@ -652,6 +696,12 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
         <MiniStat label="Runtime" value={formatSeconds(job.runtime_seconds)} />
         <MiniStat label="Coalesced" value={String(job.coalesced_count)} />
       </div>
+      <div className={cn("grid gap-3 text-sm", compact ? "grid-cols-1" : "md:grid-cols-2 xl:grid-cols-4")}>
+        <MiniStat label="Created" value={<TimeText value={job.created_at} />} />
+        <MiniStat label="Started" value={job.started_at ? <TimeText value={job.started_at} /> : "n/a"} />
+        <MiniStat label="Updated" value={<TimeText value={job.updated_at} />} />
+        <MiniStat label="Finished" value={job.finished_at ? <TimeText value={job.finished_at} /> : "n/a"} />
+      </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">Timeline</h3>
         <div className="grid gap-3">
@@ -659,7 +709,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
             job.worklog?.map((entry) => (
               <div key={entry.id} className="border-l-2 border-primary pl-3">
                 <div className="text-sm font-semibold">{entry.phase}</div>
-                <div className="font-mono text-xs text-muted">{entry.ts}</div>
+                <div className="font-mono text-xs text-muted"><TimeText value={entry.ts} /></div>
                 <div className="text-sm">{entry.summary}</div>
                 {entry.detail ? <div className="mt-1 break-words font-mono text-xs text-muted">{entry.detail}</div> : null}
               </div>
@@ -735,7 +785,7 @@ function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntry; default
   return (
     <CollapsibleLogSection
       badge={entry.title}
-      meta={entry.timestamp ?? ""}
+      meta={<TimeText value={entry.timestamp} />}
       summary={`${entry.role} · ${entry.kind}`}
       defaultOpen={defaultOpen}
     >
@@ -746,7 +796,7 @@ function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntry; default
 
 function SessionEventRow({ event, defaultOpen }: { event: SessionEvent; defaultOpen?: boolean }) {
   return (
-    <CollapsibleLogSection badge={event.event_type} meta={event.ts} summary={event.summary} defaultOpen={defaultOpen}>
+    <CollapsibleLogSection badge={event.event_type} meta={<TimeText value={event.ts} />} summary={event.summary} defaultOpen={defaultOpen}>
       {event.detail ? <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">{event.detail}</pre> : null}
     </CollapsibleLogSection>
   );
@@ -760,7 +810,7 @@ function CollapsibleLogSection({
   children,
 }: {
   badge: string;
-  meta: string;
+  meta: React.ReactNode;
   summary: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
@@ -882,7 +932,7 @@ function ProcessRow({ process }: { process: ProcessSample }) {
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0 rounded-md border border-border p-3">
       <div className="text-xs font-semibold text-muted">{label}</div>
@@ -910,12 +960,6 @@ function RefreshButton({ onClick }: { onClick: () => void }) {
       Refresh
     </button>
   );
-}
-
-function compactDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

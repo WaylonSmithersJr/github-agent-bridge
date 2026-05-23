@@ -76,6 +76,9 @@ views at `/jobs/{id}`. Operators can share a job URL to open the dashboard with
 that job's session, worklog, activity feed and GitHub links selected. The UI is
 a Vite + React + TypeScript app styled with Tailwind and operational components,
 using TanStack Query for API state and Recharts for percentile charts.
+Timestamps stay stored and returned by the API in UTC, while the browser renders
+them in the viewer's local timezone from `Intl.DateTimeFormat`; hovering a
+rendered timestamp shows the UTC value.
 Production serves the static bundle from
 `src/github_agent_bridge/dashboard_static`.
 

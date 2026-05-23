@@ -197,11 +197,32 @@ def test_unassigned_unmentioned_pr_comment_reacts_without_dispatch(tmp_path):
     assert stored.status == "done"
 
 
+def test_first_attempt_dispatches_even_when_bot_already_commented_after_trigger(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=True, answered_url="https://github.com/gisce/erp/pull/27315#issuecomment-2")
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert len(dispatcher.jobs) == 1
+    assert dispatcher.jobs[0].id == job.id
+    assert github.eyes == 1
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
+
+
 def test_retry_skips_dispatch_when_bot_already_answered(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     job = enqueue_pr_comment(queue)
     dispatcher = RecordingDispatcher()
     github = FakeGitHub(assigned=True, answered_url="https://github.com/gisce/erp/pull/27315#issuecomment-2")
+
+    queue.requeue_running(job.id, "simulate retry")
+    with queue.connect() as con:
+        con.execute("UPDATE jobs SET attempts=1, status='pending' WHERE id=?", (job.id,))
 
     pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
     assert pool.work_one("worker-test") is True

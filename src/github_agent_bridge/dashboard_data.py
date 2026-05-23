@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections import Counter
 from datetime import UTC, datetime
@@ -220,7 +221,7 @@ def job_session(db: str | Path, job_id: int) -> dict[str, Any] | None:
     session["status"] = job["status"]
     session["detail"] = (
         "Dispatches use this explicit OpenClaw session id. "
-        "The dashboard exposes bounded, redacted bridge events for this session; raw local transcripts are not served."
+        "The dashboard exposes bounded, redacted bridge events and OpenClaw transcript entries for this session."
     )
     return session
 
@@ -249,6 +250,108 @@ def job_session_events(db: str | Path, job_id: int, *, after_id: int | None = No
             args,
         ).fetchall()
     return [dict(row) | {"detail": redact_event_detail(row["detail"])} for row in rows]
+
+
+def job_session_transcript(db: str | Path, job_id: int, *, limit: int = 500) -> list[dict[str, Any]]:
+    session = job_session(db, job_id)
+    if session is None:
+        return []
+    session_id = str(session.get("id") or "")
+    if not session_id:
+        return []
+    session_file = openclaw_session_file(session_id)
+    if session_file is None or not session_file.exists():
+        return []
+    entries: list[dict[str, Any]] = []
+    for line in session_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        if len(entries) >= coerce_limit(limit, maximum=1000):
+            break
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        entry = transcript_entry(item)
+        if entry is not None:
+            entries.append(entry)
+    return entries
+
+
+def openclaw_session_file(session_id: str) -> Path | None:
+    store = Path(os.getenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", "~/.openclaw/agents/github/sessions/sessions.json")).expanduser()
+    if not store.exists():
+        fallback = store.with_name(f"{session_id}.jsonl")
+        return fallback if fallback.exists() else None
+    try:
+        sessions = json.loads(store.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    for value in sessions.values() if isinstance(sessions, dict) else []:
+        if not isinstance(value, dict) or str(value.get("sessionId") or "") != session_id:
+            continue
+        session_file = value.get("sessionFile")
+        if not session_file:
+            continue
+        path = Path(str(session_file)).expanduser()
+        return path if path.exists() else None
+    fallback = store.with_name(f"{session_id}.jsonl")
+    return fallback if fallback.exists() else None
+
+
+def transcript_entry(item: dict[str, Any]) -> dict[str, Any] | None:
+    if item.get("type") == "session":
+        return {
+            "timestamp": item.get("timestamp"),
+            "role": "system",
+            "kind": "session",
+            "title": "Session started",
+            "text": f"cwd={item.get('cwd') or ''}",
+        }
+    if item.get("type") != "message":
+        return None
+    message = item.get("message")
+    if not isinstance(message, dict):
+        return None
+    role = str(message.get("role") or "unknown")
+    content = message.get("content")
+    kind = role
+    title = role
+    text = ""
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        parts = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type") or "")
+            if block_type == "toolCall":
+                name = block.get("name") or "tool"
+                kind = "tool_call"
+                title = f"Tool call: {name}"
+                args = block.get("arguments") or block.get("input") or {}
+                parts.append(json.dumps(args, ensure_ascii=False, indent=2, sort_keys=True))
+            elif block_type == "toolResult":
+                name = block.get("toolName") or block.get("name") or "tool"
+                kind = "tool_result"
+                title = f"Tool result: {name}"
+                parts.append(str(block.get("content") or block.get("text") or ""))
+            elif "text" in block:
+                parts.append(str(block.get("text") or ""))
+            elif "content" in block:
+                parts.append(str(block.get("content") or ""))
+        text = "\n\n".join(part for part in parts if part)
+    if not text:
+        text = str(message.get("content") or "")
+    text = redact_event_detail(text)
+    if len(text) > 6000:
+        text = text[:6000] + "\n... [truncated]"
+    return {
+        "timestamp": item.get("timestamp") or message.get("timestamp"),
+        "role": role,
+        "kind": kind,
+        "title": title,
+        "text": text,
+    }
 
 
 def metrics_summary(db: str | Path) -> dict[str, Any]:

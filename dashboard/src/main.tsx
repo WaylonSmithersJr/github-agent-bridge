@@ -109,6 +109,14 @@ type SessionEvent = {
   detail: string | null;
 };
 
+type TranscriptEntry = {
+  timestamp: string | null;
+  role: string;
+  kind: string;
+  title: string;
+  text: string;
+};
+
 type UserProfile = {
   login: string;
   avatar_url: string;
@@ -211,12 +219,18 @@ function App() {
     queryFn: () => api<{ events: SessionEvent[] }>(`/api/jobs/${selectedJobId}/session/events`),
     enabled: selectedJobId !== null,
   });
+  const transcript = useQuery({
+    queryKey: ["job-session-transcript", selectedJobId],
+    queryFn: () => api<{ entries: TranscriptEntry[] }>(`/api/jobs/${selectedJobId}/session/transcript`),
+    enabled: selectedJobId !== null,
+  });
 
   React.useEffect(() => {
     if (selectedJobId === null) return;
     const source = new EventSource(`/api/jobs/${selectedJobId}/session/stream`);
     source.addEventListener("session_event", () => {
       sessionEvents.refetch();
+      transcript.refetch();
       detail.refetch();
       jobs.refetch();
     });
@@ -244,7 +258,7 @@ function App() {
   const jobRows = jobs.data?.jobs ?? [];
   const selectedJob = selectedJobId ? (detail.data?.job ?? null) : null;
   const selectedJobInList = selectedJobId !== null && jobRows.some((job) => job.id === selectedJobId);
-  const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} />;
+  const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} />;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -271,7 +285,7 @@ function App() {
           <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
             <Filters filters={filters} onChange={setFilters} />
             {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-            <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} onSelect={selectJob} />
+            <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} onSelect={selectJob} />
             {selectedJobId !== null && !selectedJobInList ? <div className="mt-4 md:hidden">{detailStatus}</div> : null}
           </Panel>
 
@@ -310,6 +324,7 @@ function JobDetailStatus({
   error,
   session,
   sessionEvents,
+  transcript,
 }: {
   selectedJobId: number | null;
   selectedJob: Job | null;
@@ -317,8 +332,9 @@ function JobDetailStatus({
   error: Error | null;
   session: SessionCorrelation | undefined;
   sessionEvents: SessionEvent[] | undefined;
+  transcript: TranscriptEntry[] | undefined;
 }) {
-  if (selectedJob) return <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} />;
+  if (selectedJob) return <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} />;
   if (selectedJobId !== null && loading) return <EmptyState text="Loading selected job..." />;
   if (selectedJobId !== null && error) return <Banner tone="error" text={`Job #${selectedJobId}: ${error.message}`} />;
   return <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />;
@@ -437,6 +453,7 @@ function JobsList({
   selectedJob,
   session,
   sessionEvents,
+  transcript,
   onSelect,
 }: {
   jobs: Job[];
@@ -445,6 +462,7 @@ function JobsList({
   selectedJob: Job | null;
   session: SessionCorrelation | undefined;
   sessionEvents: SessionEvent[] | undefined;
+  transcript: TranscriptEntry[] | undefined;
   onSelect: (id: number) => void;
 }) {
   if (loading && jobs.length === 0) return <EmptyState text="Loading jobs..." />;
@@ -453,7 +471,7 @@ function JobsList({
     <>
       <div className="grid gap-3 md:hidden">
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} selected={selectedJobId === job.id} selectedJob={selectedJob} session={session} sessionEvents={sessionEvents} onSelect={onSelect} />
+          <JobCard key={job.id} job={job} selected={selectedJobId === job.id} selectedJob={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} onSelect={onSelect} />
         ))}
       </div>
       <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
@@ -508,6 +526,7 @@ function JobCard({
   selectedJob,
   session,
   sessionEvents,
+  transcript,
   onSelect,
 }: {
   job: Job;
@@ -515,6 +534,7 @@ function JobCard({
   selectedJob: Job | null;
   session: SessionCorrelation | undefined;
   sessionEvents: SessionEvent[] | undefined;
+  transcript: TranscriptEntry[] | undefined;
   onSelect: (id: number) => void;
 }) {
   return (
@@ -535,14 +555,14 @@ function JobCard({
       </button>
       {selected ? (
         <div className="border-t border-border p-3">
-          {selectedJob ? <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} compact /> : <EmptyState text="Loading detail..." />}
+          {selectedJob ? <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} compact /> : <EmptyState text="Loading detail..." />}
         </div>
       ) : null}
     </article>
   );
 }
 
-function JobDetail({ job, session, sessionEvents, compact = false }: { job: Job; session: SessionCorrelation | undefined; sessionEvents: SessionEvent[] | undefined; compact?: boolean }) {
+function JobDetail({ job, session, sessionEvents, transcript, compact = false }: { job: Job; session: SessionCorrelation | undefined; sessionEvents: SessionEvent[] | undefined; transcript: TranscriptEntry[] | undefined; compact?: boolean }) {
   const shareHref = jobPath(job.id);
   return (
     <div className="grid gap-4">
@@ -607,6 +627,16 @@ function JobDetail({ job, session, sessionEvents, compact = false }: { job: Job;
         </div>
       </div>
       <div>
+        <h3 className="mb-2 text-sm font-semibold">Session transcript</h3>
+        <div className="grid max-h-[620px] gap-3 overflow-auto pr-1">
+          {(transcript ?? []).length > 0 ? (
+            transcript?.map((entry, index) => <TranscriptRow key={`${entry.timestamp ?? "entry"}-${index}`} entry={entry} />)
+          ) : (
+            <EmptyState text="No OpenClaw transcript entries are available for this session." />
+          )}
+        </div>
+      </div>
+      <div>
         <h3 className="mb-2 text-sm font-semibold">GitHub links</h3>
         <ul className="grid gap-2 text-sm">
           {job.github_urls.length > 0 ? (
@@ -623,6 +653,18 @@ function JobDetail({ job, session, sessionEvents, compact = false }: { job: Job;
           )}
         </ul>
       </div>
+    </div>
+  );
+}
+
+function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-muted">{entry.title}</span>
+        <span className="font-mono text-xs text-muted">{entry.timestamp ?? ""}</span>
+      </div>
+      <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">{entry.text}</pre>
     </div>
   );
 }

@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 
 from .cli import DEFAULT_DB
-from .dashboard_data import get_job_detail, inspect_db_read_only, job_logs, job_session, job_session_events, list_jobs, metrics_summary
+from .dashboard_data import get_job_detail, inspect_db_read_only, job_logs, job_session, job_session_events, job_session_transcript, list_jobs, metrics_summary
 from .monitor import monitor
 
 
@@ -278,6 +278,12 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         if job_session(config.db, job_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
         return {"events": job_session_events(config.db, job_id, after_id=after_id, limit=limit)}
+
+    @app.get("/api/jobs/{job_id}/session/transcript")
+    def api_job_session_transcript(job_id: int, limit: int = 500, _: str = Depends(current_user)) -> dict[str, Any]:
+        if job_session(config.db, job_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+        return {"entries": job_session_transcript(config.db, job_id, limit=limit)}
 
     @app.get("/api/jobs/{job_id}/session/stream")
     def api_job_session_stream(job_id: int, after_id: int | None = None, _: str = Depends(current_user)) -> StreamingResponse:

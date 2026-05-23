@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi.testclient import TestClient
 
 from github_agent_bridge.backend import DashboardConfig, _encode_session, _sign, create_app
-from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, list_jobs, metrics_summary
+from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
@@ -148,7 +148,7 @@ def test_dashboard_exposes_safe_openclaw_session_correlation(tmp_path):
     assert claimed.metadata["openclaw_session_id"] == f"github-agent-bridge-job-{job.id}"
     assert session is not None
     assert session["id"] == f"github-agent-bridge-job-{job.id}"
-    assert session["transcript_exposure"] == "not_exposed"
+    assert session["transcript_exposure"] == "redacted_dashboard"
     assert payload["id"] == session["id"]
 
 
@@ -166,6 +166,41 @@ def test_dashboard_exposes_redacted_job_session_events(tmp_path):
 
     assert [event["event_type"] for event in events] == ["claimed", "dispatch_finished"]
     assert payload[-1]["detail"] == "token=[redacted] [redacted]"
+
+
+def test_dashboard_exposes_redacted_openclaw_session_transcript(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    session_file = sessions_dir / f"{claimed.metadata['openclaw_session_id']}.jsonl"
+    session_file.write_text(
+        "\n".join(
+            [
+                '{"type":"session","timestamp":"2026-05-23T08:00:00Z","cwd":"/tmp/work"}',
+                '{"type":"message","timestamp":"2026-05-23T08:00:01Z","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash","arguments":{"command":"echo ghp_abcdefghijklmnopqrstuvwxyz"}}]}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = sessions_dir / "sessions.json"
+    store.write_text(
+        '{"agent:github:main":{"sessionId":"%s","sessionFile":"%s"}}' % (claimed.metadata["openclaw_session_id"], session_file),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", str(store))
+
+    entries = job_session_transcript(db, job.id)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get(f"/api/jobs/{job.id}/session/transcript").json()["entries"]
+
+    assert entries[0]["title"] == "Session started"
+    assert payload[1]["title"] == "Tool call: bash"
+    assert "ghp_" not in payload[1]["text"]
 
 
 def test_dashboard_requires_auth_by_default(tmp_path):

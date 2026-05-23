@@ -25,5 +25,5 @@ def job_session_metadata(job: dict[str, Any]) -> dict[str, Any]:
         "id": normalize_session_id(str(session_id)),
         "source": "metadata" if metadata.get("openclaw_session_id") else "derived",
         "transcript_available": False,
-        "transcript_exposure": "not_exposed",
+        "transcript_exposure": "redacted_dashboard",
     }

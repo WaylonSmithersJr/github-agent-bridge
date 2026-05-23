@@ -440,9 +440,9 @@ function App() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-slate-800 bg-slate-950 text-white">
-        <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
-          <div>
-            <h1 className="text-xl font-semibold">GitHub Agent Bridge</h1>
+        <div className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-3 px-4 py-4 md:px-6">
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-semibold">GitHub Agent Bridge</h1>
             <p className="text-sm text-slate-300">Read-only operational dashboard</p>
           </div>
           <UserMenu user={me.data?.user} loading={me.isLoading} />
@@ -569,9 +569,9 @@ function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: b
     <div className="truncate font-semibold text-white">{login}</div>
   );
   return (
-    <div className="flex max-w-full items-center gap-3 text-sm text-slate-300">
-      <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden />
-      <div className="min-w-0 text-right">
+    <div className="flex max-w-full shrink-0 items-center gap-3 text-sm text-slate-300" aria-label={user?.login ? `Signed in as ${user.login}` : "Dashboard account"}>
+      <ShieldCheck className="hidden h-4 w-4 shrink-0 sm:block" aria-hidden />
+      <div className="hidden min-w-0 text-right sm:block">
         {identity}
         <div className="text-xs text-slate-400">Signed in · read-only</div>
       </div>

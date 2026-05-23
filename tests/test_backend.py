@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-from github_agent_bridge.backend import DashboardConfig, _sign, create_app
+from github_agent_bridge.backend import DashboardConfig, _encode_session, _sign, create_app
 from github_agent_bridge.dashboard_data import get_job_detail, job_session, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
@@ -114,6 +114,7 @@ def test_dashboard_exposes_job_detail_logs_and_metrics(tmp_path):
     assert detail is not None
     assert detail["worklog"][0]["phase"] == "queued"
     assert metrics["status_counts"]["done"] == 1
+    assert list(metrics["by_created_day"].values()) == [1]
     assert client.get(f"/api/jobs/{job.id}/logs").json()["logs"][-1]["phase"] == "done"
     assert client.get("/api/metrics/summary").json()["metrics"]["by_repo"]["gisce/erp"] == 1
 
@@ -159,6 +160,46 @@ def test_dashboard_session_authorization_allows_configured_user(tmp_path):
 
     assert client.get("/api/jobs").status_code == 200
     assert client.get("/").status_code == 200
+
+
+def test_dashboard_me_backfills_legacy_session_avatar(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, "alice"))
+
+    response = client.get("/api/me")
+
+    assert response.status_code == 200
+    assert response.json()["user"] == {
+        "login": "alice",
+        "avatar_url": "https://github.com/alice.png?size=80",
+        "html_url": "https://github.com/alice",
+    }
+
+
+def test_dashboard_me_exposes_safe_oauth_profile(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set(
+        "gab_dashboard_session",
+        _sign(
+            app.state.dashboard_config,
+            _encode_session({"login": "Alice", "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4", "html_url": "https://github.com/alice"}),
+        ),
+    )
+
+    response = client.get("/api/me")
+
+    assert response.status_code == 200
+    assert response.json()["user"] == {
+        "login": "alice",
+        "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
+        "html_url": "https://github.com/alice",
+    }
 
 
 def test_dashboard_oauth_login_uses_minimal_scope_for_user_allowlist(tmp_path):

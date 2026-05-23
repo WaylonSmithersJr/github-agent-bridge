@@ -236,6 +236,7 @@ def metrics_summary(db: str | Path) -> dict[str, Any]:
     by_repo = Counter(row["repo"] or "unknown" for row in rows)
     by_action = Counter(row["action"] for row in rows)
     by_intent = Counter(row["work_intent"] for row in rows)
+    by_created_day = Counter(day for day in (created_day(row["created_at"]) for row in rows) if day)
     runtimes = sorted(
         seconds for seconds in (duration_seconds(row["started_at"], row["finished_at"]) for row in rows if row["finished_at"]) if seconds is not None
     )
@@ -249,9 +250,17 @@ def metrics_summary(db: str | Path) -> dict[str, Any]:
         "by_repo": dict(by_repo),
         "by_action": dict(by_action),
         "by_intent": dict(by_intent),
+        "by_created_day": dict(sorted(by_created_day.items())),
         "runtime_seconds": percentiles(runtimes),
         "queue_wait_seconds": percentiles(waits),
     }
+
+
+def created_day(value: str | None) -> str | None:
+    created = parse_utc(value)
+    if created is None:
+        return None
+    return created.astimezone(UTC).date().isoformat()
 
 
 def percentiles(values: list[int]) -> dict[str, int | None]:

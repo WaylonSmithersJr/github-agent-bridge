@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import secrets
@@ -9,6 +10,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import re
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,7 @@ OAUTH_STATE_COOKIE = "gab_dashboard_oauth_state"
 GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
+SESSION_VERSION = 1
 
 
 class DashboardConfig:
@@ -89,6 +92,45 @@ def _unsign(config: DashboardConfig, value: str) -> str | None:
     return raw if hmac.compare_digest(digest, expected) else None
 
 
+def _encode_session(user: dict[str, Any]) -> str:
+    payload = {
+        "v": SESSION_VERSION,
+        "login": str(user.get("login", "")).lower(),
+        "avatar_url": str(user.get("avatar_url", "")),
+        "html_url": str(user.get("html_url", "")),
+    }
+    data = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _decode_session(value: str) -> dict[str, Any] | None:
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return _profile_from_login(value) if value else None
+    login = str(payload.get("login", "")).lower()
+    if not login:
+        return None
+    fallback = _profile_from_login(login)
+    return {
+        "login": login,
+        "avatar_url": str(payload.get("avatar_url") or fallback["avatar_url"]),
+        "html_url": str(payload.get("html_url") or fallback["html_url"]),
+    }
+
+
+def _profile_from_login(login: str) -> dict[str, str]:
+    user = str(login).lower()
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?", user):
+        return {"login": user, "avatar_url": "", "html_url": ""}
+    return {
+        "login": user,
+        "avatar_url": f"https://github.com/{user}.png?size=80",
+        "html_url": f"https://github.com/{user}",
+    }
+
+
 def _github_json(url: str, token: str) -> dict[str, Any]:
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}", "User-Agent": "github-agent-bridge-dashboard"})
     with urllib.request.urlopen(req, timeout=10) as response:
@@ -132,16 +174,21 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         app.mount("/assets", StaticFiles(directory=assets_dir), name="dashboard-assets")
 
     async def current_user(request: Request) -> str:
+        profile = await current_profile(request)
+        return str(profile["login"])
+
+    async def current_profile(request: Request) -> dict[str, Any]:
         cfg: DashboardConfig = request.app.state.dashboard_config
         if not cfg.require_auth:
-            return "test"
+            return {"login": "test", "avatar_url": "", "html_url": ""}
         signed = request.cookies.get(SESSION_COOKIE)
         if not signed or not cfg.secret_key:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not_authenticated")
-        login = _unsign(cfg, signed)
-        if not login:
+        raw = _unsign(cfg, signed)
+        profile = _decode_session(raw) if raw else None
+        if not profile:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_authorized")
-        return login
+        return profile
 
     @app.exception_handler(sqlite3.OperationalError)
     async def database_unavailable(_: Request, exc: sqlite3.OperationalError) -> JSONResponse:
@@ -169,6 +216,10 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     @app.get("/api/status")
     def api_status(_: str = Depends(current_user)) -> dict[str, Any]:
         return {"service": "github-agent-bridge-dashboard", "read_only": True, "metrics": inspect_db_read_only(config.db)}
+
+    @app.get("/api/me")
+    def api_me(profile: dict[str, Any] = Depends(current_profile)) -> dict[str, Any]:
+        return {"user": profile}
 
     @app.get("/api/jobs")
     def api_jobs(
@@ -267,7 +318,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         if not login or not _is_allowed(config, login, token):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_authorized")
         response = RedirectResponse("/", status_code=status.HTTP_302_FOUND)
-        response.set_cookie(SESSION_COOKIE, _sign(config, login.lower()), httponly=True, secure=True, samesite="lax")
+        response.set_cookie(SESSION_COOKIE, _sign(config, _encode_session(user)), httponly=True, secure=True, samesite="lax")
         response.delete_cookie(OAUTH_STATE_COOKIE)
         return response
 

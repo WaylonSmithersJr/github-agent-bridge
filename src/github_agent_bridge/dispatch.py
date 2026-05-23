@@ -5,9 +5,11 @@ import os
 import re
 import signal
 import subprocess
+import threading
 from dataclasses import dataclass
 from importlib import resources
 from enum import StrEnum
+from typing import Callable
 
 from . import feedback
 from .models import GitHubContext, Job
@@ -473,7 +475,13 @@ class OpenClawDispatcher:
         to = route.to or self.default_to
         return agent, channel, to
 
-    def dispatch(self, job: Job, policy: Policy, reaction_ok: bool | None = None) -> DispatchResult:
+    def dispatch(
+        self,
+        job: Job,
+        policy: Policy,
+        reaction_ok: bool | None = None,
+        activity_callback: Callable[[str, str, str | None], None] | None = None,
+    ) -> DispatchResult:
         agent, channel, to = self.route_for(job, policy)
         cmd = [self.openclaw_bin, "agent"]
         if agent:
@@ -487,15 +495,37 @@ class OpenClawDispatcher:
         if self.mode != RunMode.LIVE:
             return DispatchResult(True, 0, "side effects skipped", "", False, reaction_ok, cmd)
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+
+        def read_stream(stream, chunks: list[str], event_type: str) -> None:
+            if stream is None:
+                return
+            for line in iter(stream.readline, ""):
+                chunks.append(line)
+                if activity_callback:
+                    activity_callback(event_type, "OpenClaw CLI output" if event_type == "openclaw_stdout" else "OpenClaw CLI error output", line.rstrip("\n"))
+
+        stdout_thread = threading.Thread(target=read_stream, args=(proc.stdout, stdout_chunks, "openclaw_stdout"), daemon=True)
+        stderr_thread = threading.Thread(target=read_stream, args=(proc.stderr, stderr_chunks, "openclaw_stderr"), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
         try:
             # Let OpenClaw's own --timeout own the agent run deadline. The bridge only
             # keeps a small grace window so it can capture the CLI result cleanly.
-            out, err = proc.communicate(timeout=agent_timeout + self.cli_grace_seconds)
+            proc.wait(timeout=agent_timeout + self.cli_grace_seconds)
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+            out, err = "".join(stdout_chunks), "".join(stderr_chunks)
             return DispatchResult(proc.returncode == 0, proc.returncode, (out or "")[:2000], (err or "")[:4000], False, reaction_ok, cmd)
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except Exception:
                 proc.kill()
-            out, err = proc.communicate()
+            proc.wait()
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+            out, err = "".join(stdout_chunks), "".join(stderr_chunks)
             return DispatchResult(False, 124, (out or "")[:2000], (err or "")[:4000], True, reaction_ok, cmd)

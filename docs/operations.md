@@ -151,10 +151,12 @@ id so operators can correlate a bridge job with the OpenClaw session that ran
 it. The React route `/jobs/{id}` is a focused job detail page for sharing a
 single job/session, with a link back to the generic dashboard. The dashboard
 records bounded, redacted bridge-side session events when a job is claimed,
-dispatched and finished. Operators can read them with
+while OpenClaw stdout/stderr is emitted, dispatched and finished. Operators can read them with
 `GET /api/jobs/{id}/session/events` or subscribe to
-`GET /api/jobs/{id}/session/stream` for SSE updates. The dashboard also exposes
-redacted OpenClaw transcript entries for the correlated session through
+`GET /api/jobs/{id}/session/stream` for SSE updates. The stream also emits
+periodic ticks so the UI refreshes the OpenClaw transcript while the agent is
+still running, even before the bridge has a final dispatch result. The dashboard
+also exposes redacted OpenClaw transcript entries for the correlated session through
 `GET /api/jobs/{id}/session/transcript`. By default it looks up
 `~/.openclaw/agents/github/sessions/sessions.json`, or the path set in
 `GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE`, and only returns entries for the

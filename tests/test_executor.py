@@ -50,8 +50,11 @@ class RecordingDispatcher:
     def __init__(self):
         self.jobs = []
 
-    def dispatch(self, job, policy, reaction_ok=None):
+    def dispatch(self, job, policy, reaction_ok=None, activity_callback=None):
         self.jobs.append(job)
+        if activity_callback:
+            activity_callback("openclaw_stdout", "OpenClaw CLI output", "thinking about the change")
+            activity_callback("openclaw_stderr", "OpenClaw CLI error output", "token=secret ghp_abcdefghijklmnopqrstuvwxyz")
         return DispatchResult(True, 0, "ok", "", False, reaction_ok, ["openclaw"])
 
 
@@ -126,7 +129,9 @@ def test_executor_records_session_activity_events(tmp_path):
     assert pool.work_one("worker-test") is True
 
     event_types = [event["event_type"] for event in job_session_events(db, dispatcher.jobs[0].id)]
-    assert event_types == ["claimed", "dispatch_started", "dispatch_finished", "done"]
+    assert event_types == ["claimed", "dispatch_started", "openclaw_stdout", "openclaw_stderr", "dispatch_finished", "done"]
+    stderr_event = job_session_events(db, dispatcher.jobs[0].id)[3]
+    assert stderr_event["detail"] == "token=[redacted] [redacted]"
 
 
 def test_unassigned_mentioned_pr_comment_stays_review_only(tmp_path):

@@ -79,6 +79,29 @@ def test_review_only_dispatch_uses_shorter_timeout():
     assert result.command[timeout_idx + 1] == "900"
 
 
+def test_live_dispatch_streams_openclaw_output_to_activity_callback(tmp_path):
+    openclaw = tmp_path / "openclaw"
+    openclaw.write_text(
+        "#!/bin/sh\n"
+        "printf 'thinking line\\n'\n"
+        "printf 'tool error\\n' >&2\n",
+        encoding="utf-8",
+    )
+    openclaw.chmod(0o755)
+    events = []
+
+    result = OpenClawDispatcher(openclaw_bin=str(openclaw), mode=RunMode.LIVE, cli_grace_seconds=1).dispatch(
+        make_job(),
+        Policy(trusted_orgs={"gisce"}),
+        reaction_ok=True,
+        activity_callback=lambda event_type, summary, detail: events.append((event_type, summary, detail)),
+    )
+
+    assert result.ok is True
+    assert ("openclaw_stdout", "OpenClaw CLI output", "thinking line") in events
+    assert ("openclaw_stderr", "OpenClaw CLI error output", "tool error") in events
+
+
 def test_dispatcher_does_not_hardcode_org_agent_fallback():
     dispatcher = OpenClawDispatcher(mode=RunMode.SHADOW)
     job = make_job()

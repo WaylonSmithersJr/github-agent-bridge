@@ -55,7 +55,12 @@ class ExecutorPool:
                 job = self.queue.update_work_intent(job.id, "work_allowed", f"{reason}; upgraded review-only comment to work_allowed") or job
             reaction_ok = self.react_eyes_for_job_contexts(job)
             self.queue.add_session_event(job.id, "dispatch_started", "OpenClaw agent dispatch started", f"reaction_ok={reaction_ok}")
-            result = self.dispatcher.dispatch(job, self.policy, reaction_ok=reaction_ok)
+            result = self.dispatcher.dispatch(
+                job,
+                self.policy,
+                reaction_ok=reaction_ok,
+                activity_callback=lambda event_type, summary, detail: self.queue.add_session_event(job.id, event_type, summary, redact_event_detail(detail)),
+            )
             dispatch_detail = "\n".join(part for part in [result.stdout, result.stderr] if part)
             self.queue.add_session_event(
                 job.id,

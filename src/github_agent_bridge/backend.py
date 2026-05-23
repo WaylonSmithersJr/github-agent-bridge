@@ -297,6 +297,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
                 for event in events:
                     last_id = int(event["id"])
                     yield f"id: {last_id}\nevent: session_event\ndata: {json.dumps(event, separators=(',', ':'))}\n\n"
+                yield f"event: session_tick\ndata: {json.dumps({'job_id': job_id, 'last_event_id': last_id}, separators=(',', ':'))}\n\n"
                 await asyncio.sleep(2)
 
         return StreamingResponse(stream(), media_type="text/event-stream", headers=_redacted_headers())

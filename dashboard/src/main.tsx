@@ -237,6 +237,9 @@ function App() {
       detail.refetch();
       jobs.refetch();
     });
+    source.addEventListener("session_tick", () => {
+      transcript.refetch();
+    });
     source.onerror = () => {
       source.close();
     };
@@ -657,7 +660,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
           {(sessionEvents ?? []).length > 0 ? (
             sessionEvents?.map((event) => <SessionEventRow key={event.id} event={event} />)
           ) : (
-            <EmptyState text="No agent activity has been recorded for this session." />
+            <EmptyState text={job.status === "running" ? "Waiting for live agent output..." : "No agent activity has been recorded for this session."} />
           )}
         </div>
       </div>
@@ -667,7 +670,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
           {(transcript ?? []).length > 0 ? (
             transcript?.map((entry, index) => <TranscriptRow key={`${entry.timestamp ?? "entry"}-${index}`} entry={entry} />)
           ) : (
-            <EmptyState text="No OpenClaw transcript entries are available for this session." />
+            <EmptyState text={job.status === "running" ? "Waiting for live transcript entries..." : "No OpenClaw transcript entries are available for this session."} />
           )}
         </div>
       </div>

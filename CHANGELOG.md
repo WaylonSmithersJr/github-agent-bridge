@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.12.0 (2026-05-23)
+
+### Features
+
+- Correlate dashboard jobs with OpenClaw sessions
+  ([`5737678`](https://github.com/pilipilisbot/github-agent-bridge/commit/5737678452f7b0ecbc585fe7e444ced4848f62c2))
+
+
 ## v0.11.0 (2026-05-22)
 
 ### Features

@@ -2,6 +2,63 @@
 
 <!-- version list -->
 
+## v0.14.0 (2026-05-23)
+
+### Bug Fixes
+
+- Avoid stale bot follow-up skips
+  ([`7039522`](https://github.com/pilipilisbot/github-agent-bridge/commit/70395222ffb275720c025356a03680275e96fe97))
+
+- Collapse dashboard session logs
+  ([`904999e`](https://github.com/pilipilisbot/github-agent-bridge/commit/904999eb345ec0e13c8fd5ebd2fde4507de9217a))
+
+- Compact dashboard session log items
+  ([`f1016d9`](https://github.com/pilipilisbot/github-agent-bridge/commit/f1016d9e27a12d3d181dea4741c32c2113ce5717))
+
+- Expose job transcripts and tighten duplicate skips
+  ([`9b50ece`](https://github.com/pilipilisbot/github-agent-bridge/commit/9b50ecec08c5e46b3fbcdaf2e2e1ce41f0325f29))
+
+- Focus dashboard job routes
+  ([`e281e87`](https://github.com/pilipilisbot/github-agent-bridge/commit/e281e873ad6a04f762444ed83c8fb6ca15c8d9bf))
+
+- Hide dashboard profile timezone
+  ([`2c047ce`](https://github.com/pilipilisbot/github-agent-bridge/commit/2c047ce4bdecfdca746e8993ac53431a9c498184))
+
+- Localize dashboard timestamps
+  ([`d0dde6e`](https://github.com/pilipilisbot/github-agent-bridge/commit/d0dde6e950604891a5964796eec91dafe9d5ff30))
+
+- Make dashboard realtime stream reliable
+  ([`f3bad4b`](https://github.com/pilipilisbot/github-agent-bridge/commit/f3bad4bd2b8143a17cd857690e5500377ffdab1f))
+
+- Serve dashboard job deep links
+  ([`3591732`](https://github.com/pilipilisbot/github-agent-bridge/commit/35917325f4665ddfb8726d2a5e4aeab8f629ec1b))
+
+- Stream live OpenClaw session output
+  ([`caa4323`](https://github.com/pilipilisbot/github-agent-bridge/commit/caa4323d73a8aa7daf25d9e1911fc65d6d4ea0da))
+
+- Stream live OpenClaw trajectory entries
+  ([`0b0b4d2`](https://github.com/pilipilisbot/github-agent-bridge/commit/0b0b4d253d7480582ac8dbf226ea2883c252499b))
+
+- Stream live transcript over SSE
+  ([`9c47082`](https://github.com/pilipilisbot/github-agent-bridge/commit/9c47082804607fad239e507d1240f0b2642abdb6))
+
+- Stream partial OpenClaw output live
+  ([`d0487b2`](https://github.com/pilipilisbot/github-agent-bridge/commit/d0487b262cbc1d69e78437101960f35cc734bcd2))
+
+### Documentation
+
+- Align dashboard transcript metadata
+  ([`1e49829`](https://github.com/pilipilisbot/github-agent-bridge/commit/1e498298d452a72eecdc95ab529ef2901581e417))
+
+### Features
+
+- Add shareable dashboard job routes
+  ([`a43e29a`](https://github.com/pilipilisbot/github-agent-bridge/commit/a43e29afdb9148baee264ef5a8ff1e5a92ae53f9))
+
+- Stream dashboard agent activity
+  ([`45cc3fc`](https://github.com/pilipilisbot/github-agent-bridge/commit/45cc3fc566cc0a51722bafecd4a385a694c593a3))
+
+
 ## v0.13.1 (2026-05-23)
 
 ### Bug Fixes

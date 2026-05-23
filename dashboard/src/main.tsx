@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Cpu, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock3, Cpu, RefreshCw, Search, ShieldCheck, TerminalSquare } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -86,6 +86,17 @@ type ProcessesResponse = {
   detail: string;
 };
 
+type SessionCorrelation = {
+  id: string;
+  source: string;
+  transcript_available: boolean;
+  transcript_exposure: string;
+  job_id: number;
+  work_key: string;
+  status: string;
+  detail: string;
+};
+
 type JobFilters = {
   status: string;
   repo: string;
@@ -162,6 +173,11 @@ function App() {
     queryFn: () => api<{ job: Job }>(`/api/jobs/${selectedJobId}`),
     enabled: selectedJobId !== null,
   });
+  const session = useQuery({
+    queryKey: ["job-session", selectedJobId],
+    queryFn: () => api<{ session: SessionCorrelation }>(`/api/jobs/${selectedJobId}/session`),
+    enabled: selectedJobId !== null,
+  });
 
   const counts = metrics.data?.metrics.status_counts ?? {};
   const jobRows = jobs.data?.jobs ?? [];
@@ -199,7 +215,7 @@ function App() {
           </Panel>
 
           <Panel title="Job detail">
-            {selectedJob ? <JobDetail job={selectedJob} /> : <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />}
+            {selectedJob ? <JobDetail job={selectedJob} session={session.data?.session} /> : <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />}
           </Panel>
         </section>
 
@@ -350,7 +366,7 @@ function JobsTable({ jobs, loading, selectedJobId, onSelect }: { jobs: Job[]; lo
   );
 }
 
-function JobDetail({ job }: { job: Job }) {
+function JobDetail({ job, session }: { job: Job; session: SessionCorrelation | undefined }) {
   return (
     <div className="grid gap-4">
       <div className="grid gap-2">
@@ -379,6 +395,23 @@ function JobDetail({ job }: { job: Job }) {
             <EmptyState text="No worklog entries." />
           )}
         </div>
+      </div>
+      <div>
+        <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+          <TerminalSquare className="h-4 w-4" aria-hidden />
+          OpenClaw session
+        </h3>
+        {session ? (
+          <div className="grid gap-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <MiniStat label="Session ID" value={session.id} />
+              <MiniStat label="Source" value={session.source} />
+            </div>
+            <p className="text-xs text-muted">{session.detail}</p>
+          </div>
+        ) : (
+          <EmptyState text="Session correlation is loading." />
+        )}
       </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">GitHub links</h3>

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .cli import DEFAULT_DB
-from .dashboard_data import get_job_detail, inspect_db_read_only, job_logs, list_jobs, metrics_summary
+from .dashboard_data import get_job_detail, inspect_db_read_only, job_logs, job_session, list_jobs, metrics_summary
 from .monitor import monitor
 
 
@@ -209,10 +209,10 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
 
     @app.get("/api/jobs/{job_id}/session")
     def api_job_session(job_id: int, _: str = Depends(current_user)) -> dict[str, Any]:
-        job = get_job_detail(config.db, job_id)
-        if job is None:
+        session = job_session(config.db, job_id)
+        if session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
-        return {"job_id": job_id, "session": None, "detail": "session correlation is not available in M1"}
+        return {"session": session}
 
     @app.get("/api/metrics/summary")
     def api_metrics(_: str = Depends(current_user)) -> dict[str, Any]:

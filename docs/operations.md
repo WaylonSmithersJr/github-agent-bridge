@@ -137,10 +137,15 @@ only this dashboard API; it does not restart or depend on
 `github-agent-bridge.service`.
 
 Current scope covers the read-only API, OAuth/session guard, job detail, logs,
-summary metrics, an initial read-only React operations UI and a live `/proc`
-snapshot of executor child processes through `GET /api/processes`. Persistent
-alert storage, historical proc sample retention, richer SSE integration and
-OpenClaw session transcript correlation remain later milestones.
+summary metrics, an initial read-only React operations UI, a live `/proc`
+snapshot of executor child processes through `GET /api/processes`, and safe
+OpenClaw session correlation through `GET /api/jobs/{id}/session`. New
+dispatches use a deterministic `github-agent-bridge-job-{id}` OpenClaw session
+id so operators can correlate a bridge job with the OpenClaw session that ran
+it. The dashboard exposes only correlation metadata; it does not serve full
+session transcripts. Persistent alert storage, historical proc sample retention,
+richer SSE integration and redacted transcript summaries remain later
+milestones.
 
 ## Operational SLOs
 

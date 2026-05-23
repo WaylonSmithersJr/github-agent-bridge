@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi.testclient import TestClient
 
 from github_agent_bridge.backend import DashboardConfig, _sign, create_app
-from github_agent_bridge.dashboard_data import get_job_detail, list_jobs, metrics_summary
+from github_agent_bridge.dashboard_data import get_job_detail, job_session, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
@@ -116,6 +116,24 @@ def test_dashboard_exposes_job_detail_logs_and_metrics(tmp_path):
     assert metrics["status_counts"]["done"] == 1
     assert client.get(f"/api/jobs/{job.id}/logs").json()["logs"][-1]["phase"] == "done"
     assert client.get("/api/metrics/summary").json()["metrics"]["by_repo"]["gisce/erp"] == 1
+
+
+def test_dashboard_exposes_safe_openclaw_session_correlation(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+
+    session = job_session(db, job.id)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get(f"/api/jobs/{job.id}/session").json()["session"]
+
+    assert claimed.metadata["openclaw_session_id"] == f"github-agent-bridge-job-{job.id}"
+    assert session is not None
+    assert session["id"] == f"github-agent-bridge-job-{job.id}"
+    assert session["transcript_exposure"] == "not_exposed"
+    assert payload["id"] == session["id"]
 
 
 def test_dashboard_requires_auth_by_default(tmp_path):

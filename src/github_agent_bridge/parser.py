@@ -12,6 +12,7 @@ BOT_MENTION_PATTERNS = ("@pilipilisbot", "pilipilisbot", "you are receiving this
 ASSIGNMENT_PATTERNS = ("assigned you", "assigned to you", "you were assigned", "you are assigned", "assigned pilipilisbot", "assigned @pilipilisbot")
 REVIEW_REQUEST_PATTERNS = ("requested your review", "requested a review from you", "you were requested for review", "review requested", "requested review from pilipilisbot", "requested review from @pilipilisbot", "requested @pilipilisbot")
 COPILOT_REVIEW_PATTERNS = ("copilot-pull-request-reviewer", "github-copilot", "github copilot", "copilot reviewed", "copilot commented", "copilot left a comment", "copilot suggested", "copilot requested changes")
+WORKFLOW_RUN_FAILED_PATTERNS = ("run failed", "workflow run failed", "workflow failed", "job failed", "failing after")
 
 
 def decode_header_value(value: str | None) -> str:
@@ -68,6 +69,8 @@ def classify_work_intent(subject: str, body: str) -> str:
 def classify_github_action(subject: str, body: str) -> str:
     text = f"{subject}\n{body}".lower()
     flags = github_event_flags(subject, body)
+    if re.search(r"github\.com/[^/]+/[^/]+/actions/runs/\d+", text) and _contains_any(text, WORKFLOW_RUN_FAILED_PATTERNS):
+        return "workflow_run_failed"
     if "merged" in text:
         return "sync_after_merge"
     # PR reviews/comments should be handled as replies even when GitHub's footer
@@ -85,8 +88,12 @@ def classify_github_action(subject: str, body: str) -> str:
 
 def extract_github_context(body: str) -> GitHubContext:
     urls = re.findall(r"https://github\.com/[^\s>]+", body)
-    repo = None; issue_number = None; comment_id = None; review_id = None; review_comment_id = None; commit_comment_id = None; commit_sha = None; target_kind = None
+    repo = None; issue_number = None; comment_id = None; review_id = None; review_comment_id = None; commit_comment_id = None; commit_sha = None; workflow_run_id = None; target_kind = None
     for url in urls:
+        workflow_run = re.search(r"github\.com/([^/]+/[^/]+)/actions/runs/(\d+)", url)
+        if workflow_run:
+            repo = workflow_run.group(1).lower(); workflow_run_id = int(workflow_run.group(2)); target_kind = "workflow_run"
+            break
         commit = re.search(r"github\.com/([^/]+/[^/]+)/commit/([0-9a-fA-F]+)", url)
         if commit:
             repo = commit.group(1).lower(); commit_sha = commit.group(2)
@@ -108,4 +115,15 @@ def extract_github_context(body: str) -> GitHubContext:
             review_id = int(rv.group(1)); target_kind = "review"; continue
         if target_kind is None:
             target_kind = "issue"
-    return GitHubContext(urls, repo, issue_number, comment_id, review_id, review_comment_id, commit_comment_id, commit_sha, target_kind)
+    return GitHubContext(
+        urls=urls,
+        repo=repo,
+        issue_number=issue_number,
+        comment_id=comment_id,
+        review_id=review_id,
+        review_comment_id=review_comment_id,
+        commit_comment_id=commit_comment_id,
+        commit_sha=commit_sha,
+        target_kind=target_kind,
+        workflow_run_id=workflow_run_id,
+    )

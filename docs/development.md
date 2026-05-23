@@ -120,7 +120,7 @@ Role and work intent are separate.
 | --- | --- | --- |
 | Repository role | judgment and authority | `owner`, `maintainer`, `contributor`, `reviewer` |
 | Work intent | allowed actions | `review_only`, `work_allowed` |
-| Action | GitHub workflow | `submit_review`, `reply_comment`, `open_issue`, `sync_after_merge`, `archive_notification` |
+| Action | GitHub workflow | `submit_review`, `reply_comment`, `open_issue`, `sync_after_merge`, `workflow_run_failed`, `archive_notification` |
 
 `owner` + `review_only` should preserve owner-level judgment while forbidding code and metadata changes. Do not auto-convert review-only work to the `reviewer` role.
 

@@ -63,7 +63,7 @@ class ExecutorPool:
             result = self.dispatcher.dispatch(job, self.policy, reaction_ok=reaction_ok)
             if result.ok:
                 followup_url = self.github.visible_followup_after_trigger(job.context)
-                if job.work_intent == "work_allowed" and job.action != "archive_notification" and not followup_url:
+                if job.work_intent == "work_allowed" and job.action not in {"archive_notification", "workflow_run_failed"} and not followup_url:
                     summary = "agent finished without visible GitHub follow-up"
                     detail = result.detail or "OpenClaw command succeeded, but no new bot comment was found in the GitHub thread."
                     if job.attempts <= self.config.missing_followup_retries:

@@ -199,7 +199,7 @@ function App() {
             <h1 className="text-xl font-semibold">GitHub Agent Bridge</h1>
             <p className="text-sm text-slate-300">Read-only operational dashboard</p>
           </div>
-          <UserMenu user={me.data?.user} />
+          <UserMenu user={me.data?.user} loading={me.isLoading} />
         </div>
       </header>
 
@@ -236,7 +236,7 @@ function App() {
 
         <section className="grid gap-4 xl:grid-cols-2">
           <Panel title="Jobs per day">
-            <JobsPerDayChart values={metrics.data?.metrics.by_created_day} />
+            <JobsPerDayChart values={metrics.data?.metrics.by_created_day} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
           </Panel>
           <Panel title="Queue wait percentiles">
             <PercentileChart label="queue wait" values={metrics.data?.metrics.queue_wait_seconds} />
@@ -247,20 +247,28 @@ function App() {
   );
 }
 
-function UserMenu({ user }: { user: UserProfile | undefined }) {
+function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: boolean }) {
+  const login = user?.login ? `@${user.login}` : loading ? "Loading profile..." : "GitHub OAuth";
   const avatar = user?.avatar_url ? (
-    <img className="h-9 w-9 rounded-full border border-slate-700 bg-slate-800" src={user.avatar_url} alt="" referrerPolicy="no-referrer" />
+    <img className="h-10 w-10 rounded-full border border-slate-700 bg-slate-800" src={user.avatar_url} alt={user.login ? `${user.login} avatar` : ""} referrerPolicy="no-referrer" />
   ) : (
-    <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-700 bg-slate-900">
+    <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-900">
       <UserCircle2 className="h-5 w-5" aria-hidden />
     </span>
   );
+  const identity = user?.html_url ? (
+    <a className="truncate font-semibold text-white hover:underline" href={safeExternalUrl(user.html_url)} rel="noreferrer" target="_blank">
+      {login}
+    </a>
+  ) : (
+    <div className="truncate font-semibold text-white">{login}</div>
+  );
   return (
-    <div className="flex items-center gap-3 text-sm text-slate-300">
+    <div className="flex max-w-full items-center gap-3 text-sm text-slate-300">
       <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden />
       <div className="min-w-0 text-right">
-        <div className="truncate font-medium text-white">{user?.login ?? "GitHub OAuth"}</div>
-        <div className="text-xs text-slate-400">read-only session</div>
+        {identity}
+        <div className="text-xs text-slate-400">Signed in · read-only</div>
       </div>
       {avatar}
     </div>
@@ -541,9 +549,10 @@ function PercentileChart({ label, values }: { label: string; values: Percentiles
   );
 }
 
-function JobsPerDayChart({ values }: { values: Record<string, number> | undefined }) {
+function JobsPerDayChart({ values, loading, totalJobs }: { values: Record<string, number> | undefined; loading: boolean; totalJobs: number }) {
   const data = Object.entries(values ?? {}).map(([day, count]) => ({ day, count }));
-  if (data.length === 0) return <EmptyState text="No job history available." />;
+  if (loading && data.length === 0) return <EmptyState text="Loading job history..." />;
+  if (data.length === 0) return <EmptyState text={totalJobs > 0 ? "Job history has no valid creation dates." : "No job history available."} />;
   return (
     <div className="h-56">
       <ResponsiveContainer width="100%" height="100%">
@@ -557,6 +566,10 @@ function JobsPerDayChart({ values }: { values: Record<string, number> | undefine
       </ResponsiveContainer>
     </div>
   );
+}
+
+function totalJobs(counts: StatusCounts) {
+  return Object.values(counts).reduce((total, value) => total + value, 0);
 }
 
 function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefined; loading: boolean }) {

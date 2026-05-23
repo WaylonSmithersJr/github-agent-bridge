@@ -162,6 +162,23 @@ def test_dashboard_session_authorization_allows_configured_user(tmp_path):
     assert client.get("/").status_code == 200
 
 
+def test_dashboard_me_backfills_legacy_session_avatar(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, "alice"))
+
+    response = client.get("/api/me")
+
+    assert response.status_code == 200
+    assert response.json()["user"] == {
+        "login": "alice",
+        "avatar_url": "https://github.com/alice.png?size=80",
+        "html_url": "https://github.com/alice",
+    }
+
+
 def test_dashboard_me_exposes_safe_oauth_profile(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     JobQueue(db)

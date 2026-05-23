@@ -10,6 +10,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import re
 from pathlib import Path
 from typing import Any
 
@@ -107,14 +108,26 @@ def _decode_session(value: str) -> dict[str, Any] | None:
         padded = value + "=" * (-len(value) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
     except (ValueError, TypeError, json.JSONDecodeError):
-        return {"login": value, "avatar_url": "", "html_url": ""} if value else None
+        return _profile_from_login(value) if value else None
     login = str(payload.get("login", "")).lower()
     if not login:
         return None
+    fallback = _profile_from_login(login)
     return {
         "login": login,
-        "avatar_url": str(payload.get("avatar_url") or ""),
-        "html_url": str(payload.get("html_url") or ""),
+        "avatar_url": str(payload.get("avatar_url") or fallback["avatar_url"]),
+        "html_url": str(payload.get("html_url") or fallback["html_url"]),
+    }
+
+
+def _profile_from_login(login: str) -> dict[str, str]:
+    user = str(login).lower()
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?", user):
+        return {"login": user, "avatar_url": "", "html_url": ""}
+    return {
+        "login": user,
+        "avatar_url": f"https://github.com/{user}.png?size=80",
+        "html_url": f"https://github.com/{user}",
     }
 
 

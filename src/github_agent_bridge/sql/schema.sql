@@ -43,6 +43,17 @@ CREATE TABLE IF NOT EXISTS worklog (
   summary TEXT NOT NULL,
   detail TEXT
 );
+CREATE TABLE IF NOT EXISTS job_session_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  work_key TEXT,
+  session_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_job_session_events_job_id ON job_session_events(job_id, id);
 CREATE TABLE IF NOT EXISTS feedback_events (
   id TEXT PRIMARY KEY,
   occurred_at TEXT NOT NULL,

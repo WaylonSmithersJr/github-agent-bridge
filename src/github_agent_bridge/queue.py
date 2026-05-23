@@ -96,6 +96,7 @@ class JobQueue:
                 (worker_id, now, now, json.dumps(metadata, sort_keys=True), row["id"]),
             )
             self._log(con, row["id"], row["work_key"], "running", f"claimed by {worker_id}", None)
+            self._session_event(con, row["id"], row["work_key"], metadata["openclaw_session_id"], "claimed", f"claimed by {worker_id}", None)
             con.commit()
             return self.get(int(row["id"]))
 
@@ -105,6 +106,9 @@ class JobQueue:
             con.execute("UPDATE jobs SET status=?, last_error=?, locked_by=NULL, finished_at=?, updated_at=? WHERE id=?", (status, detail if status == "blocked" else None, now, now, job_id))
             row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
             self._log(con, job_id, row["work_key"] if row else None, status, summary, detail)
+            metadata = self._job_metadata(con, job_id)
+            session_id = metadata.get("openclaw_session_id") or session_id_for_job(job_id)
+            self._session_event(con, job_id, row["work_key"] if row else None, str(session_id), status, summary, detail)
 
     def requeue_running(self, job_id: int, summary: str, detail: str | None = None) -> bool:
         now = utc_now()
@@ -125,6 +129,16 @@ class JobQueue:
             self._log(con, job_id, row["work_key"], "intent_update", summary, None)
         return self.get(job_id)
 
+    def add_session_event(self, job_id: int, event_type: str, summary: str, detail: str | None = None) -> None:
+        now = utc_now()
+        with self.connect() as con:
+            row = con.execute("SELECT work_key, metadata_json FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                return
+            metadata = json.loads(row["metadata_json"] or "{}")
+            session_id = str(metadata.get("openclaw_session_id") or session_id_for_job(job_id))
+            con.execute("UPDATE jobs SET updated_at=? WHERE id=?", (now, job_id))
+            self._session_event(con, job_id, row["work_key"], session_id, event_type, summary, detail)
 
     def list_jobs(self, status: str | None = None, limit: int = 20) -> list[Job]:
         sql = "SELECT * FROM jobs"
@@ -195,6 +209,18 @@ class JobQueue:
 
     def _log(self, con: sqlite3.Connection, job_id: int | None, work_key: str | None, phase: str, summary: str, detail: str | None) -> None:
         con.execute("INSERT INTO worklog(ts,job_id,work_key,phase,summary,detail) VALUES(?,?,?,?,?,?)", (utc_now(), job_id, work_key, phase, summary, detail))
+
+    def _session_event(self, con: sqlite3.Connection, job_id: int, work_key: str | None, session_id: str, event_type: str, summary: str, detail: str | None) -> None:
+        con.execute(
+            "INSERT INTO job_session_events(ts,job_id,work_key,session_id,event_type,summary,detail) VALUES(?,?,?,?,?,?,?)",
+            (utc_now(), job_id, work_key, session_id, event_type, summary, detail),
+        )
+
+    def _job_metadata(self, con: sqlite3.Connection, job_id: int) -> dict[str, object]:
+        row = con.execute("SELECT metadata_json FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if row is None:
+            return {}
+        return json.loads(row["metadata_json"] or "{}")
 
     def _row_to_job(self, row: sqlite3.Row | None) -> Job | None:
         if row is None:

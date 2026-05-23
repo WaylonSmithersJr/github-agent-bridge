@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from .dispatch import GitHubClient, OpenClawDispatcher
 from .policy import Policy
 from .queue import JobQueue
+from .session_events import redact_event_detail
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,15 @@ class ExecutorPool:
                 reason = "PR/issue assigned to authenticated bot" if assigned_to_bot else "PR authored by authenticated bot"
                 job = self.queue.update_work_intent(job.id, "work_allowed", f"{reason}; upgraded review-only comment to work_allowed") or job
             reaction_ok = self.react_eyes_for_job_contexts(job)
+            self.queue.add_session_event(job.id, "dispatch_started", "OpenClaw agent dispatch started", f"reaction_ok={reaction_ok}")
             result = self.dispatcher.dispatch(job, self.policy, reaction_ok=reaction_ok)
+            dispatch_detail = "\n".join(part for part in [result.stdout, result.stderr] if part)
+            self.queue.add_session_event(
+                job.id,
+                "dispatch_finished" if result.ok else "dispatch_failed",
+                f"OpenClaw agent exited rc={result.returncode}",
+                redact_event_detail(dispatch_detail),
+            )
             if result.ok:
                 followup_url = self.github.visible_followup_after_trigger(job.context)
                 if job.work_intent == "work_allowed" and job.action not in {"archive_notification", "workflow_run_failed"} and not followup_url:

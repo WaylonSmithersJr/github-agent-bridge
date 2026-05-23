@@ -125,6 +125,8 @@ GET /api/jobs?status=pending&repo=pilipilisbot/github-agent-bridge&limit=20
 GET /api/jobs/{id}
 GET /api/jobs/{id}/logs
 GET /api/jobs/{id}/session
+GET /api/jobs/{id}/session/events
+GET /api/jobs/{id}/session/stream
 GET /api/metrics/summary
 GET /api/processes
 GET /api/alerts
@@ -142,10 +144,13 @@ snapshot of executor child processes through `GET /api/processes`, and safe
 OpenClaw session correlation through `GET /api/jobs/{id}/session`. New
 dispatches use a deterministic `github-agent-bridge-job-{id}` OpenClaw session
 id so operators can correlate a bridge job with the OpenClaw session that ran
-it. The dashboard exposes only correlation metadata; it does not serve full
-session transcripts. Persistent alert storage, historical proc sample retention,
-richer SSE integration and redacted transcript summaries remain later
-milestones.
+it. The dashboard records bounded, redacted bridge-side session events when a
+job is claimed, dispatched and finished. Operators can read them with
+`GET /api/jobs/{id}/session/events` or subscribe to
+`GET /api/jobs/{id}/session/stream` for SSE updates. Raw local OpenClaw
+transcripts are still not served; transcript policy, admin access and retention
+need to be defined before exposing complete agent output. Persistent alert
+storage and historical proc sample retention remain later milestones.
 
 ## Operational SLOs
 

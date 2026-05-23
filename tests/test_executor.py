@@ -1,3 +1,4 @@
+from github_agent_bridge.dashboard_data import job_session_events
 from github_agent_bridge.dispatch import DispatchResult
 from github_agent_bridge.executor import ExecutorConfig, ExecutorPool
 from github_agent_bridge.models import Notification
@@ -113,6 +114,19 @@ def test_assigned_pr_comment_upgrades_to_work_allowed(tmp_path):
     stored = queue.get(dispatcher.jobs[0].id)
     assert stored is not None
     assert stored.work_intent == "work_allowed"
+
+
+def test_executor_records_session_activity_events(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    queue = JobQueue(db)
+    enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=FakeGitHub(assigned=False, mentioned=True), config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    event_types = [event["event_type"] for event in job_session_events(db, dispatcher.jobs[0].id)]
+    assert event_types == ["claimed", "dispatch_started", "dispatch_finished", "done"]
 
 
 def test_unassigned_mentioned_pr_comment_stays_review_only(tmp_path):

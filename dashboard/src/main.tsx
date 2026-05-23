@@ -98,6 +98,17 @@ type SessionCorrelation = {
   detail: string;
 };
 
+type SessionEvent = {
+  id: number;
+  ts: string;
+  job_id: number;
+  work_key: string | null;
+  session_id: string;
+  event_type: string;
+  summary: string;
+  detail: string | null;
+};
+
 type UserProfile = {
   login: string;
   avatar_url: string;
@@ -186,6 +197,25 @@ function App() {
     queryFn: () => api<{ session: SessionCorrelation }>(`/api/jobs/${selectedJobId}/session`),
     enabled: selectedJobId !== null,
   });
+  const sessionEvents = useQuery({
+    queryKey: ["job-session-events", selectedJobId],
+    queryFn: () => api<{ events: SessionEvent[] }>(`/api/jobs/${selectedJobId}/session/events`),
+    enabled: selectedJobId !== null,
+  });
+
+  React.useEffect(() => {
+    if (selectedJobId === null) return;
+    const source = new EventSource(`/api/jobs/${selectedJobId}/session/stream`);
+    source.addEventListener("session_event", () => {
+      sessionEvents.refetch();
+      detail.refetch();
+      jobs.refetch();
+    });
+    source.onerror = () => {
+      source.close();
+    };
+    return () => source.close();
+  }, [selectedJobId]);
 
   const counts = metrics.data?.metrics.status_counts ?? {};
   const jobRows = jobs.data?.jobs ?? [];
@@ -216,11 +246,11 @@ function App() {
           <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
             <Filters filters={filters} onChange={setFilters} />
             {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-            <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} onSelect={setSelectedJobId} />
+            <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} onSelect={setSelectedJobId} />
           </Panel>
 
           <Panel title="Job detail" className="hidden xl:block xl:self-start xl:sticky xl:top-4">
-            {selectedJob ? <JobDetail job={selectedJob} session={session.data?.session} /> : <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />}
+            {selectedJob ? <JobDetail job={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} /> : <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />}
           </Panel>
         </section>
 
@@ -359,6 +389,7 @@ function JobsList({
   selectedJobId,
   selectedJob,
   session,
+  sessionEvents,
   onSelect,
 }: {
   jobs: Job[];
@@ -366,6 +397,7 @@ function JobsList({
   selectedJobId: number | null;
   selectedJob: Job | null;
   session: SessionCorrelation | undefined;
+  sessionEvents: SessionEvent[] | undefined;
   onSelect: (id: number) => void;
 }) {
   if (loading && jobs.length === 0) return <EmptyState text="Loading jobs..." />;
@@ -374,7 +406,7 @@ function JobsList({
     <>
       <div className="grid gap-3 md:hidden">
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} selected={selectedJobId === job.id} selectedJob={selectedJob} session={session} onSelect={onSelect} />
+          <JobCard key={job.id} job={job} selected={selectedJobId === job.id} selectedJob={selectedJob} session={session} sessionEvents={sessionEvents} onSelect={onSelect} />
         ))}
       </div>
       <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
@@ -428,12 +460,14 @@ function JobCard({
   selected,
   selectedJob,
   session,
+  sessionEvents,
   onSelect,
 }: {
   job: Job;
   selected: boolean;
   selectedJob: Job | null;
   session: SessionCorrelation | undefined;
+  sessionEvents: SessionEvent[] | undefined;
   onSelect: (id: number) => void;
 }) {
   return (
@@ -454,14 +488,14 @@ function JobCard({
       </button>
       {selected ? (
         <div className="border-t border-border p-3">
-          {selectedJob ? <JobDetail job={selectedJob} session={session} compact /> : <EmptyState text="Loading detail..." />}
+          {selectedJob ? <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} compact /> : <EmptyState text="Loading detail..." />}
         </div>
       ) : null}
     </article>
   );
 }
 
-function JobDetail({ job, session, compact = false }: { job: Job; session: SessionCorrelation | undefined; compact?: boolean }) {
+function JobDetail({ job, session, sessionEvents, compact = false }: { job: Job; session: SessionCorrelation | undefined; sessionEvents: SessionEvent[] | undefined; compact?: boolean }) {
   return (
     <div className="grid gap-4">
       <div className="grid gap-2">
@@ -509,6 +543,16 @@ function JobDetail({ job, session, compact = false }: { job: Job; session: Sessi
         )}
       </div>
       <div>
+        <h3 className="mb-2 text-sm font-semibold">Agent activity</h3>
+        <div className="grid max-h-[460px] gap-3 overflow-auto pr-1">
+          {(sessionEvents ?? []).length > 0 ? (
+            sessionEvents?.map((event) => <SessionEventRow key={event.id} event={event} />)
+          ) : (
+            <EmptyState text="No agent activity has been recorded for this session." />
+          )}
+        </div>
+      </div>
+      <div>
         <h3 className="mb-2 text-sm font-semibold">GitHub links</h3>
         <ul className="grid gap-2 text-sm">
           {job.github_urls.length > 0 ? (
@@ -524,6 +568,19 @@ function JobDetail({ job, session, compact = false }: { job: Job; session: Sessi
           )}
         </ul>
       </div>
+    </div>
+  );
+}
+
+function SessionEventRow({ event }: { event: SessionEvent }) {
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-muted">{event.event_type}</span>
+        <span className="font-mono text-xs text-muted">{event.ts}</span>
+      </div>
+      <div className="mt-2 text-sm">{event.summary}</div>
+      {event.detail ? <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">{event.detail}</pre> : null}
     </div>
   );
 }

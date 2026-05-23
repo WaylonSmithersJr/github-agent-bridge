@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi.testclient import TestClient
 
 from github_agent_bridge.backend import DashboardConfig, _encode_session, _sign, create_app
-from github_agent_bridge.dashboard_data import get_job_detail, job_session, list_jobs, metrics_summary
+from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
@@ -135,6 +135,22 @@ def test_dashboard_exposes_safe_openclaw_session_correlation(tmp_path):
     assert session["id"] == f"github-agent-bridge-job-{job.id}"
     assert session["transcript_exposure"] == "not_exposed"
     assert payload["id"] == session["id"]
+
+
+def test_dashboard_exposes_redacted_job_session_events(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+    q.add_session_event(job.id, "dispatch_finished", "OpenClaw agent exited rc=0", "token=secret ghp_abcdefghijklmnopqrstuvwxyz")
+
+    events = job_session_events(db, job.id)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get(f"/api/jobs/{job.id}/session/events").json()["events"]
+
+    assert [event["event_type"] for event in events] == ["claimed", "dispatch_finished"]
+    assert payload[-1]["detail"] == "token=[redacted] [redacted]"
 
 
 def test_dashboard_requires_auth_by_default(tmp_path):

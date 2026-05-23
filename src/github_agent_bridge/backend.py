@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import json
 import os
@@ -15,11 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .cli import DEFAULT_DB
-from .dashboard_data import get_job_detail, inspect_db_read_only, job_logs, job_session, list_jobs, metrics_summary
+from .dashboard_data import get_job_detail, inspect_db_read_only, job_logs, job_session, job_session_events, list_jobs, metrics_summary
 from .monitor import monitor
 
 
@@ -264,6 +265,28 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         if session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
         return {"session": session}
+
+    @app.get("/api/jobs/{job_id}/session/events")
+    def api_job_session_events(job_id: int, after_id: int | None = None, limit: int = 100, _: str = Depends(current_user)) -> dict[str, Any]:
+        if job_session(config.db, job_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+        return {"events": job_session_events(config.db, job_id, after_id=after_id, limit=limit)}
+
+    @app.get("/api/jobs/{job_id}/session/stream")
+    def api_job_session_stream(job_id: int, after_id: int | None = None, _: str = Depends(current_user)) -> StreamingResponse:
+        if job_session(config.db, job_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+
+        async def stream():
+            last_id = after_id or 0
+            while True:
+                events = job_session_events(config.db, job_id, after_id=last_id, limit=100)
+                for event in events:
+                    last_id = int(event["id"])
+                    yield f"id: {last_id}\nevent: session_event\ndata: {json.dumps(event, separators=(',', ':'))}\n\n"
+                await asyncio.sleep(2)
+
+        return StreamingResponse(stream(), media_type="text/event-stream", headers=_redacted_headers())
 
     @app.get("/api/metrics/summary")
     def api_metrics(_: str = Depends(current_user)) -> dict[str, Any]:

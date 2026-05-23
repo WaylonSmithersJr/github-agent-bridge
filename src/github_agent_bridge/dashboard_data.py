@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .session_events import redact_event_detail
 from .session_correlation import job_session_metadata
 
 
@@ -218,10 +219,36 @@ def job_session(db: str | Path, job_id: int) -> dict[str, Any] | None:
     session["work_key"] = job["work_key"]
     session["status"] = job["status"]
     session["detail"] = (
-        "Future dispatches use this explicit OpenClaw session id. "
-        "The dashboard exposes correlation metadata only; full transcripts are not served."
+        "Dispatches use this explicit OpenClaw session id. "
+        "The dashboard exposes bounded, redacted bridge events for this session; raw local transcripts are not served."
     )
     return session
+
+
+def job_session_events(db: str | Path, job_id: int, *, after_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    path = Path(db).expanduser()
+    if not path.exists():
+        return []
+    with readonly_connect(path) as con:
+        if not table_exists(con, "job_session_events"):
+            return []
+        where = "job_id=?"
+        args: list[Any] = [job_id]
+        if after_id is not None:
+            where += " AND id>?"
+            args.append(after_id)
+        args.append(coerce_limit(limit, maximum=500))
+        rows = con.execute(
+            f"""
+            SELECT id, ts, job_id, work_key, session_id, event_type, summary, detail
+            FROM job_session_events
+            WHERE {where}
+            ORDER BY id
+            LIMIT ?
+            """,
+            args,
+        ).fetchall()
+    return [dict(row) | {"detail": redact_event_detail(row["detail"])} for row in rows]
 
 
 def metrics_summary(db: str | Path) -> dict[str, Any]:

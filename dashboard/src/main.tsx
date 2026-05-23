@@ -159,8 +159,6 @@ function formatSeconds(value: number | null | undefined) {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -348,7 +346,7 @@ function App() {
             <h1 className="text-xl font-semibold">GitHub Agent Bridge</h1>
             <p className="text-sm text-slate-300">Read-only operational dashboard</p>
           </div>
-          <UserMenu user={me.data?.user} loading={me.isLoading} timeZone={browserTimeZone} />
+          <UserMenu user={me.data?.user} loading={me.isLoading} />
         </div>
       </header>
 
@@ -452,7 +450,7 @@ function JobDetailStatus({
   return <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />;
 }
 
-function UserMenu({ user, loading, timeZone }: { user: UserProfile | undefined; loading: boolean; timeZone: string }) {
+function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: boolean }) {
   const login = user?.login ? `@${user.login}` : loading ? "Loading profile..." : "GitHub OAuth";
   const avatar = user?.avatar_url ? (
     <img className="h-10 w-10 rounded-full border border-slate-700 bg-slate-800" src={user.avatar_url} alt={user.login ? `${user.login} avatar` : ""} referrerPolicy="no-referrer" />
@@ -473,7 +471,7 @@ function UserMenu({ user, loading, timeZone }: { user: UserProfile | undefined; 
       <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden />
       <div className="min-w-0 text-right">
         {identity}
-        <div className="text-xs text-slate-400">Signed in · read-only · {timeZone}</div>
+        <div className="text-xs text-slate-400">Signed in · read-only</div>
       </div>
       {avatar}
     </div>

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.14.1 (2026-05-23)
+
+### Bug Fixes
+
+- Open jobs on dedicated dashboard page
+  ([`5f67237`](https://github.com/pilipilisbot/github-agent-bridge/commit/5f672377fcda34ac37f63e53725f848aeee1c8d7))
+
+
 ## v0.14.0 (2026-05-23)
 
 ### Bug Fixes

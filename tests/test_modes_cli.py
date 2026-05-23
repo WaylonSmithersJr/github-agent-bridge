@@ -67,6 +67,7 @@ def test_shadow_dispatch_returns_command_without_running():
     assert "agent" in result.command
     assert "--session-id" in result.command
     assert result.command[result.command.index("--session-id") + 1] == "github-agent-bridge-job-1"
+    assert result.command[result.command.index("--verbose") + 1] == "on"
     assert "--timeout" in result.command
     assert "3600" in result.command
 

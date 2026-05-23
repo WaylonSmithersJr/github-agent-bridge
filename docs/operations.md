@@ -151,7 +151,8 @@ snapshot of executor child processes through `GET /api/processes`, and safe
 OpenClaw session correlation through `GET /api/jobs/{id}/session`. New
 dispatches use a deterministic `github-agent-bridge-job-{id}` OpenClaw session
 id so operators can correlate a bridge job with the OpenClaw session that ran
-it. The React route `/jobs/{id}` is a focused job detail page for sharing a
+it, and the dispatcher enables OpenClaw verbose mode for these sessions so tool
+calls and command output are available to the live dashboard stream. The React route `/jobs/{id}` is a focused job detail page for sharing a
 single job/session, with a link back to the generic dashboard. The dashboard
 records bounded, redacted bridge-side session events when a job is claimed,
 while OpenClaw stdout/stderr is emitted, dispatched and finished. The dashboard
@@ -162,8 +163,9 @@ renders activity and transcript logs as collapsible sections so long sessions ca
 be scanned like GitHub Actions or Copilot session output. Operators can read them with
 `GET /api/jobs/{id}/session/events` or subscribe to
 `GET /api/jobs/{id}/session/stream` for SSE updates. The stream carries new
-session events and transcript entries directly, with heartbeat events and proxy
-buffering disabled for long-lived HTTPS connections. While a job is still
+session events and transcript entries directly, including already-recorded live
+transcript entries when a browser opens the page after the job has started, with
+heartbeat events and proxy buffering disabled for long-lived HTTPS connections. While a job is still
 running, live redacted OpenClaw stdout/stderr is also exposed as transcript
 entries so the focused job page does not wait for OpenClaw's final session file
 flush. The dashboard also exposes redacted OpenClaw transcript entries for the correlated session through

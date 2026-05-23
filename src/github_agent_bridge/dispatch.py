@@ -488,7 +488,21 @@ class OpenClawDispatcher:
             cmd += ["--agent", agent]
         agent_timeout = self.timeout_for(job)
         session_id = normalize_session_id(str(job.metadata.get("openclaw_session_id") or session_id_for_job(job.id)))
-        cmd += ["--session-id", session_id, "--channel", channel, "--to", to, "--deliver", "--timeout", str(agent_timeout), "--message", self.build_prompt(job, policy)]
+        cmd += [
+            "--session-id",
+            session_id,
+            "--verbose",
+            "on",
+            "--channel",
+            channel,
+            "--to",
+            to,
+            "--deliver",
+            "--timeout",
+            str(agent_timeout),
+            "--message",
+            self.build_prompt(job, policy),
+        ]
         env = os.environ.copy()
         if self.node_bin:
             env["PATH"] = os.path.dirname(self.node_bin) + os.pathsep + env.get("PATH", "")

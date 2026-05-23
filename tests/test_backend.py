@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-from github_agent_bridge.backend import DashboardConfig, _encode_session, _sign, create_app
+from github_agent_bridge.backend import DashboardConfig, _encode_session, _session_stream_events, _sign, create_app
 from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
@@ -238,6 +239,31 @@ def test_dashboard_transcript_includes_live_openclaw_output_before_session_file(
     assert payload[0]["title"] == "OpenClaw stdout"
     assert payload[0]["text"] == "thinking live"
     assert payload[1]["text"] == "token=[redacted]"
+
+
+def test_dashboard_sse_replays_existing_live_transcript_entries(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+    q.add_session_event(job.id, "openclaw_stdout", "OpenClaw CLI output", "already live")
+
+    async def first_chunks():
+        stream = _session_stream_events(db, job.id, sleep_seconds=0)
+        chunks = []
+        try:
+            for _ in range(6):
+                chunks.append(await anext(stream))
+                if "event: transcript_entry" in "".join(chunks):
+                    break
+        finally:
+            await stream.aclose()
+        return "".join(chunks)
+
+    body = asyncio.run(first_chunks())
+    assert "event: transcript_entry" in body
+    assert "already live" in body
 
 
 def test_dashboard_requires_auth_by_default(tmp_path):

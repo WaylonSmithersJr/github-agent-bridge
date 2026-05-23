@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.13.0 (2026-05-23)
+
+### Bug Fixes
+
+- Show dashboard identity and chart loading
+  ([`06bfde9`](https://github.com/pilipilisbot/github-agent-bridge/commit/06bfde94bf352e89d398ebd48e09aa054ba6eaf7))
+
+### Features
+
+- Improve dashboard mobile usability
+  ([`b46fe2a`](https://github.com/pilipilisbot/github-agent-bridge/commit/b46fe2aa6f81d97f51bbdb52bfb14591a628aab9))
+
+
 ## v0.12.0 (2026-05-23)
 
 ### Features

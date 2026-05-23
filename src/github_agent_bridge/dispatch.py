@@ -494,7 +494,7 @@ class OpenClawDispatcher:
             env["PATH"] = os.path.dirname(self.node_bin) + os.pathsep + env.get("PATH", "")
         if self.mode != RunMode.LIVE:
             return DispatchResult(True, 0, "side effects skipped", "", False, reaction_ok, cmd)
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
 
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
@@ -502,10 +502,14 @@ class OpenClawDispatcher:
         def read_stream(stream, chunks: list[str], event_type: str) -> None:
             if stream is None:
                 return
-            for line in iter(stream.readline, ""):
-                chunks.append(line)
+            while True:
+                data = os.read(stream.fileno(), 4096)
+                if not data:
+                    break
+                chunk = data.decode("utf-8", errors="replace")
+                chunks.append(chunk)
                 if activity_callback:
-                    activity_callback(event_type, "OpenClaw CLI output" if event_type == "openclaw_stdout" else "OpenClaw CLI error output", line.rstrip("\n"))
+                    activity_callback(event_type, "OpenClaw CLI output" if event_type == "openclaw_stdout" else "OpenClaw CLI error output", chunk.rstrip("\n"))
 
         stdout_thread = threading.Thread(target=read_stream, args=(proc.stdout, stdout_chunks, "openclaw_stdout"), daemon=True)
         stderr_thread = threading.Thread(target=read_stream, args=(proc.stderr, stderr_chunks, "openclaw_stderr"), daemon=True)

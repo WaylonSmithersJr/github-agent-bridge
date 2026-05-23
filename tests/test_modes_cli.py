@@ -102,6 +102,37 @@ def test_live_dispatch_streams_openclaw_output_to_activity_callback(tmp_path):
     assert ("openclaw_stderr", "OpenClaw CLI error output", "tool error") in events
 
 
+def test_live_dispatch_streams_partial_openclaw_output_before_process_exits(tmp_path, monkeypatch):
+    done = tmp_path / "done"
+    openclaw = tmp_path / "openclaw"
+    openclaw.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "import pathlib\n"
+        "import sys\n"
+        "import time\n"
+        "sys.stdout.write('partial output')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(0.5)\n"
+        "pathlib.Path(os.environ['DONE_FILE']).write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    openclaw.chmod(0o755)
+    monkeypatch.setenv("DONE_FILE", str(done))
+    callback_observed_done = []
+
+    result = OpenClawDispatcher(openclaw_bin=str(openclaw), mode=RunMode.LIVE, cli_grace_seconds=1).dispatch(
+        make_job(),
+        Policy(trusted_orgs={"gisce"}),
+        reaction_ok=True,
+        activity_callback=lambda event_type, summary, detail: callback_observed_done.append(done.exists()) if detail == "partial output" else None,
+    )
+
+    assert result.ok is True
+    assert done.exists()
+    assert callback_observed_done == [False]
+
+
 def test_dispatcher_does_not_hardcode_org_agent_fallback():
     dispatcher = OpenClawDispatcher(mode=RunMode.SHADOW)
     job = make_job()

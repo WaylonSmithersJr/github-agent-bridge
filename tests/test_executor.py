@@ -214,7 +214,7 @@ def test_first_attempt_dispatches_even_when_bot_already_commented_after_trigger(
     assert stored.status == "done"
 
 
-def test_retry_skips_dispatch_when_bot_already_answered(tmp_path):
+def test_retry_dispatches_even_when_prior_bot_comment_exists(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     job = enqueue_pr_comment(queue)
     dispatcher = RecordingDispatcher()
@@ -227,8 +227,9 @@ def test_retry_skips_dispatch_when_bot_already_answered(tmp_path):
     pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
     assert pool.work_one("worker-test") is True
 
-    assert dispatcher.jobs == []
-    assert github.eyes == 0
+    assert len(dispatcher.jobs) == 1
+    assert dispatcher.jobs[0].id == job.id
+    assert github.eyes == 1
     stored = queue.get(job.id)
     assert stored is not None
     assert stored.status == "done"

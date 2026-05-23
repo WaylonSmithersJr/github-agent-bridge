@@ -63,3 +63,34 @@ def test_visible_followup_ignores_review_comment_before_trigger():
     )
 
     assert github.visible_followup_after_trigger(ctx) is None
+
+
+def test_visible_followup_for_issue_comment_returns_newest_bot_comment_after_trigger():
+    ctx = GitHubContext(
+        urls=["https://github.com/pilipilisbot/github-agent-bridge/pull/13#issuecomment-4524715895"],
+        repo="pilipilisbot/github-agent-bridge",
+        issue_number=13,
+        comment_id=4524715895,
+    )
+    old_followup = {
+        "user": {"login": "pilipilisbot"},
+        "created_at": "2026-05-23T08:03:45Z",
+        "html_url": "https://github.com/pilipilisbot/github-agent-bridge/pull/13#issuecomment-old",
+    }
+    new_followup = {
+        "user": {"login": "pilipilisbot"},
+        "created_at": "2026-05-23T09:10:40Z",
+        "html_url": "https://github.com/pilipilisbot/github-agent-bridge/pull/13#issuecomment-new",
+    }
+    github = RecordingGitHubClient(
+        {
+            ("api", "user", "--jq", ".login"): "pilipilisbot\n",
+            ("api", "repos/pilipilisbot/github-agent-bridge/issues/comments/4524715895"): json.dumps({"created_at": "2026-05-23T08:03:06Z"}),
+            ("api", "--paginate", "repos/pilipilisbot/github-agent-bridge/issues/13/comments", "--jq", ".[] | @json"): "\n".join(
+                [json.dumps(old_followup), json.dumps(new_followup)]
+            )
+            + "\n",
+        }
+    )
+
+    assert github.visible_followup_after_trigger(ctx) == new_followup["html_url"]

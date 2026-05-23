@@ -36,13 +36,6 @@ class ExecutorPool:
         try:
             assigned_to_bot = self.github.is_assigned_to_current_user(job.context)
             authored_by_bot = self.github.is_pull_request_authored_by_current_user(job.context)
-            if job.action == "reply_comment" and job.context.comment_id and job.attempts > 1:
-                answered_url = self.github.current_user_commented_after(job.context)
-                if answered_url:
-                    summary = "retry already has visible bot follow-up; skipped duplicate dispatch"
-                    detail = f"answered_url={answered_url}"
-                    self.queue.finish(job.id, "done", summary, detail)
-                    return True
             if job.action == "reply_comment" and job.context.review_id and self.github.is_non_actionable_review(job.context):
                 reaction_ok = self.react_eyes_for_job_contexts(job)
                 ack_ok = self.github.react_ack_no_comment(job.context)

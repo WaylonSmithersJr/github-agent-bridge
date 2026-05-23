@@ -230,6 +230,8 @@ class GitHubClient:
         ])
         if result.returncode != 0:
             return None
+        newest_url = None
+        newest_created_at = ""
         for line in result.stdout.splitlines():
             try:
                 comment = json.loads(line)
@@ -239,9 +241,10 @@ class GitHubClient:
             if not isinstance(user, dict) or user.get("login") != login:
                 continue
             created_at = comment.get("created_at") or ""
-            if created_at > trigger_created_at:
-                return comment.get("html_url") or f"{repo}#{issue}"
-        return None
+            if created_at > trigger_created_at and created_at >= newest_created_at:
+                newest_created_at = created_at
+                newest_url = comment.get("html_url") or f"{repo}#{issue}"
+        return newest_url
 
     def current_user_review_comment_after(self, ctx: GitHubContext, after: str | None = None) -> str | None:
         repo, issue = ctx.repo, ctx.issue_number
@@ -281,7 +284,7 @@ class GitHubClient:
         if ctx.comment_id:
             trigger = self.issue_comment(ctx)
             trigger_created_at = trigger.get("created_at") if isinstance(trigger, dict) else None
-            return self.current_user_commented_after(ctx) or self.current_user_review_comment_after(ctx, trigger_created_at)
+            return self.current_user_thread_comment_after(ctx, trigger_created_at) or self.current_user_review_comment_after(ctx, trigger_created_at)
         if ctx.review_comment_id:
             trigger = self.pull_request_review_comment(ctx)
             trigger_created_at = trigger.get("created_at") if isinstance(trigger, dict) else None

@@ -264,10 +264,10 @@ function selectedJobIdFromPath(pathname = window.location.pathname) {
 function App() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "" });
-  const [selectedJobId, setSelectedJobId] = React.useState<number | null>(() => selectedJobIdFromPath());
   const [pathname, setPathname] = React.useState(() => window.location.pathname);
   const jobRouteId = selectedJobIdFromPath(pathname);
   const isJobDetailRoute = jobRouteId !== null;
+  const selectedJobId = jobRouteId;
   const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary"), enabled: !isJobDetailRoute });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
   const jobs = useQuery({ queryKey: ["jobs", filters], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters)), enabled: !isJobDetailRoute });
@@ -321,21 +321,19 @@ function App() {
   React.useEffect(() => {
     const syncFromPath = () => {
       setPathname(window.location.pathname);
-      const nextJobId = selectedJobIdFromPath();
-      if (nextJobId !== null) setSelectedJobId(nextJobId);
     };
     window.addEventListener("popstate", syncFromPath);
     return () => window.removeEventListener("popstate", syncFromPath);
   }, []);
 
-  const selectJob = React.useCallback((jobId: number) => {
-    setSelectedJobId(jobId);
+  const viewJob = React.useCallback((jobId: number) => {
+    window.history.pushState({}, "", jobPath(jobId));
+    setPathname(window.location.pathname);
   }, []);
 
   const counts = metrics.data?.metrics.status_counts ?? {};
   const jobRows = jobs.data?.jobs ?? [];
   const selectedJob = selectedJobId ? (detail.data?.job ?? null) : null;
-  const selectedJobInList = selectedJobId !== null && jobRows.some((job) => job.id === selectedJobId);
   const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} />;
 
   return (
@@ -372,16 +370,11 @@ function App() {
               <Metric title="Done" value={counts.done ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} />
             </section>
 
-            <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
+            <section>
               <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
                 <Filters filters={filters} onChange={setFilters} />
                 {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-                <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} onSelect={selectJob} />
-                {selectedJobId !== null && !selectedJobInList ? <div className="mt-4 md:hidden">{detailStatus}</div> : null}
-              </Panel>
-
-              <Panel title="Job detail" className="hidden xl:block xl:self-start xl:sticky xl:top-4">
-                {detailStatus}
+                <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} />
               </Panel>
             </section>
 
@@ -559,21 +552,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function JobsList({
   jobs,
   loading,
-  selectedJobId,
-  selectedJob,
-  session,
-  sessionEvents,
-  transcript,
-  onSelect,
+  onViewJob,
 }: {
   jobs: Job[];
   loading: boolean;
-  selectedJobId: number | null;
-  selectedJob: Job | null;
-  session: SessionCorrelation | undefined;
-  sessionEvents: SessionEvent[] | undefined;
-  transcript: TranscriptEntry[] | undefined;
-  onSelect: (id: number) => void;
+  onViewJob: (id: number) => void;
 }) {
   if (loading && jobs.length === 0) return <EmptyState text="Loading jobs..." />;
   if (jobs.length === 0) return <EmptyState text="No jobs match the current filters." />;
@@ -581,7 +564,7 @@ function JobsList({
     <>
       <div className="grid gap-3 md:hidden">
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} selected={selectedJobId === job.id} selectedJob={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} onSelect={onSelect} />
+          <JobCard key={job.id} job={job} onViewJob={onViewJob} />
         ))}
       </div>
       <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
@@ -602,8 +585,8 @@ function JobsList({
           {jobs.map((job) => (
             <tr
               key={job.id}
-              className={cn("cursor-pointer border-b border-border hover:bg-slate-50", selectedJobId === job.id && "bg-blue-50")}
-              onClick={() => onSelect(job.id)}
+              className="cursor-pointer border-b border-border hover:bg-slate-50"
+              onClick={() => onViewJob(job.id)}
             >
               <td className="px-2 py-3 font-mono">#{job.id}</td>
               <td className="px-2 py-3">
@@ -632,24 +615,14 @@ function JobsList({
 
 function JobCard({
   job,
-  selected,
-  selectedJob,
-  session,
-  sessionEvents,
-  transcript,
-  onSelect,
+  onViewJob,
 }: {
   job: Job;
-  selected: boolean;
-  selectedJob: Job | null;
-  session: SessionCorrelation | undefined;
-  sessionEvents: SessionEvent[] | undefined;
-  transcript: TranscriptEntry[] | undefined;
-  onSelect: (id: number) => void;
+  onViewJob: (id: number) => void;
 }) {
   return (
-    <article className={cn("rounded-md border border-border bg-white", selected && "border-blue-300 bg-blue-50/40")}>
-      <button className="grid w-full gap-3 p-3 text-left" type="button" onClick={() => onSelect(job.id)}>
+    <article className="rounded-md border border-border bg-white">
+      <button className="grid w-full gap-3 p-3 text-left hover:bg-slate-50" type="button" onClick={() => onViewJob(job.id)}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="font-mono text-sm">#{job.id} {job.repo ?? job.work_key}</div>
@@ -663,11 +636,6 @@ function JobCard({
           <MiniStat label="Updated" value={compactDate(job.updated_at)} />
         </div>
       </button>
-      {selected ? (
-        <div className="border-t border-border p-3">
-          {selectedJob ? <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} compact /> : <EmptyState text="Loading detail..." />}
-        </div>
-      ) : null}
     </article>
   );
 }

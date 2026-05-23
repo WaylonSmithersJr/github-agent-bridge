@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -159,6 +159,9 @@ const queryClient = new QueryClient({
   },
 });
 
+const initialJobLimit = 12;
+const jobLimitStep = 12;
+
 function cn(...values: Array<string | false | null | undefined>) {
   return twMerge(clsx(values));
 }
@@ -304,11 +307,12 @@ function statusTone(status: string) {
   }[status] ?? "border-slate-300 bg-slate-50 text-slate-700";
 }
 
-function buildJobQuery(filters: JobFilters) {
+function buildJobQuery(filters: JobFilters, limit: number) {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
     if (value.trim()) params.set(key, value.trim());
   }
+  params.set("limit", String(limit));
   return `/api/jobs?${params.toString()}`;
 }
 
@@ -356,13 +360,14 @@ function selectedJobIdFromPath(pathname = window.location.pathname) {
 function App() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "" });
+  const [jobLimit, setJobLimit] = React.useState(initialJobLimit);
   const [pathname, setPathname] = React.useState(() => window.location.pathname);
   const jobRouteId = selectedJobIdFromPath(pathname);
   const isJobDetailRoute = jobRouteId !== null;
   const selectedJobId = jobRouteId;
   const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary"), enabled: !isJobDetailRoute });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
-  const jobs = useQuery({ queryKey: ["jobs", filters], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters)), enabled: !isJobDetailRoute });
+  const jobs = useQuery({ queryKey: ["jobs", filters, jobLimit], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters, jobLimit)), enabled: !isJobDetailRoute });
   const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: !isJobDetailRoute });
   const detail = useQuery({
     queryKey: ["job", selectedJobId],
@@ -425,6 +430,10 @@ function App() {
 
   const counts = metrics.data?.metrics.status_counts ?? {};
   const jobRows = jobs.data?.jobs ?? [];
+  const applyFilters = React.useCallback((nextFilters: JobFilters) => {
+    setFilters(nextFilters);
+    setJobLimit(initialJobLimit);
+  }, []);
   const selectedJob = selectedJobId ? (detail.data?.job ?? null) : null;
   const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} />;
 
@@ -455,18 +464,26 @@ function App() {
         ) : (
           <>
             {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
-            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Summary metrics">
+            <section className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Summary metrics">
               <Metric title="Pending" value={counts.pending ?? 0} icon={<Clock3 className="h-5 w-5" />} />
               <Metric title="Running" value={counts.running ?? 0} icon={<Activity className="h-5 w-5" />} />
               <Metric title="Blocked" value={counts.blocked ?? 0} icon={<AlertTriangle className="h-5 w-5" />} />
               <Metric title="Done" value={counts.done ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} />
             </section>
 
-            <section>
-              <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
-                <Filters filters={filters} onChange={setFilters} />
+            <section className="grid gap-3">
+              <JobsHeader count={jobRows.length} limit={jobLimit} loading={jobs.isLoading} onRefresh={() => jobs.refetch()} />
+              <Panel title="Recent jobs" flushHeader>
+                <Filters filters={filters} onChange={applyFilters} />
                 {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
                 <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} />
+                {jobRows.length >= jobLimit ? (
+                  <div className="mt-3 flex justify-center">
+                    <button className="inline-flex h-9 items-center justify-center rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" type="button" onClick={() => setJobLimit((current) => current + jobLimitStep)}>
+                      Load more jobs
+                    </button>
+                  </div>
+                ) : null}
               </Panel>
             </section>
 
@@ -563,10 +580,24 @@ function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: b
   );
 }
 
-function Panel({ title, action, children, className }: { title: string; action?: React.ReactNode; children: React.ReactNode; className?: string }) {
+function JobsHeader({ count, limit, loading, onRefresh }: { count: number; limit: number; loading: boolean; onRefresh: () => void }) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-white px-3 py-3 shadow-sm md:px-4">
+      <div className="min-w-0">
+        <h2 className="text-base font-semibold">Jobs</h2>
+        <p className="text-xs text-muted">
+          {loading ? "Refreshing latest jobs..." : `Showing ${count} of the latest ${limit} requested jobs`}
+        </p>
+      </div>
+      <RefreshButton onClick={onRefresh} compactOnMobile />
+    </div>
+  );
+}
+
+function Panel({ title, action, children, className, flushHeader = false }: { title: string; action?: React.ReactNode; children: React.ReactNode; className?: string; flushHeader?: boolean }) {
   return (
     <section className={cn("rounded-lg border border-border bg-panel p-4 shadow-sm", className)}>
-      <div className="mb-4 flex items-center justify-between gap-3">
+      <div className={cn("flex items-center justify-between gap-3", !flushHeader && "mb-4")}>
         <h2 className="text-sm font-semibold">{title}</h2>
         {action}
       </div>
@@ -577,58 +608,68 @@ function Panel({ title, action, children, className }: { title: string; action?:
 
 function Metric({ title, value, icon }: { title: string; value: number; icon: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-border bg-panel p-4 shadow-sm">
+    <div className="rounded-lg border border-border bg-panel p-3 shadow-sm md:p-4">
       <div className="flex items-center justify-between text-muted">
         <span className="text-sm font-medium">{title}</span>
         {icon}
       </div>
-      <strong className="mt-4 block text-3xl leading-none">{value}</strong>
+      <strong className="mt-3 block text-2xl leading-none md:mt-4 md:text-3xl">{value}</strong>
     </div>
   );
 }
 
 function Filters({ filters, onChange }: { filters: JobFilters; onChange: (filters: JobFilters) => void }) {
   const [draft, setDraft] = React.useState(filters);
+  React.useEffect(() => setDraft(filters), [filters]);
   return (
-    <form
-      className="mb-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onChange(draft);
-      }}
-    >
-      <Field label="Status">
-        <select className="control" value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
-          <option value="">All</option>
-          <option value="pending">pending</option>
-          <option value="running">running</option>
-          <option value="blocked">blocked</option>
-          <option value="done">done</option>
-          <option value="denied">denied</option>
-          <option value="waiting_approval">waiting_approval</option>
-        </select>
-      </Field>
-      <Field label="Repository">
-        <input className="control" value={draft.repo} placeholder="owner/repo" onChange={(event) => setDraft({ ...draft, repo: event.target.value })} />
-      </Field>
-      <Field label="Thread">
-        <input className="control" value={draft.thread} inputMode="numeric" placeholder="issue or PR" onChange={(event) => setDraft({ ...draft, thread: event.target.value })} />
-      </Field>
-      <Field label="Action">
-        <input className="control" value={draft.action} placeholder="reply_comment" onChange={(event) => setDraft({ ...draft, action: event.target.value })} />
-      </Field>
-      <Field label="Intent">
-        <select className="control" value={draft.intent} onChange={(event) => setDraft({ ...draft, intent: event.target.value })}>
-          <option value="">All</option>
-          <option value="review_only">review_only</option>
-          <option value="work_allowed">work_allowed</option>
-        </select>
-      </Field>
-      <button className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-white" type="submit">
-        <Search className="h-4 w-4" aria-hidden />
-        Apply
-      </button>
-    </form>
+    <details className="my-3 rounded-md border border-border bg-slate-50/70">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-semibold marker:hidden">
+        <span className="inline-flex items-center gap-2">
+          <Filter className="h-4 w-4 text-muted" aria-hidden />
+          Filters
+        </span>
+        <ChevronDown className="h-4 w-4 text-muted" aria-hidden />
+      </summary>
+      <form
+        className="grid gap-3 border-t border-border bg-white p-3 md:grid-cols-3 xl:grid-cols-6"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onChange(draft);
+        }}
+      >
+        <Field label="Status">
+          <select className="control" value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
+            <option value="">All</option>
+            <option value="pending">pending</option>
+            <option value="running">running</option>
+            <option value="blocked">blocked</option>
+            <option value="done">done</option>
+            <option value="denied">denied</option>
+            <option value="waiting_approval">waiting_approval</option>
+          </select>
+        </Field>
+        <Field label="Repository">
+          <input className="control" value={draft.repo} placeholder="owner/repo" onChange={(event) => setDraft({ ...draft, repo: event.target.value })} />
+        </Field>
+        <Field label="Thread">
+          <input className="control" value={draft.thread} inputMode="numeric" placeholder="issue or PR" onChange={(event) => setDraft({ ...draft, thread: event.target.value })} />
+        </Field>
+        <Field label="Action">
+          <input className="control" value={draft.action} placeholder="reply_comment" onChange={(event) => setDraft({ ...draft, action: event.target.value })} />
+        </Field>
+        <Field label="Intent">
+          <select className="control" value={draft.intent} onChange={(event) => setDraft({ ...draft, intent: event.target.value })}>
+            <option value="">All</option>
+            <option value="review_only">review_only</option>
+            <option value="work_allowed">work_allowed</option>
+          </select>
+        </Field>
+        <button className="inline-flex h-9 items-center justify-center gap-2 self-end rounded-md bg-primary px-3 text-sm font-semibold text-white" type="submit">
+          <Search className="h-4 w-4" aria-hidden />
+          Apply
+        </button>
+      </form>
+    </details>
   );
 }
 
@@ -654,7 +695,7 @@ function JobsList({
   if (jobs.length === 0) return <EmptyState text="No jobs match the current filters." />;
   return (
     <>
-      <div className="grid gap-3 md:hidden">
+      <div className="grid gap-2 md:hidden">
         {jobs.map((job) => (
           <JobCard key={job.id} job={job} onViewJob={onViewJob} />
         ))}
@@ -713,12 +754,16 @@ function JobCard({
   onViewJob: (id: number) => void;
 }) {
   return (
-    <article className="rounded-md border border-border bg-white">
-      <button className="grid w-full gap-3 p-3 text-left hover:bg-slate-50" type="button" onClick={() => onViewJob(job.id)}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="font-mono text-sm">#{job.id} {job.repo ?? job.work_key}</div>
-            <div className="mt-1 truncate text-xs text-muted">thread {job.thread ?? "n/a"} · {job.action}</div>
+    <article className="rounded-md border border-border bg-white shadow-[0_1px_0_rgba(15,23,42,0.03)]">
+      <button className="grid w-full gap-2 p-3 text-left hover:bg-slate-50" type="button" onClick={() => onViewJob(job.id)}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 space-y-1">
+            <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
+              <span className="shrink-0 font-mono text-xs font-semibold text-muted">#{job.id}</span>
+              <span className="truncate font-mono text-sm">{job.repo ?? job.work_key}</span>
+            </div>
+            <div className="line-clamp-2 text-sm leading-snug text-foreground">{job.subject}</div>
+            <div className="truncate text-xs text-muted">thread {job.thread ?? "n/a"} · {job.action}</div>
           </div>
           <StatusBadge status={job.status} />
         </div>
@@ -1017,11 +1062,19 @@ function Banner({ tone, text }: { tone: "error"; text: string }) {
   return <div className={cn("rounded-md border p-3 text-sm", tone === "error" && "border-red-300 bg-red-50 text-red-700")}>{text}</div>;
 }
 
-function RefreshButton({ onClick }: { onClick: () => void }) {
+function RefreshButton({ onClick, compactOnMobile = false }: { onClick: () => void; compactOnMobile?: boolean }) {
   return (
-    <button className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground" onClick={onClick} type="button">
+    <button
+      className={cn(
+        "inline-flex h-8 items-center justify-center gap-2 rounded-md border border-border text-sm font-semibold text-foreground hover:bg-slate-50",
+        compactOnMobile ? "w-8 px-0 sm:w-auto sm:px-3" : "px-3",
+      )}
+      onClick={onClick}
+      type="button"
+      aria-label="Refresh"
+    >
       <RefreshCw className="h-4 w-4" aria-hidden />
-      Refresh
+      <span className={cn(compactOnMobile && "hidden sm:inline")}>Refresh</span>
     </button>
   );
 }

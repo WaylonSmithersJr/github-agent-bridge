@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.14.2 (2026-05-23)
+
+### Bug Fixes
+
+- Group noisy dashboard logs
+  ([`a933b96`](https://github.com/pilipilisbot/github-agent-bridge/commit/a933b966d53fb18b317ca5ccfa8424625ddc1dcf))
+
+
 ## v0.14.1 (2026-05-23)
 
 ### Bug Fixes

@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.14.3 (2026-05-23)
+
+### Bug Fixes
+
+- Improve mobile dashboard job list
+  ([`310240e`](https://github.com/pilipilisbot/github-agent-bridge/commit/310240e13f0da6134250ad2dc8be4e162ee8f95c))
+
+### Documentation
+
+- Add PR 19 dashboard screenshots
+  ([`dd0b2b9`](https://github.com/pilipilisbot/github-agent-bridge/commit/dd0b2b9feebea00a7748cac8f35da3532168941a))
+
+
 ## v0.14.2 (2026-05-23)
 
 ### Bug Fixes

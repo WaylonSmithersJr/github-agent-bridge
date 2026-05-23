@@ -74,6 +74,20 @@ def _redacted_headers() -> dict[str, str]:
     return {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
 
 
+def _sse_headers() -> dict[str, str]:
+    return {
+        **_redacted_headers(),
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+
+
+def _sse_event(event: str, data: dict[str, Any], *, event_id: int | None = None) -> str:
+    prefix = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{prefix}event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
 def _sign(config: DashboardConfig, value: str) -> str:
     import hmac
     import hashlib
@@ -292,15 +306,24 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
 
         async def stream():
             last_id = after_id or 0
+            transcript_count = len(job_session_transcript(config.db, job_id, limit=500))
             while True:
+                emitted = False
                 events = job_session_events(config.db, job_id, after_id=last_id, limit=100)
                 for event in events:
                     last_id = int(event["id"])
-                    yield f"id: {last_id}\nevent: session_event\ndata: {json.dumps(event, separators=(',', ':'))}\n\n"
-                yield f"event: session_tick\ndata: {json.dumps({'job_id': job_id, 'last_event_id': last_id}, separators=(',', ':'))}\n\n"
+                    emitted = True
+                    yield _sse_event("session_event", event, event_id=last_id)
+                transcript = job_session_transcript(config.db, job_id, limit=500)
+                for entry in transcript[transcript_count:]:
+                    emitted = True
+                    yield _sse_event("transcript_entry", {"job_id": job_id, "entry": entry})
+                transcript_count = len(transcript)
+                if not emitted:
+                    yield _sse_event("session_heartbeat", {"job_id": job_id, "last_event_id": last_id})
                 await asyncio.sleep(2)
 
-        return StreamingResponse(stream(), media_type="text/event-stream", headers=_redacted_headers())
+        return StreamingResponse(stream(), media_type="text/event-stream", headers=_sse_headers())
 
     @app.get("/api/metrics/summary")
     def api_metrics(_: str = Depends(current_user)) -> dict[str, Any]:
@@ -327,7 +350,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
 
     @app.get("/api/events/stream")
     def api_events(_: str = Depends(current_user)) -> Response:
-        return Response("event: ready\ndata: {}\n\n", media_type="text/event-stream", headers=_redacted_headers())
+        return Response("event: ready\ndata: {}\n\n", media_type="text/event-stream", headers=_sse_headers())
 
     @app.get("/auth/login")
     def login() -> RedirectResponse:

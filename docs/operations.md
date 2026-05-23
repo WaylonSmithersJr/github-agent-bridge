@@ -155,10 +155,12 @@ while OpenClaw stdout/stderr is emitted, dispatched and finished. The dashboard
 renders activity and transcript logs as collapsible sections so long sessions can
 be scanned like GitHub Actions or Copilot session output. Operators can read them with
 `GET /api/jobs/{id}/session/events` or subscribe to
-`GET /api/jobs/{id}/session/stream` for SSE updates. The stream also emits
-periodic ticks so the UI refreshes the OpenClaw transcript while the agent is
-still running, even before the bridge has a final dispatch result. The dashboard
-also exposes redacted OpenClaw transcript entries for the correlated session through
+`GET /api/jobs/{id}/session/stream` for SSE updates. The stream carries new
+session events and transcript entries directly, with heartbeat events and proxy
+buffering disabled for long-lived HTTPS connections. While a job is still
+running, live redacted OpenClaw stdout/stderr is also exposed as transcript
+entries so the focused job page does not wait for OpenClaw's final session file
+flush. The dashboard also exposes redacted OpenClaw transcript entries for the correlated session through
 `GET /api/jobs/{id}/session/transcript`. By default it looks up
 `~/.openclaw/agents/github/sessions/sessions.json`, or the path set in
 `GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE`, and only returns entries for the

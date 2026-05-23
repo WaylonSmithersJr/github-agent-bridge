@@ -257,23 +257,32 @@ def job_session_transcript(db: str | Path, job_id: int, *, limit: int = 500) -> 
     session = job_session(db, job_id)
     if session is None:
         return []
+    max_entries = coerce_limit(limit, maximum=1000)
     session_id = str(session.get("id") or "")
     if not session_id:
         return []
     session_file = openclaw_session_file(session_id)
-    if session_file is None or not session_file.exists():
-        return []
     entries: list[dict[str, Any]] = []
-    for line in session_file.read_text(encoding="utf-8", errors="replace").splitlines():
-        if len(entries) >= coerce_limit(limit, maximum=1000):
-            break
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        entry = transcript_entry(item)
-        if entry is not None:
+    if session_file is not None and session_file.exists():
+        for line in session_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            if len(entries) >= max_entries:
+                break
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            entry = transcript_entry(item)
+            if entry is not None:
+                entries.append(entry)
+    if session.get("status") == "running" and len(entries) < max_entries:
+        live_events = job_session_events(db, job_id, limit=max_entries)
+        for event in live_events:
+            entry = transcript_entry_from_session_event(event)
+            if entry is None:
+                continue
             entries.append(entry)
+            if len(entries) >= max_entries:
+                break
     return entries
 
 
@@ -352,6 +361,23 @@ def transcript_entry(item: dict[str, Any]) -> dict[str, Any] | None:
         "kind": kind,
         "title": title,
         "text": text,
+    }
+
+
+def transcript_entry_from_session_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    event_type = str(event.get("event_type") or "")
+    if event_type not in {"openclaw_stdout", "openclaw_stderr"}:
+        return None
+    detail = redact_event_detail(event.get("detail"))
+    if not detail:
+        return None
+    title = "OpenClaw stdout" if event_type == "openclaw_stdout" else "OpenClaw stderr"
+    return {
+        "timestamp": event.get("ts"),
+        "role": "assistant",
+        "kind": event_type,
+        "title": title,
+        "text": detail,
     }
 
 

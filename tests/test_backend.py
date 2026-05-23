@@ -221,6 +221,25 @@ def test_dashboard_exposes_redacted_openclaw_session_transcript(tmp_path, monkey
     assert "ghp_" not in payload[1]["text"]
 
 
+def test_dashboard_transcript_includes_live_openclaw_output_before_session_file(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+    q.add_session_event(job.id, "openclaw_stdout", "OpenClaw CLI output", "thinking live")
+    q.add_session_event(job.id, "openclaw_stderr", "OpenClaw CLI error output", "token=secret")
+
+    entries = job_session_transcript(db, job.id)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get(f"/api/jobs/{job.id}/session/transcript").json()["entries"]
+
+    assert [entry["kind"] for entry in entries] == ["openclaw_stdout", "openclaw_stderr"]
+    assert payload[0]["title"] == "OpenClaw stdout"
+    assert payload[0]["text"] == "thinking live"
+    assert payload[1]["text"] == "token=[redacted]"
+
+
 def test_dashboard_requires_auth_by_default(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     JobQueue(db)

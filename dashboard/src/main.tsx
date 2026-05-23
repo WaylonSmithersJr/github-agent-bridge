@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
@@ -134,7 +134,6 @@ type JobFilters = {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchInterval: 15000,
       retry: 1,
     },
   },
@@ -192,12 +191,36 @@ function jobPath(jobId: number) {
   return `/jobs/${jobId}`;
 }
 
+function parseSseData<T>(message: MessageEvent): T | null {
+  try {
+    return JSON.parse(message.data) as T;
+  } catch {
+    return null;
+  }
+}
+
+function appendUniqueById<T extends { id: number }>(items: T[], item: T) {
+  if (items.some((existing) => existing.id === item.id)) return items;
+  return [...items, item];
+}
+
+function appendTranscriptEntry(items: TranscriptEntry[], item: TranscriptEntry) {
+  const key = transcriptKey(item);
+  if (items.some((existing) => transcriptKey(existing) === key)) return items;
+  return [...items, item];
+}
+
+function transcriptKey(item: TranscriptEntry) {
+  return `${item.timestamp ?? ""}:${item.role}:${item.kind}:${item.title}:${item.text}`;
+}
+
 function selectedJobIdFromPath(pathname = window.location.pathname) {
   const match = pathname.match(/^\/jobs\/(\d+)\/?$/);
   return match ? Number(match[1]) : null;
 }
 
 function App() {
+  const queryClient = useQueryClient();
   const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "" });
   const [selectedJobId, setSelectedJobId] = React.useState<number | null>(() => selectedJobIdFromPath());
   const [pathname, setPathname] = React.useState(() => window.location.pathname);
@@ -231,20 +254,27 @@ function App() {
   React.useEffect(() => {
     if (selectedJobId === null) return;
     const source = new EventSource(`/api/jobs/${selectedJobId}/session/stream`);
-    source.addEventListener("session_event", () => {
-      sessionEvents.refetch();
-      transcript.refetch();
-      detail.refetch();
-      jobs.refetch();
+    source.addEventListener("session_event", (message) => {
+      const event = parseSseData<SessionEvent>(message);
+      if (!event) return;
+      queryClient.setQueryData<{ events: SessionEvent[] }>(["job-session-events", selectedJobId], (current) => ({
+        events: appendUniqueById(current?.events ?? [], event),
+      }));
+      queryClient.invalidateQueries({ queryKey: ["job", selectedJobId] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
     });
-    source.addEventListener("session_tick", () => {
-      transcript.refetch();
+    source.addEventListener("transcript_entry", (message) => {
+      const payload = parseSseData<{ job_id: number; entry: TranscriptEntry }>(message);
+      if (!payload || payload.job_id !== selectedJobId) return;
+      queryClient.setQueryData<{ entries: TranscriptEntry[] }>(["job-session-transcript", selectedJobId], (current) => ({
+        entries: appendTranscriptEntry(current?.entries ?? [], payload.entry),
+      }));
     });
     source.onerror = () => {
       source.close();
     };
     return () => source.close();
-  }, [selectedJobId]);
+  }, [selectedJobId, queryClient]);
 
   React.useEffect(() => {
     const syncFromPath = () => {

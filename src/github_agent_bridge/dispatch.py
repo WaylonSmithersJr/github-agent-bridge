@@ -5,9 +5,11 @@ import os
 import re
 import signal
 import subprocess
+import threading
 from dataclasses import dataclass
 from importlib import resources
 from enum import StrEnum
+from typing import Callable
 
 from . import feedback
 from .models import GitHubContext, Job
@@ -230,6 +232,8 @@ class GitHubClient:
         ])
         if result.returncode != 0:
             return None
+        newest_url = None
+        newest_created_at = ""
         for line in result.stdout.splitlines():
             try:
                 comment = json.loads(line)
@@ -239,9 +243,10 @@ class GitHubClient:
             if not isinstance(user, dict) or user.get("login") != login:
                 continue
             created_at = comment.get("created_at") or ""
-            if created_at > trigger_created_at:
-                return comment.get("html_url") or f"{repo}#{issue}"
-        return None
+            if created_at > trigger_created_at and created_at >= newest_created_at:
+                newest_created_at = created_at
+                newest_url = comment.get("html_url") or f"{repo}#{issue}"
+        return newest_url
 
     def current_user_review_comment_after(self, ctx: GitHubContext, after: str | None = None) -> str | None:
         repo, issue = ctx.repo, ctx.issue_number
@@ -281,7 +286,7 @@ class GitHubClient:
         if ctx.comment_id:
             trigger = self.issue_comment(ctx)
             trigger_created_at = trigger.get("created_at") if isinstance(trigger, dict) else None
-            return self.current_user_commented_after(ctx) or self.current_user_review_comment_after(ctx, trigger_created_at)
+            return self.current_user_thread_comment_after(ctx, trigger_created_at) or self.current_user_review_comment_after(ctx, trigger_created_at)
         if ctx.review_comment_id:
             trigger = self.pull_request_review_comment(ctx)
             trigger_created_at = trigger.get("created_at") if isinstance(trigger, dict) else None
@@ -470,29 +475,75 @@ class OpenClawDispatcher:
         to = route.to or self.default_to
         return agent, channel, to
 
-    def dispatch(self, job: Job, policy: Policy, reaction_ok: bool | None = None) -> DispatchResult:
+    def dispatch(
+        self,
+        job: Job,
+        policy: Policy,
+        reaction_ok: bool | None = None,
+        activity_callback: Callable[[str, str, str | None], None] | None = None,
+    ) -> DispatchResult:
         agent, channel, to = self.route_for(job, policy)
         cmd = [self.openclaw_bin, "agent"]
         if agent:
             cmd += ["--agent", agent]
         agent_timeout = self.timeout_for(job)
         session_id = normalize_session_id(str(job.metadata.get("openclaw_session_id") or session_id_for_job(job.id)))
-        cmd += ["--session-id", session_id, "--channel", channel, "--to", to, "--deliver", "--timeout", str(agent_timeout), "--message", self.build_prompt(job, policy)]
+        cmd += [
+            "--session-id",
+            session_id,
+            "--verbose",
+            "on",
+            "--channel",
+            channel,
+            "--to",
+            to,
+            "--deliver",
+            "--timeout",
+            str(agent_timeout),
+            "--message",
+            self.build_prompt(job, policy),
+        ]
         env = os.environ.copy()
         if self.node_bin:
             env["PATH"] = os.path.dirname(self.node_bin) + os.pathsep + env.get("PATH", "")
         if self.mode != RunMode.LIVE:
             return DispatchResult(True, 0, "side effects skipped", "", False, reaction_ok, cmd)
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
+
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+
+        def read_stream(stream, chunks: list[str], event_type: str) -> None:
+            if stream is None:
+                return
+            while True:
+                data = os.read(stream.fileno(), 4096)
+                if not data:
+                    break
+                chunk = data.decode("utf-8", errors="replace")
+                chunks.append(chunk)
+                if activity_callback:
+                    activity_callback(event_type, "OpenClaw CLI output" if event_type == "openclaw_stdout" else "OpenClaw CLI error output", chunk.rstrip("\n"))
+
+        stdout_thread = threading.Thread(target=read_stream, args=(proc.stdout, stdout_chunks, "openclaw_stdout"), daemon=True)
+        stderr_thread = threading.Thread(target=read_stream, args=(proc.stderr, stderr_chunks, "openclaw_stderr"), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
         try:
             # Let OpenClaw's own --timeout own the agent run deadline. The bridge only
             # keeps a small grace window so it can capture the CLI result cleanly.
-            out, err = proc.communicate(timeout=agent_timeout + self.cli_grace_seconds)
+            proc.wait(timeout=agent_timeout + self.cli_grace_seconds)
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+            out, err = "".join(stdout_chunks), "".join(stderr_chunks)
             return DispatchResult(proc.returncode == 0, proc.returncode, (out or "")[:2000], (err or "")[:4000], False, reaction_ok, cmd)
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except Exception:
                 proc.kill()
-            out, err = proc.communicate()
+            proc.wait()
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+            out, err = "".join(stdout_chunks), "".join(stderr_chunks)
             return DispatchResult(False, 124, (out or "")[:2000], (err or "")[:4000], True, reaction_ok, cmd)

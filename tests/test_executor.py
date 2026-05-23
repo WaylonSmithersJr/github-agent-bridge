@@ -1,3 +1,4 @@
+from github_agent_bridge.dashboard_data import job_session_events
 from github_agent_bridge.dispatch import DispatchResult
 from github_agent_bridge.executor import ExecutorConfig, ExecutorPool
 from github_agent_bridge.models import Notification
@@ -49,8 +50,11 @@ class RecordingDispatcher:
     def __init__(self):
         self.jobs = []
 
-    def dispatch(self, job, policy, reaction_ok=None):
+    def dispatch(self, job, policy, reaction_ok=None, activity_callback=None):
         self.jobs.append(job)
+        if activity_callback:
+            activity_callback("openclaw_stdout", "OpenClaw CLI output", "thinking about the change")
+            activity_callback("openclaw_stderr", "OpenClaw CLI error output", "token=secret ghp_abcdefghijklmnopqrstuvwxyz")
         return DispatchResult(True, 0, "ok", "", False, reaction_ok, ["openclaw"])
 
 
@@ -113,6 +117,21 @@ def test_assigned_pr_comment_upgrades_to_work_allowed(tmp_path):
     stored = queue.get(dispatcher.jobs[0].id)
     assert stored is not None
     assert stored.work_intent == "work_allowed"
+
+
+def test_executor_records_session_activity_events(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    queue = JobQueue(db)
+    enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=FakeGitHub(assigned=False, mentioned=True), config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    event_types = [event["event_type"] for event in job_session_events(db, dispatcher.jobs[0].id)]
+    assert event_types == ["claimed", "dispatch_started", "openclaw_stdout", "openclaw_stderr", "dispatch_finished", "done"]
+    stderr_event = job_session_events(db, dispatcher.jobs[0].id)[3]
+    assert stderr_event["detail"] == "token=[redacted] [redacted]"
 
 
 def test_unassigned_mentioned_pr_comment_stays_review_only(tmp_path):
@@ -183,7 +202,7 @@ def test_unassigned_unmentioned_pr_comment_reacts_without_dispatch(tmp_path):
     assert stored.status == "done"
 
 
-def test_retry_skips_dispatch_when_bot_already_answered(tmp_path):
+def test_first_attempt_dispatches_even_when_bot_already_commented_after_trigger(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     job = enqueue_pr_comment(queue)
     dispatcher = RecordingDispatcher()
@@ -192,8 +211,30 @@ def test_retry_skips_dispatch_when_bot_already_answered(tmp_path):
     pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
     assert pool.work_one("worker-test") is True
 
-    assert dispatcher.jobs == []
-    assert github.eyes == 0
+    assert len(dispatcher.jobs) == 1
+    assert dispatcher.jobs[0].id == job.id
+    assert github.eyes == 1
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
+
+
+def test_retry_dispatches_even_when_prior_bot_comment_exists(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=True, answered_url="https://github.com/gisce/erp/pull/27315#issuecomment-2")
+
+    queue.requeue_running(job.id, "simulate retry")
+    with queue.connect() as con:
+        con.execute("UPDATE jobs SET attempts=1, status='pending' WHERE id=?", (job.id,))
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert len(dispatcher.jobs) == 1
+    assert dispatcher.jobs[0].id == job.id
+    assert github.eyes == 1
     stored = queue.get(job.id)
     assert stored is not None
     assert stored.status == "done"

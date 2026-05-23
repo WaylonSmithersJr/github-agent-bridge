@@ -71,10 +71,16 @@ dashboards and operator tooling. It is intentionally not part of the executor
 path: it does not import the dispatcher, does not claim jobs, does not call
 OpenClaw, and opens the SQLite database read-only for job queries.
 
-The service also serves the built React dashboard at `/`. The UI is a Vite +
-React + TypeScript app styled with Tailwind and operational components, using
-TanStack Query for API state and Recharts for percentile charts. Production
-serves the static bundle from `src/github_agent_bridge/dashboard_static`.
+The service also serves the built React dashboard at `/` and dedicated job
+views at `/jobs/{id}`. Operators can share a job URL to open the dashboard with
+that job's session, worklog, activity feed and GitHub links selected. The UI is
+a Vite + React + TypeScript app styled with Tailwind and operational components,
+using TanStack Query for API state and Recharts for percentile charts.
+Timestamps stay stored and returned by the API in UTC, while the browser renders
+them in the viewer's local timezone from `Intl.DateTimeFormat`; hovering a
+rendered timestamp shows the UTC value.
+Production serves the static bundle from
+`src/github_agent_bridge/dashboard_static`.
 
 The API uses GitHub OAuth sessions by default. Configure these values in
 `~/.config/github-agent-bridge/env`:
@@ -119,12 +125,15 @@ Endpoints:
 
 ```text
 GET /
+GET /jobs/{id}
 GET /api/health
 GET /api/status
 GET /api/jobs?status=pending&repo=pilipilisbot/github-agent-bridge&limit=20
 GET /api/jobs/{id}
 GET /api/jobs/{id}/logs
 GET /api/jobs/{id}/session
+GET /api/jobs/{id}/session/events
+GET /api/jobs/{id}/session/stream
 GET /api/metrics/summary
 GET /api/processes
 GET /api/alerts
@@ -142,10 +151,32 @@ snapshot of executor child processes through `GET /api/processes`, and safe
 OpenClaw session correlation through `GET /api/jobs/{id}/session`. New
 dispatches use a deterministic `github-agent-bridge-job-{id}` OpenClaw session
 id so operators can correlate a bridge job with the OpenClaw session that ran
-it. The dashboard exposes only correlation metadata; it does not serve full
-session transcripts. Persistent alert storage, historical proc sample retention,
-richer SSE integration and redacted transcript summaries remain later
-milestones.
+it, and the dispatcher enables OpenClaw verbose mode for these sessions so tool
+calls and command output are available to the live dashboard stream. The React route `/jobs/{id}` is a focused job detail page for sharing a
+single job/session, with a link back to the generic dashboard. The dashboard
+records bounded, redacted bridge-side session events when a job is claimed,
+while OpenClaw stdout/stderr is emitted, dispatched and finished. The dashboard
+records OpenClaw CLI output from flushed byte chunks rather than waiting for
+newline-terminated lines, so partial interactive output can appear before the
+OpenClaw process exits. The dashboard renders activity and transcript logs as
+compact collapsible sections so long sessions can be scanned like GitHub Actions
+or Copilot session output. Operators can read them with
+`GET /api/jobs/{id}/session/events` or subscribe to
+`GET /api/jobs/{id}/session/stream` for SSE updates. The stream carries new
+session events and transcript entries directly, including already-recorded live
+transcript entries when a browser opens the page after the job has started, with
+heartbeat events and proxy buffering disabled for long-lived HTTPS connections. While a job is still
+running, live redacted OpenClaw stdout/stderr is also exposed as transcript
+entries. The dashboard also reads OpenClaw's live trajectory file
+`github-agent-bridge-job-{id}.trajectory.jsonl`, so tool calls and tool results
+can stream before OpenClaw writes the final session transcript file. The
+dashboard also exposes redacted OpenClaw transcript entries for the correlated
+session through `GET /api/jobs/{id}/session/transcript`. By default it looks up
+`~/.openclaw/agents/github/sessions/sessions.json`, or the path set in
+`GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE`, and only returns entries for the
+job's deterministic session id. Transcript text is secret-redacted and truncated
+before it is returned to the authenticated dashboard. Persistent alert storage
+and historical proc sample retention remain later milestones.
 
 ## Operational SLOs
 

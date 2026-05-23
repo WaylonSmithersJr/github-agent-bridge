@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .session_events import redact_event_detail
 from .session_correlation import job_session_metadata
 
 
@@ -217,11 +219,252 @@ def job_session(db: str | Path, job_id: int) -> dict[str, Any] | None:
     session["job_id"] = job_id
     session["work_key"] = job["work_key"]
     session["status"] = job["status"]
+    session_id = str(session["id"])
+    session["transcript_available"] = (
+        openclaw_session_file(session_id) is not None or openclaw_trajectory_file(session_id) is not None
+    )
     session["detail"] = (
-        "Future dispatches use this explicit OpenClaw session id. "
-        "The dashboard exposes correlation metadata only; full transcripts are not served."
+        "Dispatches use this explicit OpenClaw session id. "
+        "The dashboard exposes bounded, redacted bridge events and OpenClaw transcript entries for this session."
     )
     return session
+
+
+def job_session_events(db: str | Path, job_id: int, *, after_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    path = Path(db).expanduser()
+    if not path.exists():
+        return []
+    with readonly_connect(path) as con:
+        if not table_exists(con, "job_session_events"):
+            return []
+        where = "job_id=?"
+        args: list[Any] = [job_id]
+        if after_id is not None:
+            where += " AND id>?"
+            args.append(after_id)
+        args.append(coerce_limit(limit, maximum=500))
+        rows = con.execute(
+            f"""
+            SELECT id, ts, job_id, work_key, session_id, event_type, summary, detail
+            FROM job_session_events
+            WHERE {where}
+            ORDER BY id
+            LIMIT ?
+            """,
+            args,
+        ).fetchall()
+    return [dict(row) | {"detail": redact_event_detail(row["detail"])} for row in rows]
+
+
+def job_session_transcript(db: str | Path, job_id: int, *, limit: int = 500) -> list[dict[str, Any]]:
+    session = job_session(db, job_id)
+    if session is None:
+        return []
+    max_entries = coerce_limit(limit, maximum=1000)
+    session_id = str(session.get("id") or "")
+    if not session_id:
+        return []
+    session_file = openclaw_session_file(session_id)
+    entries: list[dict[str, Any]] = []
+    if session_file is not None and session_file.exists():
+        for line in session_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            if len(entries) >= max_entries:
+                break
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            entry = transcript_entry(item)
+            if entry is not None:
+                entries.append(entry)
+    if (session.get("status") == "running" or not entries) and len(entries) < max_entries:
+        trajectory_file = openclaw_trajectory_file(session_id)
+        if trajectory_file is not None and trajectory_file.exists():
+            for line in trajectory_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                if len(entries) >= max_entries:
+                    break
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                entry = transcript_entry_from_trajectory(item)
+                if entry is not None:
+                    entries.append(entry)
+    if session.get("status") == "running" and len(entries) < max_entries:
+        live_events = job_session_events(db, job_id, limit=max_entries)
+        for event in live_events:
+            entry = transcript_entry_from_session_event(event)
+            if entry is None:
+                continue
+            entries.append(entry)
+            if len(entries) >= max_entries:
+                break
+    return entries
+
+
+def openclaw_session_file(session_id: str) -> Path | None:
+    store = Path(os.getenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", "~/.openclaw/agents/github/sessions/sessions.json")).expanduser()
+    if not store.exists():
+        fallback = store.with_name(f"{session_id}.jsonl")
+        return fallback if fallback.exists() else None
+    try:
+        sessions = json.loads(store.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    for value in sessions.values() if isinstance(sessions, dict) else []:
+        if not isinstance(value, dict) or str(value.get("sessionId") or "") != session_id:
+            continue
+        session_file = value.get("sessionFile")
+        if not session_file:
+            continue
+        path = Path(str(session_file)).expanduser()
+        return path if path.exists() else None
+    fallback = store.with_name(f"{session_id}.jsonl")
+    return fallback if fallback.exists() else None
+
+
+def openclaw_trajectory_file(session_id: str) -> Path | None:
+    store = Path(os.getenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", "~/.openclaw/agents/github/sessions/sessions.json")).expanduser()
+    fallback = store.with_name(f"{session_id}.trajectory.jsonl")
+    if fallback.exists():
+        return fallback
+    pointer = store.with_name(f"{session_id}.trajectory-path.json")
+    if not pointer.exists():
+        return None
+    try:
+        payload = json.loads(pointer.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    path = payload.get("runtimeFile")
+    if not path:
+        return None
+    trajectory_file = Path(str(path)).expanduser()
+    return trajectory_file if trajectory_file.exists() else None
+
+
+def transcript_entry(item: dict[str, Any]) -> dict[str, Any] | None:
+    if item.get("type") == "session":
+        return {
+            "timestamp": item.get("timestamp"),
+            "role": "system",
+            "kind": "session",
+            "title": "Session started",
+            "text": f"cwd={item.get('cwd') or ''}",
+        }
+    if item.get("type") != "message":
+        return None
+    message = item.get("message")
+    if not isinstance(message, dict):
+        return None
+    role = str(message.get("role") or "unknown")
+    content = message.get("content")
+    kind = role
+    title = role
+    text = ""
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        parts = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type") or "")
+            if block_type == "toolCall":
+                name = block.get("name") or "tool"
+                kind = "tool_call"
+                title = f"Tool call: {name}"
+                args = block.get("arguments") or block.get("input") or {}
+                parts.append(json.dumps(args, ensure_ascii=False, indent=2, sort_keys=True))
+            elif block_type == "toolResult":
+                name = block.get("toolName") or block.get("name") or "tool"
+                kind = "tool_result"
+                title = f"Tool result: {name}"
+                parts.append(str(block.get("content") or block.get("text") or ""))
+            elif "text" in block:
+                parts.append(str(block.get("text") or ""))
+            elif "content" in block:
+                parts.append(str(block.get("content") or ""))
+        text = "\n\n".join(part for part in parts if part)
+    if not text:
+        text = str(message.get("content") or "")
+    text = redact_event_detail(text)
+    if len(text) > 6000:
+        text = text[:6000] + "\n... [truncated]"
+    return {
+        "timestamp": item.get("timestamp") or message.get("timestamp"),
+        "role": role,
+        "kind": kind,
+        "title": title,
+        "text": text,
+    }
+
+
+def transcript_entry_from_trajectory(item: dict[str, Any]) -> dict[str, Any] | None:
+    event_type = str(item.get("type") or "")
+    timestamp = item.get("ts")
+    data = item.get("data")
+    if not isinstance(data, dict):
+        return None
+    if event_type == "session.started":
+        workspace = data.get("workspaceDir") or item.get("workspaceDir") or ""
+        return {
+            "timestamp": timestamp,
+            "role": "system",
+            "kind": "trajectory_session",
+            "title": "Session started",
+            "text": redact_event_detail(f"workspace={workspace}"),
+        }
+    if event_type == "tool.call":
+        name = str(data.get("name") or "tool")
+        arguments = data.get("arguments") if isinstance(data.get("arguments"), dict) else {}
+        text = json.dumps(arguments, ensure_ascii=False, indent=2, sort_keys=True)
+        return {
+            "timestamp": timestamp,
+            "role": "assistant",
+            "kind": "tool_call",
+            "title": f"Tool call: {name}",
+            "text": _bounded_transcript_text(text),
+        }
+    if event_type == "tool.result":
+        name = str(data.get("name") or "tool")
+        output = data.get("output")
+        result = data.get("result")
+        if output is None and isinstance(result, dict):
+            output = result.get("output") or result.get("stdout") or result.get("stderr")
+        text = str(output or "")
+        status = str(data.get("status") or (result.get("status") if isinstance(result, dict) else "") or "completed")
+        return {
+            "timestamp": timestamp,
+            "role": "tool",
+            "kind": "tool_result",
+            "title": f"Tool result: {name}",
+            "text": _bounded_transcript_text(f"status={status}\n{text}".strip()),
+        }
+    return None
+
+
+def transcript_entry_from_session_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    event_type = str(event.get("event_type") or "")
+    if event_type not in {"openclaw_stdout", "openclaw_stderr"}:
+        return None
+    detail = redact_event_detail(event.get("detail"))
+    if not detail:
+        return None
+    title = "OpenClaw stdout" if event_type == "openclaw_stdout" else "OpenClaw stderr"
+    return {
+        "timestamp": event.get("ts"),
+        "role": "assistant",
+        "kind": event_type,
+        "title": title,
+        "text": detail,
+    }
+
+
+def _bounded_transcript_text(text: str) -> str:
+    text = redact_event_detail(text)
+    if len(text) > 6000:
+        return text[:6000] + "\n... [truncated]"
+    return text
 
 
 def metrics_summary(db: str | Path) -> dict[str, Any]:

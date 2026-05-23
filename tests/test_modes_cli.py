@@ -67,6 +67,7 @@ def test_shadow_dispatch_returns_command_without_running():
     assert "agent" in result.command
     assert "--session-id" in result.command
     assert result.command[result.command.index("--session-id") + 1] == "github-agent-bridge-job-1"
+    assert result.command[result.command.index("--verbose") + 1] == "on"
     assert "--timeout" in result.command
     assert "3600" in result.command
 
@@ -77,6 +78,60 @@ def test_review_only_dispatch_uses_shorter_timeout():
     assert result.command
     timeout_idx = result.command.index("--timeout")
     assert result.command[timeout_idx + 1] == "900"
+
+
+def test_live_dispatch_streams_openclaw_output_to_activity_callback(tmp_path):
+    openclaw = tmp_path / "openclaw"
+    openclaw.write_text(
+        "#!/bin/sh\n"
+        "printf 'thinking line\\n'\n"
+        "printf 'tool error\\n' >&2\n",
+        encoding="utf-8",
+    )
+    openclaw.chmod(0o755)
+    events = []
+
+    result = OpenClawDispatcher(openclaw_bin=str(openclaw), mode=RunMode.LIVE, cli_grace_seconds=1).dispatch(
+        make_job(),
+        Policy(trusted_orgs={"gisce"}),
+        reaction_ok=True,
+        activity_callback=lambda event_type, summary, detail: events.append((event_type, summary, detail)),
+    )
+
+    assert result.ok is True
+    assert ("openclaw_stdout", "OpenClaw CLI output", "thinking line") in events
+    assert ("openclaw_stderr", "OpenClaw CLI error output", "tool error") in events
+
+
+def test_live_dispatch_streams_partial_openclaw_output_before_process_exits(tmp_path, monkeypatch):
+    done = tmp_path / "done"
+    openclaw = tmp_path / "openclaw"
+    openclaw.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "import pathlib\n"
+        "import sys\n"
+        "import time\n"
+        "sys.stdout.write('partial output')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(0.5)\n"
+        "pathlib.Path(os.environ['DONE_FILE']).write_text('done', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    openclaw.chmod(0o755)
+    monkeypatch.setenv("DONE_FILE", str(done))
+    callback_observed_done = []
+
+    result = OpenClawDispatcher(openclaw_bin=str(openclaw), mode=RunMode.LIVE, cli_grace_seconds=1).dispatch(
+        make_job(),
+        Policy(trusted_orgs={"gisce"}),
+        reaction_ok=True,
+        activity_callback=lambda event_type, summary, detail: callback_observed_done.append(done.exists()) if detail == "partial output" else None,
+    )
+
+    assert result.ok is True
+    assert done.exists()
+    assert callback_observed_done == [False]
 
 
 def test_dispatcher_does_not_hardcode_org_agent_fallback():

@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Cpu, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -98,6 +98,25 @@ type SessionCorrelation = {
   detail: string;
 };
 
+type SessionEvent = {
+  id: number;
+  ts: string;
+  job_id: number;
+  work_key: string | null;
+  session_id: string;
+  event_type: string;
+  summary: string;
+  detail: string | null;
+};
+
+type TranscriptEntry = {
+  timestamp: string | null;
+  role: string;
+  kind: string;
+  title: string;
+  text: string;
+};
+
 type UserProfile = {
   login: string;
   avatar_url: string;
@@ -115,7 +134,6 @@ type JobFilters = {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchInterval: 15000,
       retry: 1,
     },
   },
@@ -139,6 +157,48 @@ function formatSeconds(value: number | null | undefined) {
   const minutes = Math.floor(value / 60);
   if (minutes < 60) return `${minutes}m ${value % 60}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  timeZoneName: "short",
+});
+
+const compactDateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function parseDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  const date = parseDate(value);
+  return date ? dateTimeFormatter.format(date) : (value ?? "");
+}
+
+function compactDate(value: string | null | undefined) {
+  const date = parseDate(value);
+  return date ? compactDateFormatter.format(date) : (value ?? "");
+}
+
+function TimeText({ value, compact = false }: { value: string | null | undefined; compact?: boolean }) {
+  const date = parseDate(value);
+  if (!date) return <>{value ?? ""}</>;
+  return (
+    <time dateTime={date.toISOString()} title={`UTC: ${date.toISOString()}`}>
+      {compact ? compactDate(value) : formatDateTime(value)}
+    </time>
+  );
 }
 
 function statusTone(status: string) {
@@ -169,13 +229,49 @@ function safeExternalUrl(value: string) {
   }
 }
 
+function jobPath(jobId: number) {
+  return `/jobs/${jobId}`;
+}
+
+function parseSseData<T>(message: MessageEvent): T | null {
+  try {
+    return JSON.parse(message.data) as T;
+  } catch {
+    return null;
+  }
+}
+
+function appendUniqueById<T extends { id: number }>(items: T[], item: T) {
+  if (items.some((existing) => existing.id === item.id)) return items;
+  return [...items, item];
+}
+
+function appendTranscriptEntry(items: TranscriptEntry[], item: TranscriptEntry) {
+  const key = transcriptKey(item);
+  if (items.some((existing) => transcriptKey(existing) === key)) return items;
+  return [...items, item];
+}
+
+function transcriptKey(item: TranscriptEntry) {
+  return `${item.timestamp ?? ""}:${item.role}:${item.kind}:${item.title}:${item.text}`;
+}
+
+function selectedJobIdFromPath(pathname = window.location.pathname) {
+  const match = pathname.match(/^\/jobs\/(\d+)\/?$/);
+  return match ? Number(match[1]) : null;
+}
+
 function App() {
+  const queryClient = useQueryClient();
   const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "" });
-  const [selectedJobId, setSelectedJobId] = React.useState<number | null>(null);
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary") });
+  const [selectedJobId, setSelectedJobId] = React.useState<number | null>(() => selectedJobIdFromPath());
+  const [pathname, setPathname] = React.useState(() => window.location.pathname);
+  const jobRouteId = selectedJobIdFromPath(pathname);
+  const isJobDetailRoute = jobRouteId !== null;
+  const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary"), enabled: !isJobDetailRoute });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
-  const jobs = useQuery({ queryKey: ["jobs", filters], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters)) });
-  const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes") });
+  const jobs = useQuery({ queryKey: ["jobs", filters], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters)), enabled: !isJobDetailRoute });
+  const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: !isJobDetailRoute });
   const detail = useQuery({
     queryKey: ["job", selectedJobId],
     queryFn: () => api<{ job: Job }>(`/api/jobs/${selectedJobId}`),
@@ -186,10 +282,61 @@ function App() {
     queryFn: () => api<{ session: SessionCorrelation }>(`/api/jobs/${selectedJobId}/session`),
     enabled: selectedJobId !== null,
   });
+  const sessionEvents = useQuery({
+    queryKey: ["job-session-events", selectedJobId],
+    queryFn: () => api<{ events: SessionEvent[] }>(`/api/jobs/${selectedJobId}/session/events`),
+    enabled: selectedJobId !== null,
+  });
+  const transcript = useQuery({
+    queryKey: ["job-session-transcript", selectedJobId],
+    queryFn: () => api<{ entries: TranscriptEntry[] }>(`/api/jobs/${selectedJobId}/session/transcript`),
+    enabled: selectedJobId !== null,
+  });
+
+  React.useEffect(() => {
+    if (selectedJobId === null) return;
+    const source = new EventSource(`/api/jobs/${selectedJobId}/session/stream`);
+    source.addEventListener("session_event", (message) => {
+      const event = parseSseData<SessionEvent>(message);
+      if (!event) return;
+      queryClient.setQueryData<{ events: SessionEvent[] }>(["job-session-events", selectedJobId], (current) => ({
+        events: appendUniqueById(current?.events ?? [], event),
+      }));
+      queryClient.invalidateQueries({ queryKey: ["job", selectedJobId] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    });
+    source.addEventListener("transcript_entry", (message) => {
+      const payload = parseSseData<{ job_id: number; entry: TranscriptEntry }>(message);
+      if (!payload || payload.job_id !== selectedJobId) return;
+      queryClient.setQueryData<{ entries: TranscriptEntry[] }>(["job-session-transcript", selectedJobId], (current) => ({
+        entries: appendTranscriptEntry(current?.entries ?? [], payload.entry),
+      }));
+    });
+    source.onerror = () => {
+      source.close();
+    };
+    return () => source.close();
+  }, [selectedJobId, queryClient]);
+
+  React.useEffect(() => {
+    const syncFromPath = () => {
+      setPathname(window.location.pathname);
+      const nextJobId = selectedJobIdFromPath();
+      if (nextJobId !== null) setSelectedJobId(nextJobId);
+    };
+    window.addEventListener("popstate", syncFromPath);
+    return () => window.removeEventListener("popstate", syncFromPath);
+  }, []);
+
+  const selectJob = React.useCallback((jobId: number) => {
+    setSelectedJobId(jobId);
+  }, []);
 
   const counts = metrics.data?.metrics.status_counts ?? {};
   const jobRows = jobs.data?.jobs ?? [];
   const selectedJob = selectedJobId ? (detail.data?.job ?? null) : null;
+  const selectedJobInList = selectedJobId !== null && jobRows.some((job) => job.id === selectedJobId);
+  const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} />;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -204,47 +351,103 @@ function App() {
       </header>
 
       <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-4 py-4 md:px-6 md:py-5">
-        {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Summary metrics">
-          <Metric title="Pending" value={counts.pending ?? 0} icon={<Clock3 className="h-5 w-5" />} />
-          <Metric title="Running" value={counts.running ?? 0} icon={<Activity className="h-5 w-5" />} />
-          <Metric title="Blocked" value={counts.blocked ?? 0} icon={<AlertTriangle className="h-5 w-5" />} />
-          <Metric title="Done" value={counts.done ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} />
-        </section>
+        {jobRouteId !== null ? (
+          <JobDetailPage
+            jobId={jobRouteId}
+            detail={detailStatus}
+            onRefresh={() => {
+              detail.refetch();
+              session.refetch();
+              sessionEvents.refetch();
+              transcript.refetch();
+            }}
+          />
+        ) : (
+          <>
+            {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
+            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Summary metrics">
+              <Metric title="Pending" value={counts.pending ?? 0} icon={<Clock3 className="h-5 w-5" />} />
+              <Metric title="Running" value={counts.running ?? 0} icon={<Activity className="h-5 w-5" />} />
+              <Metric title="Blocked" value={counts.blocked ?? 0} icon={<AlertTriangle className="h-5 w-5" />} />
+              <Metric title="Done" value={counts.done ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} />
+            </section>
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
-          <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
-            <Filters filters={filters} onChange={setFilters} />
-            {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-            <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} onSelect={setSelectedJobId} />
-          </Panel>
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
+              <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
+                <Filters filters={filters} onChange={setFilters} />
+                {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
+                <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} onSelect={selectJob} />
+                {selectedJobId !== null && !selectedJobInList ? <div className="mt-4 md:hidden">{detailStatus}</div> : null}
+              </Panel>
 
-          <Panel title="Job detail" className="hidden xl:block xl:self-start xl:sticky xl:top-4">
-            {selectedJob ? <JobDetail job={selectedJob} session={session.data?.session} /> : <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />}
-          </Panel>
-        </section>
+              <Panel title="Job detail" className="hidden xl:block xl:self-start xl:sticky xl:top-4">
+                {detailStatus}
+              </Panel>
+            </section>
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-          <Panel title="Process activity" action={<RefreshButton onClick={() => processes.refetch()} />}>
-            {processes.error ? <Banner tone="error" text={processes.error.message} /> : null}
-            <ProcessActivity data={processes.data} loading={processes.isLoading} />
-          </Panel>
-          <Panel title="Runtime percentiles">
-            <PercentileChart label="runtime" values={metrics.data?.metrics.runtime_seconds} />
-          </Panel>
-        </section>
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+              <Panel title="Process activity" action={<RefreshButton onClick={() => processes.refetch()} />}>
+                {processes.error ? <Banner tone="error" text={processes.error.message} /> : null}
+                <ProcessActivity data={processes.data} loading={processes.isLoading} />
+              </Panel>
+              <Panel title="Runtime percentiles">
+                <PercentileChart label="runtime" values={metrics.data?.metrics.runtime_seconds} />
+              </Panel>
+            </section>
 
-        <section className="grid gap-4 xl:grid-cols-2">
-          <Panel title="Jobs per day">
-            <JobsPerDayChart values={metrics.data?.metrics.by_created_day} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
-          </Panel>
-          <Panel title="Queue wait percentiles">
-            <PercentileChart label="queue wait" values={metrics.data?.metrics.queue_wait_seconds} />
-          </Panel>
-        </section>
+            <section className="grid gap-4 xl:grid-cols-2">
+              <Panel title="Jobs per day">
+                <JobsPerDayChart values={metrics.data?.metrics.by_created_day} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
+              </Panel>
+              <Panel title="Queue wait percentiles">
+                <PercentileChart label="queue wait" values={metrics.data?.metrics.queue_wait_seconds} />
+              </Panel>
+            </section>
+          </>
+        )}
       </main>
     </div>
   );
+}
+
+function JobDetailPage({ jobId, detail, onRefresh }: { jobId: number; detail: React.ReactNode; onRefresh: () => void }) {
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <a className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" href="/">
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Dashboard
+        </a>
+        <RefreshButton onClick={onRefresh} />
+      </div>
+      <Panel title={`Job #${jobId}`}>
+        {detail}
+      </Panel>
+    </div>
+  );
+}
+
+function JobDetailStatus({
+  selectedJobId,
+  selectedJob,
+  loading,
+  error,
+  session,
+  sessionEvents,
+  transcript,
+}: {
+  selectedJobId: number | null;
+  selectedJob: Job | null;
+  loading: boolean;
+  error: Error | null;
+  session: SessionCorrelation | undefined;
+  sessionEvents: SessionEvent[] | undefined;
+  transcript: TranscriptEntry[] | undefined;
+}) {
+  if (selectedJob) return <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} />;
+  if (selectedJobId !== null && loading) return <EmptyState text="Loading selected job..." />;
+  if (selectedJobId !== null && error) return <Banner tone="error" text={`Job #${selectedJobId}: ${error.message}`} />;
+  return <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />;
 }
 
 function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: boolean }) {
@@ -359,6 +562,8 @@ function JobsList({
   selectedJobId,
   selectedJob,
   session,
+  sessionEvents,
+  transcript,
   onSelect,
 }: {
   jobs: Job[];
@@ -366,6 +571,8 @@ function JobsList({
   selectedJobId: number | null;
   selectedJob: Job | null;
   session: SessionCorrelation | undefined;
+  sessionEvents: SessionEvent[] | undefined;
+  transcript: TranscriptEntry[] | undefined;
   onSelect: (id: number) => void;
 }) {
   if (loading && jobs.length === 0) return <EmptyState text="Loading jobs..." />;
@@ -374,7 +581,7 @@ function JobsList({
     <>
       <div className="grid gap-3 md:hidden">
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} selected={selectedJobId === job.id} selectedJob={selectedJob} session={session} onSelect={onSelect} />
+          <JobCard key={job.id} job={job} selected={selectedJobId === job.id} selectedJob={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} onSelect={onSelect} />
         ))}
       </div>
       <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
@@ -413,7 +620,7 @@ function JobsList({
               <td className="px-2 py-3">{job.attempts}</td>
               <td className="px-2 py-3">{formatSeconds(job.queue_wait_seconds)}</td>
               <td className="px-2 py-3">{formatSeconds(job.runtime_seconds)}</td>
-              <td className="px-2 py-3 font-mono text-xs">{job.updated_at}</td>
+              <td className="px-2 py-3 font-mono text-xs"><TimeText value={job.updated_at} compact /></td>
             </tr>
           ))}
         </tbody>
@@ -428,12 +635,16 @@ function JobCard({
   selected,
   selectedJob,
   session,
+  sessionEvents,
+  transcript,
   onSelect,
 }: {
   job: Job;
   selected: boolean;
   selectedJob: Job | null;
   session: SessionCorrelation | undefined;
+  sessionEvents: SessionEvent[] | undefined;
+  transcript: TranscriptEntry[] | undefined;
   onSelect: (id: number) => void;
 }) {
   return (
@@ -454,18 +665,27 @@ function JobCard({
       </button>
       {selected ? (
         <div className="border-t border-border p-3">
-          {selectedJob ? <JobDetail job={selectedJob} session={session} compact /> : <EmptyState text="Loading detail..." />}
+          {selectedJob ? <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} compact /> : <EmptyState text="Loading detail..." />}
         </div>
       ) : null}
     </article>
   );
 }
 
-function JobDetail({ job, session, compact = false }: { job: Job; session: SessionCorrelation | undefined; compact?: boolean }) {
+function JobDetail({ job, session, sessionEvents, transcript, compact = false }: { job: Job; session: SessionCorrelation | undefined; sessionEvents: SessionEvent[] | undefined; transcript: TranscriptEntry[] | undefined; compact?: boolean }) {
+  const shareHref = jobPath(job.id);
+  const eventRows = sessionEvents ?? [];
+  const transcriptRows = transcript ?? [];
   return (
     <div className="grid gap-4">
       <div className="grid gap-2">
-        <StatusBadge status={job.status} />
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={job.status} />
+          <a className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-xs font-semibold text-foreground hover:bg-slate-50" href={shareHref}>
+            <Link className="h-3.5 w-3.5" aria-hidden />
+            Job #{job.id}
+          </a>
+        </div>
         <div className="font-mono text-sm">{job.work_key}</div>
         <p className="text-sm text-muted">{job.subject}</p>
       </div>
@@ -474,6 +694,12 @@ function JobDetail({ job, session, compact = false }: { job: Job; session: Sessi
         <MiniStat label="Runtime" value={formatSeconds(job.runtime_seconds)} />
         <MiniStat label="Coalesced" value={String(job.coalesced_count)} />
       </div>
+      <div className={cn("grid gap-3 text-sm", compact ? "grid-cols-1" : "md:grid-cols-2 xl:grid-cols-4")}>
+        <MiniStat label="Created" value={<TimeText value={job.created_at} />} />
+        <MiniStat label="Started" value={job.started_at ? <TimeText value={job.started_at} /> : "n/a"} />
+        <MiniStat label="Updated" value={<TimeText value={job.updated_at} />} />
+        <MiniStat label="Finished" value={job.finished_at ? <TimeText value={job.finished_at} /> : "n/a"} />
+      </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">Timeline</h3>
         <div className="grid gap-3">
@@ -481,7 +707,7 @@ function JobDetail({ job, session, compact = false }: { job: Job; session: Sessi
             job.worklog?.map((entry) => (
               <div key={entry.id} className="border-l-2 border-primary pl-3">
                 <div className="text-sm font-semibold">{entry.phase}</div>
-                <div className="font-mono text-xs text-muted">{entry.ts}</div>
+                <div className="font-mono text-xs text-muted"><TimeText value={entry.ts} /></div>
                 <div className="text-sm">{entry.summary}</div>
                 {entry.detail ? <div className="mt-1 break-words font-mono text-xs text-muted">{entry.detail}</div> : null}
               </div>
@@ -509,12 +735,37 @@ function JobDetail({ job, session, compact = false }: { job: Job; session: Sessi
         )}
       </div>
       <div>
+        <h3 className="mb-2 text-sm font-semibold">Agent activity</h3>
+        <div className="grid max-h-[460px] gap-2 overflow-auto pr-1">
+          {eventRows.length > 0 ? (
+            eventRows.map((event, index) => (
+              <SessionEventRow key={event.id} event={event} defaultOpen={job.status === "running" || index >= eventRows.length - 2} />
+            ))
+          ) : (
+            <EmptyState text={job.status === "running" ? "Waiting for live agent output..." : "No agent activity has been recorded for this session."} />
+          )}
+        </div>
+      </div>
+      <div>
+        <h3 className="mb-2 text-sm font-semibold">Session transcript</h3>
+        <div className="grid max-h-[620px] gap-2 overflow-auto pr-1">
+          {transcriptRows.length > 0 ? (
+            transcriptRows.map((entry, index) => (
+              <TranscriptRow key={`${entry.timestamp ?? "entry"}-${index}`} entry={entry} defaultOpen={job.status === "running" || index >= transcriptRows.length - 2} />
+            ))
+          ) : (
+            <EmptyState text={job.status === "running" ? "Waiting for live transcript entries..." : "No OpenClaw transcript entries are available for this session."} />
+          )}
+        </div>
+      </div>
+      <div>
         <h3 className="mb-2 text-sm font-semibold">GitHub links</h3>
         <ul className="grid gap-2 text-sm">
           {job.github_urls.length > 0 ? (
             job.github_urls.map((url) => (
               <li key={url}>
                 <a className="break-all text-primary hover:underline" href={safeExternalUrl(url)} rel="noreferrer" target="_blank">
+                  <ExternalLink className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
                   {url}
                 </a>
               </li>
@@ -525,6 +776,58 @@ function JobDetail({ job, session, compact = false }: { job: Job; session: Sessi
         </ul>
       </div>
     </div>
+  );
+}
+
+function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntry; defaultOpen?: boolean }) {
+  return (
+    <CollapsibleLogSection
+      badge={entry.title}
+      meta={<TimeText value={entry.timestamp} />}
+      summary={`${entry.role} · ${entry.kind}`}
+      defaultOpen={defaultOpen}
+    >
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100">{entry.text}</pre>
+    </CollapsibleLogSection>
+  );
+}
+
+function SessionEventRow({ event, defaultOpen }: { event: SessionEvent; defaultOpen?: boolean }) {
+  return (
+    <CollapsibleLogSection badge={event.event_type} meta={<TimeText value={event.ts} />} summary={event.summary} defaultOpen={defaultOpen}>
+      {event.detail ? <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100">{event.detail}</pre> : null}
+    </CollapsibleLogSection>
+  );
+}
+
+function CollapsibleLogSection({
+  badge,
+  meta,
+  summary,
+  defaultOpen,
+  children,
+}: {
+  badge: string;
+  meta: React.ReactNode;
+  summary: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [isOpen, setIsOpen] = React.useState(Boolean(defaultOpen));
+  return (
+    <details className="group rounded border border-border bg-slate-50/60" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="grid cursor-pointer list-none gap-1 px-2 py-1.5 marker:hidden hover:bg-white">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted transition-transform group-open:rotate-180" aria-hidden />
+            <span className="truncate font-mono text-[11px] font-semibold text-muted">{badge}</span>
+          </div>
+          <span className="shrink-0 font-mono text-[11px] text-muted">{meta}</span>
+        </div>
+        <div className="min-w-0 truncate pl-5 text-xs text-foreground">{summary}</div>
+      </summary>
+      <div className="border-t border-border bg-white px-2 py-2">{children}</div>
+    </details>
   );
 }
 
@@ -627,7 +930,7 @@ function ProcessRow({ process }: { process: ProcessSample }) {
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0 rounded-md border border-border p-3">
       <div className="text-xs font-semibold text-muted">{label}</div>
@@ -655,12 +958,6 @@ function RefreshButton({ onClick }: { onClick: () => void }) {
       Refresh
     </button>
   );
-}
-
-function compactDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

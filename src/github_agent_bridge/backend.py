@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import json
 import os
@@ -15,11 +16,21 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .cli import DEFAULT_DB
-from .dashboard_data import get_job_detail, inspect_db_read_only, job_logs, job_session, list_jobs, metrics_summary
+from .dashboard_data import (
+    get_job_detail,
+    inspect_db_read_only,
+    job_logs,
+    job_session,
+    job_session_events,
+    job_session_transcript,
+    list_jobs,
+    metrics_summary,
+    transcript_entry_from_session_event,
+)
 from .monitor import monitor
 
 
@@ -71,6 +82,53 @@ def _csv_env(name: str) -> set[str]:
 
 def _redacted_headers() -> dict[str, str]:
     return {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+
+
+def _sse_headers() -> dict[str, str]:
+    return {
+        **_redacted_headers(),
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+
+
+def _sse_event(event: str, data: dict[str, Any], *, event_id: int | None = None) -> str:
+    prefix = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{prefix}event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
+def _transcript_sse_key(entry: dict[str, Any]) -> str:
+    return json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+async def _session_stream_events(db: str | Path, job_id: int, *, after_id: int | None = None, sleep_seconds: float = 2.0):
+    last_id = after_id or 0
+    sent_transcript_keys: set[str] = set()
+    while True:
+        emitted = False
+        events = job_session_events(db, job_id, after_id=last_id, limit=100)
+        for event in events:
+            last_id = int(event["id"])
+            emitted = True
+            yield _sse_event("session_event", event, event_id=last_id)
+            entry = transcript_entry_from_session_event(event)
+            if entry is not None:
+                key = _transcript_sse_key(entry)
+                if key not in sent_transcript_keys:
+                    sent_transcript_keys.add(key)
+                    yield _sse_event("transcript_entry", {"job_id": job_id, "entry": entry})
+        transcript = job_session_transcript(db, job_id, limit=500)
+        for entry in transcript:
+            key = _transcript_sse_key(entry)
+            if key in sent_transcript_keys:
+                continue
+            sent_transcript_keys.add(key)
+            emitted = True
+            yield _sse_event("transcript_entry", {"job_id": job_id, "entry": entry})
+        if not emitted:
+            yield _sse_event("session_heartbeat", {"job_id": job_id, "last_event_id": last_id})
+        await asyncio.sleep(sleep_seconds)
 
 
 def _sign(config: DashboardConfig, value: str) -> str:
@@ -206,12 +264,19 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "read_only": True,
         }
 
-    @app.get("/")
-    def dashboard(_: str = Depends(current_user)) -> FileResponse:
+    def dashboard_index() -> FileResponse:
         index = config.static_dir / "index.html"
         if not index.exists():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="dashboard_ui_not_built")
         return FileResponse(index, headers=_redacted_headers())
+
+    @app.get("/")
+    def dashboard(_: str = Depends(current_user)) -> FileResponse:
+        return dashboard_index()
+
+    @app.get("/jobs/{job_path:path}")
+    def dashboard_job(job_path: str, _: str = Depends(current_user)) -> FileResponse:
+        return dashboard_index()
 
     @app.get("/api/status")
     def api_status(_: str = Depends(current_user)) -> dict[str, Any]:
@@ -265,6 +330,25 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
         return {"session": session}
 
+    @app.get("/api/jobs/{job_id}/session/events")
+    def api_job_session_events(job_id: int, after_id: int | None = None, limit: int = 100, _: str = Depends(current_user)) -> dict[str, Any]:
+        if job_session(config.db, job_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+        return {"events": job_session_events(config.db, job_id, after_id=after_id, limit=limit)}
+
+    @app.get("/api/jobs/{job_id}/session/transcript")
+    def api_job_session_transcript(job_id: int, limit: int = 500, _: str = Depends(current_user)) -> dict[str, Any]:
+        if job_session(config.db, job_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+        return {"entries": job_session_transcript(config.db, job_id, limit=limit)}
+
+    @app.get("/api/jobs/{job_id}/session/stream")
+    def api_job_session_stream(job_id: int, after_id: int | None = None, _: str = Depends(current_user)) -> StreamingResponse:
+        if job_session(config.db, job_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+
+        return StreamingResponse(_session_stream_events(config.db, job_id, after_id=after_id), media_type="text/event-stream", headers=_sse_headers())
+
     @app.get("/api/metrics/summary")
     def api_metrics(_: str = Depends(current_user)) -> dict[str, Any]:
         return {"metrics": metrics_summary(config.db)}
@@ -290,7 +374,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
 
     @app.get("/api/events/stream")
     def api_events(_: str = Depends(current_user)) -> Response:
-        return Response("event: ready\ndata: {}\n\n", media_type="text/event-stream", headers=_redacted_headers())
+        return Response("event: ready\ndata: {}\n\n", media_type="text/event-stream", headers=_sse_headers())
 
     @app.get("/auth/login")
     def login() -> RedirectResponse:

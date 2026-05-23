@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-from github_agent_bridge.backend import DashboardConfig, _encode_session, _sign, create_app
-from github_agent_bridge.dashboard_data import get_job_detail, job_session, list_jobs, metrics_summary
+from github_agent_bridge.backend import DashboardConfig, _encode_session, _session_stream_events, _sign, create_app
+from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
@@ -49,6 +50,36 @@ def test_dashboard_serves_built_react_ui_with_existing_auth(tmp_path):
     app = create_app(DashboardConfig(db=db, static_dir=static_dir, require_auth=False))
 
     response = TestClient(app).get("/")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "root" in response.text
+
+
+def test_dashboard_serves_dedicated_job_frontend_route(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
+    JobQueue(db).enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    app = create_app(DashboardConfig(db=db, static_dir=static_dir, require_auth=False))
+
+    response = TestClient(app).get("/jobs/1")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "root" in response.text
+
+
+def test_dashboard_job_frontend_route_falls_back_for_deep_links(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
+    JobQueue(db).enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    app = create_app(DashboardConfig(db=db, static_dir=static_dir, require_auth=False))
+
+    response = TestClient(app).get("/jobs/1/session")
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -133,8 +164,177 @@ def test_dashboard_exposes_safe_openclaw_session_correlation(tmp_path):
     assert claimed.metadata["openclaw_session_id"] == f"github-agent-bridge-job-{job.id}"
     assert session is not None
     assert session["id"] == f"github-agent-bridge-job-{job.id}"
-    assert session["transcript_exposure"] == "not_exposed"
+    assert session["transcript_exposure"] == "redacted_dashboard"
     assert payload["id"] == session["id"]
+
+
+def test_dashboard_exposes_redacted_job_session_events(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+    q.add_session_event(job.id, "dispatch_finished", "OpenClaw agent exited rc=0", "token=secret ghp_abcdefghijklmnopqrstuvwxyz")
+
+    events = job_session_events(db, job.id)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get(f"/api/jobs/{job.id}/session/events").json()["events"]
+
+    assert [event["event_type"] for event in events] == ["claimed", "dispatch_finished"]
+    assert payload[-1]["detail"] == "token=[redacted] [redacted]"
+
+
+def test_dashboard_exposes_redacted_openclaw_session_transcript(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    session_file = sessions_dir / f"{claimed.metadata['openclaw_session_id']}.jsonl"
+    session_file.write_text(
+        "\n".join(
+            [
+                '{"type":"session","timestamp":"2026-05-23T08:00:00Z","cwd":"/tmp/work"}',
+                '{"type":"message","timestamp":"2026-05-23T08:00:01Z","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash","arguments":{"command":"echo ghp_abcdefghijklmnopqrstuvwxyz"}}]}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = sessions_dir / "sessions.json"
+    store.write_text(
+        '{"agent:github:main":{"sessionId":"%s","sessionFile":"%s"}}' % (claimed.metadata["openclaw_session_id"], session_file),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", str(store))
+
+    entries = job_session_transcript(db, job.id)
+    session = job_session(db, job.id)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get(f"/api/jobs/{job.id}/session/transcript").json()["entries"]
+
+    assert session is not None
+    assert session["transcript_available"] is True
+    assert entries[0]["title"] == "Session started"
+    assert payload[1]["title"] == "Tool call: bash"
+    assert "ghp_" not in payload[1]["text"]
+
+
+def test_dashboard_transcript_includes_live_openclaw_output_before_session_file(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+    q.add_session_event(job.id, "openclaw_stdout", "OpenClaw CLI output", "thinking live")
+    q.add_session_event(job.id, "openclaw_stderr", "OpenClaw CLI error output", "token=secret")
+
+    entries = job_session_transcript(db, job.id)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get(f"/api/jobs/{job.id}/session/transcript").json()["entries"]
+
+    assert [entry["kind"] for entry in entries] == ["openclaw_stdout", "openclaw_stderr"]
+    assert payload[0]["title"] == "OpenClaw stdout"
+    assert payload[0]["text"] == "thinking live"
+    assert payload[1]["text"] == "token=[redacted]"
+
+
+def test_dashboard_transcript_includes_live_openclaw_trajectory_before_session_file(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    session_id = claimed.metadata["openclaw_session_id"]
+    trajectory_file = sessions_dir / f"{session_id}.trajectory.jsonl"
+    trajectory_file.write_text(
+        "\n".join(
+            [
+                '{"type":"session.started","ts":"2026-05-23T08:00:00Z","data":{"workspaceDir":"/tmp/work"}}',
+                '{"type":"context.compiled","ts":"2026-05-23T08:00:00Z","data":{"systemPrompt":"do not expose"}}',
+                '{"type":"tool.call","ts":"2026-05-23T08:00:01Z","data":{"name":"bash","arguments":{"command":"echo ghp_abcdefghijklmnopqrstuvwxyz","cwd":"/tmp/work"}}}',
+                '{"type":"tool.result","ts":"2026-05-23T08:00:02Z","data":{"name":"bash","status":"completed","output":"live output"}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", str(sessions_dir / "sessions.json"))
+
+    entries = job_session_transcript(db, job.id)
+    session = job_session(db, job.id)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get(f"/api/jobs/{job.id}/session/transcript").json()["entries"]
+
+    assert session is not None
+    assert session["transcript_available"] is True
+    assert [entry["kind"] for entry in entries] == ["trajectory_session", "tool_call", "tool_result"]
+    assert all("do not expose" not in entry["text"] for entry in payload)
+    assert payload[1]["title"] == "Tool call: bash"
+    assert "ghp_" not in payload[1]["text"]
+    assert payload[2]["text"] == "status=completed\nlive output"
+
+
+def test_dashboard_sse_replays_existing_live_transcript_entries(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+    q.add_session_event(job.id, "openclaw_stdout", "OpenClaw CLI output", "already live")
+
+    async def first_chunks():
+        stream = _session_stream_events(db, job.id, sleep_seconds=0)
+        chunks = []
+        try:
+            for _ in range(6):
+                chunks.append(await anext(stream))
+                if "event: transcript_entry" in "".join(chunks):
+                    break
+        finally:
+            await stream.aclose()
+        return "".join(chunks)
+
+    body = asyncio.run(first_chunks())
+    assert "event: transcript_entry" in body
+    assert "already live" in body
+
+
+def test_dashboard_sse_streams_live_trajectory_entries_before_session_file(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    session_id = claimed.metadata["openclaw_session_id"]
+    (sessions_dir / f"{session_id}.trajectory.jsonl").write_text(
+        '{"type":"tool.result","ts":"2026-05-23T08:00:02Z","data":{"name":"bash","status":"completed","output":"live trajectory output"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", str(sessions_dir / "sessions.json"))
+
+    async def first_chunks():
+        stream = _session_stream_events(db, job.id, sleep_seconds=0)
+        chunks = []
+        try:
+            for _ in range(6):
+                chunks.append(await anext(stream))
+                if "live trajectory output" in "".join(chunks):
+                    break
+        finally:
+            await stream.aclose()
+        return "".join(chunks)
+
+    body = asyncio.run(first_chunks())
+    assert "event: transcript_entry" in body
+    assert "live trajectory output" in body
 
 
 def test_dashboard_requires_auth_by_default(tmp_path):

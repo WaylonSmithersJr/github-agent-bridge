@@ -241,6 +241,44 @@ def test_dashboard_transcript_includes_live_openclaw_output_before_session_file(
     assert payload[1]["text"] == "token=[redacted]"
 
 
+def test_dashboard_transcript_includes_live_openclaw_trajectory_before_session_file(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    session_id = claimed.metadata["openclaw_session_id"]
+    trajectory_file = sessions_dir / f"{session_id}.trajectory.jsonl"
+    trajectory_file.write_text(
+        "\n".join(
+            [
+                '{"type":"session.started","ts":"2026-05-23T08:00:00Z","data":{"workspaceDir":"/tmp/work"}}',
+                '{"type":"context.compiled","ts":"2026-05-23T08:00:00Z","data":{"systemPrompt":"do not expose"}}',
+                '{"type":"tool.call","ts":"2026-05-23T08:00:01Z","data":{"name":"bash","arguments":{"command":"echo ghp_abcdefghijklmnopqrstuvwxyz","cwd":"/tmp/work"}}}',
+                '{"type":"tool.result","ts":"2026-05-23T08:00:02Z","data":{"name":"bash","status":"completed","output":"live output"}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", str(sessions_dir / "sessions.json"))
+
+    entries = job_session_transcript(db, job.id)
+    session = job_session(db, job.id)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get(f"/api/jobs/{job.id}/session/transcript").json()["entries"]
+
+    assert session is not None
+    assert session["transcript_available"] is True
+    assert [entry["kind"] for entry in entries] == ["trajectory_session", "tool_call", "tool_result"]
+    assert all("do not expose" not in entry["text"] for entry in payload)
+    assert payload[1]["title"] == "Tool call: bash"
+    assert "ghp_" not in payload[1]["text"]
+    assert payload[2]["text"] == "status=completed\nlive output"
+
+
 def test_dashboard_sse_replays_existing_live_transcript_entries(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)
@@ -264,6 +302,39 @@ def test_dashboard_sse_replays_existing_live_transcript_entries(tmp_path):
     body = asyncio.run(first_chunks())
     assert "event: transcript_entry" in body
     assert "already live" in body
+
+
+def test_dashboard_sse_streams_live_trajectory_entries_before_session_file(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    session_id = claimed.metadata["openclaw_session_id"]
+    (sessions_dir / f"{session_id}.trajectory.jsonl").write_text(
+        '{"type":"tool.result","ts":"2026-05-23T08:00:02Z","data":{"name":"bash","status":"completed","output":"live trajectory output"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", str(sessions_dir / "sessions.json"))
+
+    async def first_chunks():
+        stream = _session_stream_events(db, job.id, sleep_seconds=0)
+        chunks = []
+        try:
+            for _ in range(6):
+                chunks.append(await anext(stream))
+                if "live trajectory output" in "".join(chunks):
+                    break
+        finally:
+            await stream.aclose()
+        return "".join(chunks)
+
+    body = asyncio.run(first_chunks())
+    assert "event: transcript_entry" in body
+    assert "live trajectory output" in body
 
 
 def test_dashboard_requires_auth_by_default(tmp_path):

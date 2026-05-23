@@ -167,9 +167,11 @@ session events and transcript entries directly, including already-recorded live
 transcript entries when a browser opens the page after the job has started, with
 heartbeat events and proxy buffering disabled for long-lived HTTPS connections. While a job is still
 running, live redacted OpenClaw stdout/stderr is also exposed as transcript
-entries so the focused job page does not wait for OpenClaw's final session file
-flush. The dashboard also exposes redacted OpenClaw transcript entries for the correlated session through
-`GET /api/jobs/{id}/session/transcript`. By default it looks up
+entries. The dashboard also reads OpenClaw's live trajectory file
+`github-agent-bridge-job-{id}.trajectory.jsonl`, so tool calls and tool results
+can stream before OpenClaw writes the final session transcript file. The
+dashboard also exposes redacted OpenClaw transcript entries for the correlated
+session through `GET /api/jobs/{id}/session/transcript`. By default it looks up
 `~/.openclaw/agents/github/sessions/sessions.json`, or the path set in
 `GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE`, and only returns entries for the
 job's deterministic session id. Transcript text is secret-redacted and truncated

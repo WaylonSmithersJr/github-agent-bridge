@@ -219,7 +219,10 @@ def job_session(db: str | Path, job_id: int) -> dict[str, Any] | None:
     session["job_id"] = job_id
     session["work_key"] = job["work_key"]
     session["status"] = job["status"]
-    session["transcript_available"] = openclaw_session_file(str(session["id"])) is not None
+    session_id = str(session["id"])
+    session["transcript_available"] = (
+        openclaw_session_file(session_id) is not None or openclaw_trajectory_file(session_id) is not None
+    )
     session["detail"] = (
         "Dispatches use this explicit OpenClaw session id. "
         "The dashboard exposes bounded, redacted bridge events and OpenClaw transcript entries for this session."
@@ -274,6 +277,19 @@ def job_session_transcript(db: str | Path, job_id: int, *, limit: int = 500) -> 
             entry = transcript_entry(item)
             if entry is not None:
                 entries.append(entry)
+    if (session.get("status") == "running" or not entries) and len(entries) < max_entries:
+        trajectory_file = openclaw_trajectory_file(session_id)
+        if trajectory_file is not None and trajectory_file.exists():
+            for line in trajectory_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                if len(entries) >= max_entries:
+                    break
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                entry = transcript_entry_from_trajectory(item)
+                if entry is not None:
+                    entries.append(entry)
     if session.get("status") == "running" and len(entries) < max_entries:
         live_events = job_session_events(db, job_id, limit=max_entries)
         for event in live_events:
@@ -305,6 +321,25 @@ def openclaw_session_file(session_id: str) -> Path | None:
         return path if path.exists() else None
     fallback = store.with_name(f"{session_id}.jsonl")
     return fallback if fallback.exists() else None
+
+
+def openclaw_trajectory_file(session_id: str) -> Path | None:
+    store = Path(os.getenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", "~/.openclaw/agents/github/sessions/sessions.json")).expanduser()
+    fallback = store.with_name(f"{session_id}.trajectory.jsonl")
+    if fallback.exists():
+        return fallback
+    pointer = store.with_name(f"{session_id}.trajectory-path.json")
+    if not pointer.exists():
+        return None
+    try:
+        payload = json.loads(pointer.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    path = payload.get("runtimeFile")
+    if not path:
+        return None
+    trajectory_file = Path(str(path)).expanduser()
+    return trajectory_file if trajectory_file.exists() else None
 
 
 def transcript_entry(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -364,6 +399,50 @@ def transcript_entry(item: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def transcript_entry_from_trajectory(item: dict[str, Any]) -> dict[str, Any] | None:
+    event_type = str(item.get("type") or "")
+    timestamp = item.get("ts")
+    data = item.get("data")
+    if not isinstance(data, dict):
+        return None
+    if event_type == "session.started":
+        workspace = data.get("workspaceDir") or item.get("workspaceDir") or ""
+        return {
+            "timestamp": timestamp,
+            "role": "system",
+            "kind": "trajectory_session",
+            "title": "Session started",
+            "text": redact_event_detail(f"workspace={workspace}"),
+        }
+    if event_type == "tool.call":
+        name = str(data.get("name") or "tool")
+        arguments = data.get("arguments") if isinstance(data.get("arguments"), dict) else {}
+        text = json.dumps(arguments, ensure_ascii=False, indent=2, sort_keys=True)
+        return {
+            "timestamp": timestamp,
+            "role": "assistant",
+            "kind": "tool_call",
+            "title": f"Tool call: {name}",
+            "text": _bounded_transcript_text(text),
+        }
+    if event_type == "tool.result":
+        name = str(data.get("name") or "tool")
+        output = data.get("output")
+        result = data.get("result")
+        if output is None and isinstance(result, dict):
+            output = result.get("output") or result.get("stdout") or result.get("stderr")
+        text = str(output or "")
+        status = str(data.get("status") or (result.get("status") if isinstance(result, dict) else "") or "completed")
+        return {
+            "timestamp": timestamp,
+            "role": "tool",
+            "kind": "tool_result",
+            "title": f"Tool result: {name}",
+            "text": _bounded_transcript_text(f"status={status}\n{text}".strip()),
+        }
+    return None
+
+
 def transcript_entry_from_session_event(event: dict[str, Any]) -> dict[str, Any] | None:
     event_type = str(event.get("event_type") or "")
     if event_type not in {"openclaw_stdout", "openclaw_stderr"}:
@@ -379,6 +458,13 @@ def transcript_entry_from_session_event(event: dict[str, Any]) -> dict[str, Any]
         "title": title,
         "text": detail,
     }
+
+
+def _bounded_transcript_text(text: str) -> str:
+    text = redact_event_detail(text)
+    if len(text) > 6000:
+        return text[:6000] + "\n... [truncated]"
+    return text
 
 
 def metrics_summary(db: str | Path) -> dict[str, Any]:

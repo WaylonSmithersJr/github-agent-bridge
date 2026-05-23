@@ -151,10 +151,14 @@ id so operators can correlate a bridge job with the OpenClaw session that ran
 it. The dashboard records bounded, redacted bridge-side session events when a
 job is claimed, dispatched and finished. Operators can read them with
 `GET /api/jobs/{id}/session/events` or subscribe to
-`GET /api/jobs/{id}/session/stream` for SSE updates. Raw local OpenClaw
-transcripts are still not served; transcript policy, admin access and retention
-need to be defined before exposing complete agent output. Persistent alert
-storage and historical proc sample retention remain later milestones.
+`GET /api/jobs/{id}/session/stream` for SSE updates. The dashboard also exposes
+redacted OpenClaw transcript entries for the correlated session through
+`GET /api/jobs/{id}/session/transcript`. By default it looks up
+`~/.openclaw/agents/github/sessions/sessions.json`, or the path set in
+`GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE`, and only returns entries for the
+job's deterministic session id. Transcript text is secret-redacted and truncated
+before it is returned to the authenticated dashboard. Persistent alert storage
+and historical proc sample retention remain later milestones.
 
 ## Operational SLOs
 

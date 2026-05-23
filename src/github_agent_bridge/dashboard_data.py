@@ -219,6 +219,7 @@ def job_session(db: str | Path, job_id: int) -> dict[str, Any] | None:
     session["job_id"] = job_id
     session["work_key"] = job["work_key"]
     session["status"] = job["status"]
+    session["transcript_available"] = openclaw_session_file(str(session["id"])) is not None
     session["detail"] = (
         "Dispatches use this explicit OpenClaw session id. "
         "The dashboard exposes bounded, redacted bridge events and OpenClaw transcript entries for this session."

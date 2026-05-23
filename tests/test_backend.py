@@ -195,9 +195,12 @@ def test_dashboard_exposes_redacted_openclaw_session_transcript(tmp_path, monkey
     monkeypatch.setenv("GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE", str(store))
 
     entries = job_session_transcript(db, job.id)
+    session = job_session(db, job.id)
     client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
     payload = client.get(f"/api/jobs/{job.id}/session/transcript").json()["entries"]
 
+    assert session is not None
+    assert session["transcript_available"] is True
     assert entries[0]["title"] == "Session started"
     assert payload[1]["title"] == "Tool call: bash"
     assert "ghp_" not in payload[1]["text"]

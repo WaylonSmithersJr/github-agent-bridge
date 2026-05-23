@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, CheckCircle2, Clock3, Cpu, ExternalLink, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, Clock3, Cpu, ExternalLink, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -200,10 +200,13 @@ function selectedJobIdFromPath(pathname = window.location.pathname) {
 function App() {
   const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "" });
   const [selectedJobId, setSelectedJobId] = React.useState<number | null>(() => selectedJobIdFromPath());
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary") });
+  const [pathname, setPathname] = React.useState(() => window.location.pathname);
+  const jobRouteId = selectedJobIdFromPath(pathname);
+  const isJobDetailRoute = jobRouteId !== null;
+  const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary"), enabled: !isJobDetailRoute });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
-  const jobs = useQuery({ queryKey: ["jobs", filters], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters)) });
-  const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes") });
+  const jobs = useQuery({ queryKey: ["jobs", filters], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters)), enabled: !isJobDetailRoute });
+  const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: !isJobDetailRoute });
   const detail = useQuery({
     queryKey: ["job", selectedJobId],
     queryFn: () => api<{ job: Job }>(`/api/jobs/${selectedJobId}`),
@@ -241,17 +244,17 @@ function App() {
   }, [selectedJobId]);
 
   React.useEffect(() => {
-    const syncFromPath = () => setSelectedJobId(selectedJobIdFromPath());
+    const syncFromPath = () => {
+      setPathname(window.location.pathname);
+      const nextJobId = selectedJobIdFromPath();
+      if (nextJobId !== null) setSelectedJobId(nextJobId);
+    };
     window.addEventListener("popstate", syncFromPath);
     return () => window.removeEventListener("popstate", syncFromPath);
   }, []);
 
   const selectJob = React.useCallback((jobId: number) => {
     setSelectedJobId(jobId);
-    const nextPath = jobPath(jobId);
-    if (window.location.pathname !== nextPath) {
-      window.history.pushState({}, "", nextPath);
-    }
   }, []);
 
   const counts = metrics.data?.metrics.status_counts ?? {};
@@ -273,46 +276,78 @@ function App() {
       </header>
 
       <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-4 py-4 md:px-6 md:py-5">
-        {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Summary metrics">
-          <Metric title="Pending" value={counts.pending ?? 0} icon={<Clock3 className="h-5 w-5" />} />
-          <Metric title="Running" value={counts.running ?? 0} icon={<Activity className="h-5 w-5" />} />
-          <Metric title="Blocked" value={counts.blocked ?? 0} icon={<AlertTriangle className="h-5 w-5" />} />
-          <Metric title="Done" value={counts.done ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} />
-        </section>
+        {jobRouteId !== null ? (
+          <JobDetailPage
+            jobId={jobRouteId}
+            detail={detailStatus}
+            onRefresh={() => {
+              detail.refetch();
+              session.refetch();
+              sessionEvents.refetch();
+              transcript.refetch();
+            }}
+          />
+        ) : (
+          <>
+            {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
+            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4" aria-label="Summary metrics">
+              <Metric title="Pending" value={counts.pending ?? 0} icon={<Clock3 className="h-5 w-5" />} />
+              <Metric title="Running" value={counts.running ?? 0} icon={<Activity className="h-5 w-5" />} />
+              <Metric title="Blocked" value={counts.blocked ?? 0} icon={<AlertTriangle className="h-5 w-5" />} />
+              <Metric title="Done" value={counts.done ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} />
+            </section>
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
-          <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
-            <Filters filters={filters} onChange={setFilters} />
-            {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-            <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} onSelect={selectJob} />
-            {selectedJobId !== null && !selectedJobInList ? <div className="mt-4 md:hidden">{detailStatus}</div> : null}
-          </Panel>
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
+              <Panel title="Jobs" action={<RefreshButton onClick={() => jobs.refetch()} />}>
+                <Filters filters={filters} onChange={setFilters} />
+                {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
+                <JobsList jobs={jobRows} loading={jobs.isLoading} selectedJobId={selectedJobId} selectedJob={selectedJob} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} onSelect={selectJob} />
+                {selectedJobId !== null && !selectedJobInList ? <div className="mt-4 md:hidden">{detailStatus}</div> : null}
+              </Panel>
 
-          <Panel title="Job detail" className="hidden xl:block xl:self-start xl:sticky xl:top-4">
-            {detailStatus}
-          </Panel>
-        </section>
+              <Panel title="Job detail" className="hidden xl:block xl:self-start xl:sticky xl:top-4">
+                {detailStatus}
+              </Panel>
+            </section>
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-          <Panel title="Process activity" action={<RefreshButton onClick={() => processes.refetch()} />}>
-            {processes.error ? <Banner tone="error" text={processes.error.message} /> : null}
-            <ProcessActivity data={processes.data} loading={processes.isLoading} />
-          </Panel>
-          <Panel title="Runtime percentiles">
-            <PercentileChart label="runtime" values={metrics.data?.metrics.runtime_seconds} />
-          </Panel>
-        </section>
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+              <Panel title="Process activity" action={<RefreshButton onClick={() => processes.refetch()} />}>
+                {processes.error ? <Banner tone="error" text={processes.error.message} /> : null}
+                <ProcessActivity data={processes.data} loading={processes.isLoading} />
+              </Panel>
+              <Panel title="Runtime percentiles">
+                <PercentileChart label="runtime" values={metrics.data?.metrics.runtime_seconds} />
+              </Panel>
+            </section>
 
-        <section className="grid gap-4 xl:grid-cols-2">
-          <Panel title="Jobs per day">
-            <JobsPerDayChart values={metrics.data?.metrics.by_created_day} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
-          </Panel>
-          <Panel title="Queue wait percentiles">
-            <PercentileChart label="queue wait" values={metrics.data?.metrics.queue_wait_seconds} />
-          </Panel>
-        </section>
+            <section className="grid gap-4 xl:grid-cols-2">
+              <Panel title="Jobs per day">
+                <JobsPerDayChart values={metrics.data?.metrics.by_created_day} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
+              </Panel>
+              <Panel title="Queue wait percentiles">
+                <PercentileChart label="queue wait" values={metrics.data?.metrics.queue_wait_seconds} />
+              </Panel>
+            </section>
+          </>
+        )}
       </main>
+    </div>
+  );
+}
+
+function JobDetailPage({ jobId, detail, onRefresh }: { jobId: number; detail: React.ReactNode; onRefresh: () => void }) {
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <a className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" href="/">
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Dashboard
+        </a>
+        <RefreshButton onClick={onRefresh} />
+      </div>
+      <Panel title={`Job #${jobId}`}>
+        {detail}
+      </Panel>
     </div>
   );
 }

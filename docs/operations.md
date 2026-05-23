@@ -148,8 +148,10 @@ snapshot of executor child processes through `GET /api/processes`, and safe
 OpenClaw session correlation through `GET /api/jobs/{id}/session`. New
 dispatches use a deterministic `github-agent-bridge-job-{id}` OpenClaw session
 id so operators can correlate a bridge job with the OpenClaw session that ran
-it. The dashboard records bounded, redacted bridge-side session events when a
-job is claimed, dispatched and finished. Operators can read them with
+it. The React route `/jobs/{id}` is a focused job detail page for sharing a
+single job/session, with a link back to the generic dashboard. The dashboard
+records bounded, redacted bridge-side session events when a job is claimed,
+dispatched and finished. Operators can read them with
 `GET /api/jobs/{id}/session/events` or subscribe to
 `GET /api/jobs/{id}/session/stream` for SSE updates. The dashboard also exposes
 redacted OpenClaw transcript entries for the correlated session through

@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, Clock3, Cpu, ExternalLink, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -602,6 +602,8 @@ function JobCard({
 
 function JobDetail({ job, session, sessionEvents, transcript, compact = false }: { job: Job; session: SessionCorrelation | undefined; sessionEvents: SessionEvent[] | undefined; transcript: TranscriptEntry[] | undefined; compact?: boolean }) {
   const shareHref = jobPath(job.id);
+  const eventRows = sessionEvents ?? [];
+  const transcriptRows = transcript ?? [];
   return (
     <div className="grid gap-4">
       <div className="grid gap-2">
@@ -656,9 +658,11 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
       </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">Agent activity</h3>
-        <div className="grid max-h-[460px] gap-3 overflow-auto pr-1">
-          {(sessionEvents ?? []).length > 0 ? (
-            sessionEvents?.map((event) => <SessionEventRow key={event.id} event={event} />)
+        <div className="grid max-h-[460px] gap-2 overflow-auto pr-1">
+          {eventRows.length > 0 ? (
+            eventRows.map((event, index) => (
+              <SessionEventRow key={event.id} event={event} defaultOpen={job.status === "running" || index >= eventRows.length - 2} />
+            ))
           ) : (
             <EmptyState text={job.status === "running" ? "Waiting for live agent output..." : "No agent activity has been recorded for this session."} />
           )}
@@ -666,9 +670,11 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
       </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">Session transcript</h3>
-        <div className="grid max-h-[620px] gap-3 overflow-auto pr-1">
-          {(transcript ?? []).length > 0 ? (
-            transcript?.map((entry, index) => <TranscriptRow key={`${entry.timestamp ?? "entry"}-${index}`} entry={entry} />)
+        <div className="grid max-h-[620px] gap-2 overflow-auto pr-1">
+          {transcriptRows.length > 0 ? (
+            transcriptRows.map((entry, index) => (
+              <TranscriptRow key={`${entry.timestamp ?? "entry"}-${index}`} entry={entry} defaultOpen={job.status === "running" || index >= transcriptRows.length - 2} />
+            ))
           ) : (
             <EmptyState text={job.status === "running" ? "Waiting for live transcript entries..." : "No OpenClaw transcript entries are available for this session."} />
           )}
@@ -695,28 +701,55 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
   );
 }
 
-function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
+function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntry; defaultOpen?: boolean }) {
   return (
-    <div className="rounded-md border border-border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-muted">{entry.title}</span>
-        <span className="font-mono text-xs text-muted">{entry.timestamp ?? ""}</span>
-      </div>
+    <CollapsibleLogSection
+      badge={entry.title}
+      meta={entry.timestamp ?? ""}
+      summary={`${entry.role} · ${entry.kind}`}
+      defaultOpen={defaultOpen}
+    >
       <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">{entry.text}</pre>
-    </div>
+    </CollapsibleLogSection>
   );
 }
 
-function SessionEventRow({ event }: { event: SessionEvent }) {
+function SessionEventRow({ event, defaultOpen }: { event: SessionEvent; defaultOpen?: boolean }) {
   return (
-    <div className="rounded-md border border-border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-muted">{event.event_type}</span>
-        <span className="font-mono text-xs text-muted">{event.ts}</span>
-      </div>
-      <div className="mt-2 text-sm">{event.summary}</div>
+    <CollapsibleLogSection badge={event.event_type} meta={event.ts} summary={event.summary} defaultOpen={defaultOpen}>
       {event.detail ? <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">{event.detail}</pre> : null}
-    </div>
+    </CollapsibleLogSection>
+  );
+}
+
+function CollapsibleLogSection({
+  badge,
+  meta,
+  summary,
+  defaultOpen,
+  children,
+}: {
+  badge: string;
+  meta: string;
+  summary: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [isOpen, setIsOpen] = React.useState(Boolean(defaultOpen));
+  return (
+    <details className="group rounded-md border border-border bg-white" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="grid cursor-pointer list-none gap-2 p-3 marker:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted transition-transform group-open:rotate-180" aria-hidden />
+            <span className="rounded-full border border-border px-2 py-0.5 text-xs font-semibold text-muted">{badge}</span>
+          </div>
+          <span className="font-mono text-xs text-muted">{meta}</span>
+        </div>
+        <div className="break-words pl-6 text-sm">{summary}</div>
+      </summary>
+      <div className="border-t border-border px-3 pb-3 pt-1">{children}</div>
+    </details>
   );
 }
 

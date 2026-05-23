@@ -160,3 +160,12 @@ def test_sync_after_merge_is_trusted_auto_by_default_not_auto():
 
     assert Policy(trusted_orgs={"gisce"}).decision(n, ctx, "sync_after_merge") == "auto_trusted"
     assert Policy().decision(n, ctx, "sync_after_merge") == "ask"
+
+
+def test_workflow_run_failed_is_trusted_auto_by_default_not_auto():
+    body = "https://github.com/gisce/erp/actions/runs/26325244472"
+    n = Notification(1, "<x@github.com>", "subj", "notifications@github.com", body, auth={"spf": True, "dkim": True, "dmarc": True})
+    ctx = extract_github_context(body)
+
+    assert Policy(trusted_orgs={"gisce"}).decision(n, ctx, "workflow_run_failed") == "auto_trusted"
+    assert Policy().decision(n, ctx, "workflow_run_failed") == "ask"

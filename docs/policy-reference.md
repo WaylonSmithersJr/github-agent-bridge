@@ -75,7 +75,7 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
   "actions": {
     "auto": ["archive_notification"],
     "ask": [],
-    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "docs_update", "content_change"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed", "docs_update", "content_change"],
     "deny": ["merge_main", "org_permissions_change", "manage_secrets", "delete_remote_repo_or_branch"]
   },
   "feedbackLearning": {
@@ -392,6 +392,7 @@ Supported action names currently produced by the parser:
 | --- | --- | --- |
 | `archive_notification` | Notification is routine and does not mention/assign/request the bot. | Persist as handled without agent work. |
 | `sync_after_merge` | Notification text contains `merged`. | Dispatch trusted post-merge workspace cleanup to the agent. |
+| `workflow_run_failed` | Notification text contains a GitHub Actions run URL and a failure marker such as `run failed`, `workflow failed`, or `job failed`. | Dispatch trusted CI failure investigation to the agent. |
 | `submit_review` | GitHub requested a review from the bot. | React 👀 and dispatch review-only work that must end with a formal PR review verdict. |
 | `reply_comment` | Bot mentioned, Copilot review, or PR review/comment notification. | React 👀 and dispatch agent work/reply. |
 | `open_issue` | Bot assigned to an issue/PR. | React 👀 and dispatch agent work for the assigned thread. |
@@ -438,7 +439,7 @@ Typical values:
 
 ```json
 {
-  "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"]
+  "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"]
 }
 ```
 
@@ -449,6 +450,8 @@ The example policy may include future action labels such as `docs_update` or `co
 `submit_review` is classified from GitHub review-request notifications and is part of `trustedAuto` by default. It dispatches a `review_only` prompt with the packaged `pr_review` rule: the agent must use GitHub's formal Pull Request Review flow (`approve`, `comment`, or `request changes`) instead of leaving only a normal PR comment.
 
 `sync_after_merge` is classified from GitHub merge notifications and is part of `trustedAuto` by default. It dispatches an agent prompt with the packaged `sync_after_merge` rule.
+
+`workflow_run_failed` is classified from GitHub Actions failed-run notifications and is part of `trustedAuto` by default. The context work key is the run URL, for example `owner/repo/actions/runs/123`, so separate failing runs do not coalesce into a generic unknown job.
 
 The bridge does not know local worktree paths. The agent must resolve the dedicated PR worktree using its own repo/workspace conventions. The cleanup rule is conservative:
 
@@ -529,7 +532,7 @@ Use lowercase in policy files for readability.
   "trustedOrgs": ["your-org"],
   "actions": {
     "auto": ["archive_notification"],
-    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"],
     "ask": []
   }
 }
@@ -556,7 +559,7 @@ Use lowercase in policy files for readability.
   },
   "actions": {
     "auto": ["archive_notification"],
-    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"],
     "ask": []
   }
 }
@@ -570,7 +573,7 @@ Use lowercase in policy files for readability.
   "trustedOrgs": [],
   "actions": {
     "auto": ["archive_notification"],
-    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"],
     "ask": ["reply_comment", "open_issue"]
   }
 }

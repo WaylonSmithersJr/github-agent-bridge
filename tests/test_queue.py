@@ -67,6 +67,21 @@ def test_enqueue_captures_feedback_for_actionable_jobs(tmp_path, monkeypatch):
     assert captured == [("q.sqlite3", "<1@github.com>", "gisce/erp#1", "reply_comment", "auto_trusted", "review_only")]
 
 
+def test_enqueue_workflow_run_failed_notification(tmp_path):
+    body = "Run failed: https://github.com/gisce/erp/actions/runs/26325244472"
+    n = Notification(uid=1, message_id="<run@github.com>", subject="[gisce/erp] Run failed: tests - main", from_addr="Edu <notifications@github.com>", body=body, auth={"spf": True, "dkim": True, "dmarc": True})
+    q = JobQueue(tmp_path / "q.sqlite3")
+
+    job, state = q.enqueue(n, policy())
+
+    assert state == "enqueued"
+    assert job is not None
+    assert job.action == "workflow_run_failed"
+    assert job.work_intent == "work_allowed"
+    assert job.work_key == "gisce/erp/actions/runs/26325244472"
+    assert job.context.target_kind == "workflow_run"
+
+
 def test_duplicate_enqueue_does_not_recapture_feedback(tmp_path, monkeypatch):
     captured = []
     monkeypatch.setattr("github_agent_bridge.feedback.capture_feedback", lambda *args: captured.append(args) or True)

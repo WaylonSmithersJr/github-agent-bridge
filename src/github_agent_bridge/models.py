@@ -21,6 +21,7 @@ class GitHubContext:
     commit_comment_id: int | None = None
     commit_sha: str | None = None
     target_kind: str | None = None
+    workflow_run_id: int | None = None
 
     @property
     def work_key(self) -> str:
@@ -28,6 +29,8 @@ class GitHubContext:
             return f"{self.repo}#{self.issue_number}"
         if self.repo and self.commit_sha:
             return f"{self.repo}@{self.commit_sha[:12]}"
+        if self.repo and self.workflow_run_id:
+            return f"{self.repo}/actions/runs/{self.workflow_run_id}"
         return "unknown/repo#0"
 
     @property

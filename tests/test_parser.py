@@ -19,9 +19,26 @@ def test_extract_commit_comment_context():
     assert ctx.work_key == "pilipilisbot/github-agent-bridge@fbd7bc190e4f"
 
 
+def test_extract_workflow_run_context():
+    ctx = extract_github_context("Run failed: https://github.com/pilipilisbot/github-agent-bridge/actions/runs/26325244472")
+    assert ctx.repo == "pilipilisbot/github-agent-bridge"
+    assert ctx.workflow_run_id == 26325244472
+    assert ctx.issue_number is None
+    assert ctx.target_kind == "workflow_run"
+    assert ctx.work_key == "pilipilisbot/github-agent-bridge/actions/runs/26325244472"
+
+
 def test_mentions_are_actionable():
     assert classify_github_action("Re: [x] PR", "@pilipilisbot fes-ho") == "reply_comment"
     assert classify_github_action("Re: [x] PR", "You are receiving this because you were mentioned.") == "reply_comment"
+
+
+def test_workflow_run_failed_is_actionable_without_mention():
+    subject = "[pilipilisbot/github-agent-bridge] Run failed: tests - main"
+    body = "View run: https://github.com/pilipilisbot/github-agent-bridge/actions/runs/26325244472"
+
+    assert classify_github_action(subject, body) == "workflow_run_failed"
+    assert classify_work_intent(subject, body) == "work_allowed"
 
 
 def test_copilot_comment_is_actionable():

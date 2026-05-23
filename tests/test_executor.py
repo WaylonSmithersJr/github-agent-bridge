@@ -86,6 +86,21 @@ def enqueue_pr_comment(queue: JobQueue):
     return job
 
 
+def enqueue_workflow_run_failed(queue: JobQueue):
+    notification = Notification(
+        uid=3,
+        message_id="<gisce/erp/actions/runs/26325244472@github.com>",
+        subject="[gisce/erp] Run failed: tests - main",
+        from_addr="notifications@github.com",
+        body="Run failed: https://github.com/gisce/erp/actions/runs/26325244472",
+    )
+    job, state = queue.enqueue(notification, Policy(trusted_orgs={"gisce"}))
+    assert state == "enqueued"
+    assert job is not None
+    assert job.action == "workflow_run_failed"
+    return job
+
+
 def test_assigned_pr_comment_upgrades_to_work_allowed(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     enqueue_pr_comment(queue)
@@ -219,6 +234,23 @@ def test_work_allowed_dispatch_blocks_after_auto_retry_without_visible_github_fo
     assert stored.status == "blocked"
     assert stored.last_error == "ok"
     assert stored.attempts == 2
+
+
+def test_workflow_run_failed_dispatch_does_not_require_thread_followup(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_workflow_run_failed(queue)
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=False, mentioned=False)
+    github.followup_url = None
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert dispatcher.jobs
+    assert github.eyes == 1
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
 
 
 def test_non_actionable_review_reacts_without_dispatch_even_when_assigned(tmp_path):

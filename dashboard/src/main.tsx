@@ -796,16 +796,16 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
         <div className="min-w-0 break-words font-mono text-sm [overflow-wrap:anywhere]">{job.work_key}</div>
         <p className="min-w-0 break-words text-sm text-muted [overflow-wrap:anywhere]">{job.subject}</p>
       </div>
-      <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-3")}>
+      <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-3")}>
         <MiniStat label="Queue wait" value={formatSeconds(job.queue_wait_seconds)} />
         <MiniStat label="Runtime" value={formatSeconds(job.runtime_seconds)} />
         <MiniStat label="Coalesced" value={String(job.coalesced_count)} />
       </div>
-      <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "sm:grid-cols-2 xl:grid-cols-4")}>
-        <MiniStat label="Created" value={<TimeText value={job.created_at} />} />
-        <MiniStat label="Started" value={job.started_at ? <TimeText value={job.started_at} /> : "n/a"} />
-        <MiniStat label="Updated" value={<TimeText value={job.updated_at} />} />
-        <MiniStat label="Finished" value={job.finished_at ? <TimeText value={job.finished_at} /> : "n/a"} />
+      <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-2 xl:grid-cols-4")}>
+        <MiniStat label="Created" value={<TimeText value={job.created_at} compact />} />
+        <MiniStat label="Started" value={job.started_at ? <TimeText value={job.started_at} compact /> : "n/a"} />
+        <MiniStat label="Updated" value={<TimeText value={job.updated_at} compact />} />
+        <MiniStat label="Finished" value={job.finished_at ? <TimeText value={job.finished_at} compact /> : "n/a"} />
       </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">Timeline</h3>

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.14.4 (2026-05-24)
+
+### Bug Fixes
+
+- Simplify mobile dashboard header
+  ([`26540a3`](https://github.com/pilipilisbot/github-agent-bridge/commit/26540a3e1c7ba30d0ae4c4d4e04ba0e63e9e17a6))
+
+
 ## v0.14.3 (2026-05-23)
 
 ### Bug Fixes

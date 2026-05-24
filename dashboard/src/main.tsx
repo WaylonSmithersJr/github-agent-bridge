@@ -449,7 +449,7 @@ function App() {
         </div>
       </header>
 
-      <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-4 py-4 md:px-6 md:py-5">
+      <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-3 py-4 sm:px-4 md:px-6 md:py-5">
         {jobRouteId !== null ? (
           <JobDetailPage
             jobId={jobRouteId}
@@ -514,7 +514,7 @@ function App() {
 
 function JobDetailPage({ jobId, detail, onRefresh }: { jobId: number; detail: React.ReactNode; onRefresh: () => void }) {
   return (
-    <div className="grid gap-4">
+    <div className="grid min-w-0 gap-3 sm:gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <a className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" href="/">
           <ArrowLeft className="h-4 w-4" aria-hidden />
@@ -522,7 +522,7 @@ function JobDetailPage({ jobId, detail, onRefresh }: { jobId: number; detail: Re
         </a>
         <RefreshButton onClick={onRefresh} />
       </div>
-      <Panel title={`Job #${jobId}`}>
+      <Panel title={`Job #${jobId}`} className="p-3 sm:p-4">
         {detail}
       </Panel>
     </div>
@@ -596,7 +596,7 @@ function JobsHeader({ count, limit, loading, onRefresh }: { count: number; limit
 
 function Panel({ title, action, children, className, flushHeader = false }: { title: string; action?: React.ReactNode; children: React.ReactNode; className?: string; flushHeader?: boolean }) {
   return (
-    <section className={cn("rounded-lg border border-border bg-panel p-4 shadow-sm", className)}>
+    <section className={cn("min-w-0 rounded-lg border border-border bg-panel p-4 shadow-sm", className)}>
       <div className={cn("flex items-center justify-between gap-3", !flushHeader && "mb-4")}>
         <h2 className="text-sm font-semibold">{title}</h2>
         {action}
@@ -784,7 +784,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
   const activityGroups = groupSessionEvents(eventRows);
   const transcriptGroups = groupTranscriptEntries(transcriptRows);
   return (
-    <div className="grid gap-4">
+    <div className="grid min-w-0 gap-4">
       <div className="grid gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={job.status} />
@@ -793,15 +793,15 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
             Job #{job.id}
           </a>
         </div>
-        <div className="font-mono text-sm">{job.work_key}</div>
-        <p className="text-sm text-muted">{job.subject}</p>
+        <div className="min-w-0 break-words font-mono text-sm [overflow-wrap:anywhere]">{job.work_key}</div>
+        <p className="min-w-0 break-words text-sm text-muted [overflow-wrap:anywhere]">{job.subject}</p>
       </div>
-      <div className={cn("grid gap-3 text-sm", compact ? "grid-cols-1" : "grid-cols-3")}>
+      <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-3")}>
         <MiniStat label="Queue wait" value={formatSeconds(job.queue_wait_seconds)} />
         <MiniStat label="Runtime" value={formatSeconds(job.runtime_seconds)} />
         <MiniStat label="Coalesced" value={String(job.coalesced_count)} />
       </div>
-      <div className={cn("grid gap-3 text-sm", compact ? "grid-cols-1" : "md:grid-cols-2 xl:grid-cols-4")}>
+      <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "sm:grid-cols-2 xl:grid-cols-4")}>
         <MiniStat label="Created" value={<TimeText value={job.created_at} />} />
         <MiniStat label="Started" value={job.started_at ? <TimeText value={job.started_at} /> : "n/a"} />
         <MiniStat label="Updated" value={<TimeText value={job.updated_at} />} />
@@ -809,14 +809,14 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
       </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">Timeline</h3>
-        <div className="grid gap-3">
+        <div className="grid min-w-0 gap-3">
           {(job.worklog ?? []).length > 0 ? (
             job.worklog?.map((entry) => (
-              <div key={entry.id} className="border-l-2 border-primary pl-3">
+              <div key={entry.id} className="min-w-0 border-l-2 border-primary pl-3">
                 <div className="text-sm font-semibold">{entry.phase}</div>
                 <div className="font-mono text-xs text-muted"><TimeText value={entry.ts} /></div>
-                <div className="text-sm">{entry.summary}</div>
-                {entry.detail ? <div className="mt-1 break-words font-mono text-xs text-muted">{entry.detail}</div> : null}
+                <div className="break-words text-sm [overflow-wrap:anywhere]">{entry.summary}</div>
+                {entry.detail ? <div className="mt-1 break-words font-mono text-xs text-muted [overflow-wrap:anywhere]">{entry.detail}</div> : null}
               </div>
             ))
           ) : (
@@ -835,7 +835,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
               <MiniStat label="Session ID" value={session.id} />
               <MiniStat label="Source" value={session.source} />
             </div>
-            <p className="text-xs text-muted">{session.detail}</p>
+            <p className="break-words text-xs text-muted [overflow-wrap:anywhere]">{session.detail}</p>
           </div>
         ) : (
           <EmptyState text="Session correlation is loading." />
@@ -843,7 +843,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
       </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">Agent activity</h3>
-        <div className="grid max-h-[460px] gap-2 overflow-auto pr-1">
+        <div className="grid max-h-[460px] min-w-0 gap-2 overflow-auto pr-1">
           {activityGroups.length > 0 ? (
             activityGroups.map((event, index) => (
               <SessionEventRow key={event.id} event={event} defaultOpen={defaultLogOpen(event.eventType, job.status === "running", index, activityGroups.length)} />
@@ -855,7 +855,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
       </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">Session transcript</h3>
-        <div className="grid max-h-[620px] gap-2 overflow-auto pr-1">
+        <div className="grid max-h-[620px] min-w-0 gap-2 overflow-auto pr-1">
           {transcriptGroups.length > 0 ? (
             transcriptGroups.map((entry, index) => (
               <TranscriptRow key={entry.id} entry={entry} defaultOpen={defaultLogOpen(entry.kind, job.status === "running", index, transcriptGroups.length)} />
@@ -871,7 +871,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
           {job.github_urls.length > 0 ? (
             job.github_urls.map((url) => (
               <li key={url}>
-                <a className="break-all text-primary hover:underline" href={safeExternalUrl(url)} rel="noreferrer" target="_blank">
+                <a className="break-all text-primary hover:underline [overflow-wrap:anywhere]" href={safeExternalUrl(url)} rel="noreferrer" target="_blank">
                   <ExternalLink className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
                   {url}
                 </a>
@@ -895,7 +895,7 @@ function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntryGroup; de
       summary={entry.summary}
       defaultOpen={defaultOpen}
     >
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100">{entry.text}</pre>
+      <pre className="max-h-72 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100 [overflow-wrap:anywhere]">{entry.text}</pre>
     </CollapsibleLogSection>
   );
 }
@@ -903,7 +903,7 @@ function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntryGroup; de
 function SessionEventRow({ event, defaultOpen }: { event: SessionEventGroup; defaultOpen?: boolean }) {
   return (
     <CollapsibleLogSection badge={event.badge} meta={<TimeText value={event.meta} />} count={event.count} summary={event.summary} defaultOpen={defaultOpen}>
-      {event.detail ? <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100">{event.detail}</pre> : null}
+      {event.detail ? <pre className="max-h-56 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100 [overflow-wrap:anywhere]">{event.detail}</pre> : null}
     </CollapsibleLogSection>
   );
 }
@@ -925,19 +925,19 @@ function CollapsibleLogSection({
 }) {
   const [isOpen, setIsOpen] = React.useState(Boolean(defaultOpen));
   return (
-    <details className="group rounded border border-border bg-slate-50/60" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+    <details className="group min-w-0 rounded border border-border bg-slate-50/60" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
       <summary className="grid cursor-pointer list-none gap-1 px-2 py-1.5 marker:hidden hover:bg-white">
-        <div className="flex min-w-0 items-center justify-between gap-2">
+        <div className="grid min-w-0 gap-1 sm:flex sm:items-center sm:justify-between sm:gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
             <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted transition-transform group-open:rotate-180" aria-hidden />
             <span className="truncate font-mono text-[11px] font-semibold text-muted">{badge}</span>
             {count && count > 1 ? <span className="rounded-sm border border-border px-1 font-mono text-[10px] text-muted">{count}</span> : null}
           </div>
-          <span className="shrink-0 font-mono text-[11px] text-muted">{meta}</span>
+          <span className="min-w-0 truncate pl-5 font-mono text-[11px] text-muted sm:shrink-0 sm:pl-0">{meta}</span>
         </div>
-        <div className="min-w-0 truncate pl-5 text-xs text-foreground">{summary}</div>
+        <div className="min-w-0 break-words pl-5 text-xs text-foreground [overflow-wrap:anywhere] sm:truncate">{summary}</div>
       </summary>
-      <div className="border-t border-border bg-white px-2 py-2">{children}</div>
+      <div className="min-w-0 border-t border-border bg-white px-2 py-2">{children}</div>
     </details>
   );
 }
@@ -1117,7 +1117,7 @@ function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0 rounded-md border border-border p-3">
       <div className="text-xs font-semibold text-muted">{label}</div>
-      <div className="mt-1 break-words text-sm">{value}</div>
+      <div className="mt-1 min-w-0 break-words text-sm [overflow-wrap:anywhere]">{value}</div>
     </div>
   );
 }

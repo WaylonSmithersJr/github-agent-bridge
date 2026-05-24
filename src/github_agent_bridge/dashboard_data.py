@@ -128,6 +128,8 @@ def inspect_db_read_only(db: str | Path) -> dict[str, Any]:
                 "age_seconds": duration_seconds(row["started_at"]),
                 "idle_seconds": duration_seconds(row["updated_at"]),
                 "last_worklog": _last_worklog(con, int(row["id"])),
+                "semantic_progress": _latest_job_progress(con, int(row["id"]), "semantic"),
+                "visible_progress": _latest_job_progress(con, int(row["id"]), "visible"),
             }
             for row in running_rows
         ]
@@ -186,6 +188,13 @@ def get_job_detail(db: str | Path, job_id: int) -> dict[str, Any] | None:
                 (job_id,),
             ).fetchall()
         ] if table_exists(con, "worklog") else []
+        job["progress"] = [
+            dict(progress)
+            for progress in con.execute(
+                "SELECT id, ts, kind, phase, summary, detail FROM job_progress WHERE job_id=? ORDER BY id",
+                (job_id,),
+            ).fetchall()
+        ] if table_exists(con, "job_progress") else []
         job["coalesced_notifications"] = [
             {
                 "id": row["id"],
@@ -217,6 +226,16 @@ def job_logs(db: str | Path, job_id: int, limit: int = 100) -> list[dict[str, An
             (job_id, coerce_limit(limit, maximum=500)),
         ).fetchall()
     return [dict(row) for row in reversed(rows)]
+
+
+def latest_job_progress(db: str | Path, job_id: int, kind: str | None = None) -> dict[str, Any] | None:
+    path = Path(db).expanduser()
+    if not path.exists():
+        return None
+    with readonly_connect(path) as con:
+        if not table_exists(con, "job_progress"):
+            return None
+        return _latest_job_progress(con, job_id, kind)
 
 
 def job_session(db: str | Path, job_id: int) -> dict[str, Any] | None:
@@ -537,3 +556,22 @@ def _last_worklog(con: sqlite3.Connection, job_id: int) -> dict[str, Any] | None
         (job_id,),
     ).fetchone()
     return dict(row) if row else None
+
+
+def _latest_job_progress(con: sqlite3.Connection, job_id: int, kind: str | None = None) -> dict[str, Any] | None:
+    if not table_exists(con, "job_progress"):
+        return None
+    where = "job_id=?"
+    args: list[Any] = [job_id]
+    if kind:
+        where += " AND kind=?"
+        args.append(kind)
+    row = con.execute(
+        f"SELECT id, ts, kind, phase, summary, detail FROM job_progress WHERE {where} ORDER BY id DESC LIMIT 1",
+        args,
+    ).fetchone()
+    if row is None:
+        return None
+    progress = dict(row)
+    progress["age_seconds"] = duration_seconds(progress.get("ts"))
+    return progress

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .dashboard_data import inspect_db_read_only
-from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS, record_monitor_observation
+from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS, recent_process_samples, record_monitor_observation
 from .process_inspection import direct_children
 
 
@@ -17,6 +17,7 @@ class MonitorThresholds:
     pending_warn_seconds: int = 300
     review_running_warn_seconds: int = 1200
     work_running_warn_seconds: int = 4200
+    progress_warn_seconds: int = 600
     reader_recent_seconds: int = 180
 
 
@@ -48,13 +49,17 @@ class MonitorReport:
             parts.extend(f"- {a}" for a in self.alerts)
         for job in metrics.get("running_jobs", []):
             last = job.get("last_worklog") or {}
+            semantic = job.get("semantic_progress") or {}
+            visible = job.get("visible_progress") or {}
             parts.append(
                 "- running detail: "
                 f"job={job.get('id')} key={job.get('work_key')} "
                 f"intent={job.get('work_intent')} attempts={job.get('attempts')} "
                 f"worker={job.get('locked_by')} age={job.get('age_seconds')}s "
                 f"idle={job.get('idle_seconds')}s "
-                f"last={last.get('phase', '-')}/{last.get('summary', '-')}"
+                f"last={last.get('phase', '-')}/{last.get('summary', '-')} "
+                f"semantic={semantic.get('phase', '-')}/{semantic.get('age_seconds', '-')}s "
+                f"visible={visible.get('phase', '-')}/{visible.get('age_seconds', '-')}s"
             )
         children = metrics.get("executor_children") or []
         if children:
@@ -147,14 +152,6 @@ def monitor(
     if waiting:
         metrics["waiting_approval"] = waiting
 
-    for job in metrics.get("running_jobs", []):
-        age = job.get("age_seconds")
-        if age is None:
-            continue
-        limit = thresholds.review_running_warn_seconds if job.get("work_intent") == "review_only" else thresholds.work_running_warn_seconds
-        if age > limit:
-            alerts.append(f"running job {job.get('id')} {job.get('work_key')} age {age}s > {limit}s")
-
     if check_systemd:
         executor_state = _is_active(executor_unit)
         executor_pid = _main_pid(executor_unit)
@@ -186,6 +183,16 @@ def monitor(
             if not reader_recent:
                 alerts.append(f"reader last run age {reader_age}s > {thresholds.reader_recent_seconds}s")
 
+    latest_sample = recent_process_samples(db, limit=1)
+    metrics["latest_process_sample"] = latest_sample[-1] if latest_sample else None
+    for job in metrics.get("running_jobs", []):
+        age = job.get("age_seconds")
+        if age is None:
+            continue
+        limit = thresholds.review_running_warn_seconds if job.get("work_intent") == "review_only" else thresholds.work_running_warn_seconds
+        if age > limit and _running_job_looks_stalled(job, metrics, thresholds):
+            alerts.append(f"running job {job.get('id')} {job.get('work_key')} age {age}s > {limit}s without recent progress")
+
     if persist_observability:
         record_monitor_observation(
             db,
@@ -195,6 +202,25 @@ def monitor(
         )
 
     return MonitorReport(ok=not alerts, alerts=alerts, metrics=metrics)
+
+
+def _running_job_looks_stalled(job: dict[str, Any], metrics: dict[str, Any], thresholds: MonitorThresholds) -> bool:
+    progress_ages = [
+        progress.get("age_seconds")
+        for progress in (job.get("semantic_progress"), job.get("visible_progress"))
+        if isinstance(progress, dict) and progress.get("age_seconds") is not None
+    ]
+    progress_stale = not progress_ages or min(int(age) for age in progress_ages) > thresholds.progress_warn_seconds
+    latest_sample = metrics.get("latest_process_sample")
+    if isinstance(latest_sample, dict):
+        sample_job_ids = latest_sample.get("running_job_ids") or []
+        sample_applies = job.get("id") in sample_job_ids or not sample_job_ids
+        process_quiet = sample_applies and not latest_sample.get("active_since_last_sample") and (
+            latest_sample.get("idle_seconds") is None or int(latest_sample.get("idle_seconds") or 0) > thresholds.progress_warn_seconds
+        )
+    else:
+        process_quiet = not bool(metrics.get("executor_children"))
+    return progress_stale and process_quiet
 
 
 def report_json(report: MonitorReport) -> str:

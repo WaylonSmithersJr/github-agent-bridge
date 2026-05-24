@@ -103,6 +103,7 @@ class JobQueue:
             )
             self._log(con, row["id"], row["work_key"], "running", f"claimed by {worker_id}", None)
             self._session_event(con, row["id"], row["work_key"], metadata["openclaw_session_id"], "claimed", f"claimed by {worker_id}", None)
+            self._progress(con, row["id"], row["work_key"], "semantic", "claimed", f"claimed by {worker_id}", None)
             con.commit()
             return self.get(int(row["id"]))
 
@@ -115,6 +116,7 @@ class JobQueue:
             metadata = self._job_metadata(con, job_id)
             session_id = metadata.get("openclaw_session_id") or session_id_for_job(job_id)
             self._session_event(con, job_id, row["work_key"] if row else None, str(session_id), status, summary, detail)
+            self._progress(con, job_id, row["work_key"] if row else None, "semantic", status, summary, detail)
 
     def requeue_running(self, job_id: int, summary: str, detail: str | None = None) -> bool:
         now = utc_now()
@@ -145,6 +147,8 @@ class JobQueue:
             session_id = str(metadata.get("openclaw_session_id") or session_id_for_job(job_id))
             con.execute("UPDATE jobs SET updated_at=? WHERE id=?", (now, job_id))
             self._session_event(con, job_id, row["work_key"], session_id, event_type, summary, detail)
+            kind = "visible" if event_type.startswith("openclaw_") else "semantic"
+            self._progress(con, job_id, row["work_key"], kind, event_type[:80], summary, detail)
 
     def list_jobs(self, status: str | None = None, limit: int = 20) -> list[Job]:
         sql = "SELECT * FROM jobs"
@@ -220,6 +224,12 @@ class JobQueue:
         con.execute(
             "INSERT INTO job_session_events(ts,job_id,work_key,session_id,event_type,summary,detail) VALUES(?,?,?,?,?,?,?)",
             (utc_now(), job_id, work_key, session_id, event_type, summary, detail),
+        )
+
+    def _progress(self, con: sqlite3.Connection, job_id: int, work_key: str | None, kind: str, phase: str, summary: str, detail: str | None) -> None:
+        con.execute(
+            "INSERT INTO job_progress(ts,job_id,work_key,kind,phase,summary,detail) VALUES(?,?,?,?,?,?,?)",
+            (utc_now(), job_id, work_key, kind, phase, summary, detail),
         )
 
     def _job_metadata(self, con: sqlite3.Connection, job_id: int) -> dict[str, object]:

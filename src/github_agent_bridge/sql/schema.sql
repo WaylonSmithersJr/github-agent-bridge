@@ -58,6 +58,17 @@ CREATE TABLE IF NOT EXISTS job_session_events (
   detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_job_session_events_job_id ON job_session_events(job_id, id);
+CREATE TABLE IF NOT EXISTS job_progress (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  work_key TEXT,
+  kind TEXT NOT NULL CHECK(kind IN ('semantic','visible')),
+  phase TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_job_progress_job_kind ON job_progress(job_id, kind, id);
 CREATE TABLE IF NOT EXISTS process_samples (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,

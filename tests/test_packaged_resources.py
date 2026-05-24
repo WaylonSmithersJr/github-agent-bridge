@@ -18,6 +18,7 @@ def test_sql_schema_is_packaged_resource_and_valid():
         "state",
         "worklog",
         "job_session_events",
+        "job_progress",
         "process_samples",
         "alerts",
         "feedback_events",

@@ -358,16 +358,32 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     def api_processes(_: str = Depends(current_user)) -> dict[str, Any]:
         report = monitor(config.db)
         metrics = report.metrics
+        samples = recent_process_samples(config.db, limit=60)
+        latest_sample = samples[-1] if samples else None
+        running_jobs = metrics.get("running_jobs", [])
         return {
-            "running_jobs": metrics.get("running_jobs", []),
+            "running_jobs": running_jobs,
             "executor": {
                 "service": metrics.get("executor_service", "unknown"),
                 "pid": metrics.get("executor_pid"),
                 "children": metrics.get("executor_children", []),
             },
+            "signals": {
+                "live_process": {
+                    "state": "live" if metrics.get("executor_children") else "no_child_process",
+                    "child_count": len(metrics.get("executor_children", []) or []),
+                },
+                "process_activity": {
+                    "state": "active" if latest_sample and latest_sample.get("active_since_last_sample") else "quiet",
+                    "idle_seconds": latest_sample.get("idle_seconds") if latest_sample else None,
+                    "sample_ts": latest_sample.get("ts") if latest_sample else None,
+                },
+                "semantic_progress": [job for job in running_jobs if job.get("semantic_progress")],
+                "visible_progress": [job for job in running_jobs if job.get("visible_progress")],
+            },
             "alerts": report.alerts,
-            "samples": recent_process_samples(config.db, limit=60),
-            "detail": "Live /proc snapshot with persisted monitor samples when the monitor timer is enabled.",
+            "samples": samples,
+            "detail": "Live process state, persisted process activity samples, semantic job heartbeats and visible OpenClaw output are reported separately.",
         }
 
     @app.get("/api/alerts")

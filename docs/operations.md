@@ -70,6 +70,8 @@ bridge database:
 - `process_samples`: recent executor child process trees, total CPU ticks, total
   I/O bytes, running job ids and whether the sample changed since the previous
   monitor run;
+- `job_progress`: compact per-job semantic and visible progress heartbeats,
+  separate from the longer audit/worklog timeline;
 - `alerts`: active and resolved monitor alert observations with first/last seen
   timestamps and observation counts.
 
@@ -84,6 +86,12 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 Use `--no-persist-observability` for ad hoc monitor runs that should not write
 observability records.
 
+Running-job age is not treated as a failure signal by itself. The monitor uses
+the latest semantic heartbeat, visible OpenClaw output, and persisted
+CPU/I/O/PID-tree activity to decide whether an old running job looks stalled.
+Use `--progress-warn-seconds` to tune how long a running job can go without a
+semantic or visible progress update before the monitor considers it quiet.
+
 ## Dashboard API service
 
 `github-agent-bridge-dashboard` is a separate FastAPI service for local
@@ -96,6 +104,10 @@ views at `/jobs/{id}`. Operators can share a job URL to open the dashboard with
 that job's session, worklog, activity feed and GitHub links selected. The UI is
 a Vite + React + TypeScript app styled with Tailwind and operational components,
 using TanStack Query for API state and Recharts for percentile charts.
+The process activity API and dashboard distinguish live executor process state,
+persisted process activity, semantic job progress, and visible transcript/output
+progress so operators can tell whether a running job is merely alive or actually
+making useful progress.
 Timestamps stay stored and returned by the API in UTC, while the browser renders
 them in the viewer's local timezone from `Intl.DateTimeFormat`; hovering a
 rendered timestamp shows the UTC value.

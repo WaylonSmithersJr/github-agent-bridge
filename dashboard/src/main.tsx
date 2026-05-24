@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import "./styles.css";
@@ -990,30 +990,79 @@ function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefine
   if (loading && !data) return <EmptyState text="Loading process activity..." />;
   if (!data) return <EmptyState text="No process snapshot available." />;
   const children = data.executor.children ?? [];
+  const allProcesses = children.flatMap((process) => flattenProcessTree(process));
+  const totalCpuTicks = allProcesses.reduce((total, process) => total + process.cpu_ticks, 0);
+  const totalIoBytes = allProcesses.reduce((total, process) => total + totalIo(process), 0);
+  const isActive = data.executor.service === "active";
+  const chartData = allProcesses.slice(0, 8).map((process) => ({
+    label: `pid ${process.pid}`,
+    ticks: process.cpu_ticks,
+  }));
   return (
     <div className="grid gap-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        <MiniStat label="Executor" value={data.executor.service} />
-        <MiniStat label="Main PID" value={data.executor.pid ? String(data.executor.pid) : "n/a"} />
-        <MiniStat label="Running jobs" value={String(data.running_jobs.length)} />
+      <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn("inline-flex h-6 items-center rounded-full border px-2 text-xs font-semibold", isActive ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-300 bg-white text-slate-600")}>
+                {isActive ? "active" : "idle"}
+              </span>
+              <span className="font-mono text-xs text-muted">service {data.executor.service}</span>
+            </div>
+            <div className="mt-2 text-sm font-semibold text-foreground">
+              {data.running_jobs.length > 0 ? `${data.running_jobs.length} running job${data.running_jobs.length === 1 ? "" : "s"}` : "No running jobs"}
+            </div>
+            <p className="mt-1 text-xs text-muted">{data.detail}</p>
+          </div>
+          <div className="grid min-w-[190px] grid-cols-3 gap-2 text-center text-xs">
+            <ProcessKpi label="PID" value={data.executor.pid ? String(data.executor.pid) : "n/a"} />
+            <ProcessKpi label="Children" value={String(allProcesses.length)} />
+            <ProcessKpi label="CPU ticks" value={String(totalCpuTicks)} />
+          </div>
+        </div>
       </div>
       {data.alerts.length > 0 ? <Banner tone="error" text={data.alerts[0]} /> : null}
-      <div>
-        <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-          <Cpu className="h-4 w-4" aria-hidden />
-          Executor children
-        </h3>
-        {children.length > 0 ? (
-          <div className="grid gap-2">
-            {children.map((child) => (
-              <ProcessRow key={child.pid} process={child} />
-            ))}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="min-w-0 rounded-md border border-border p-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <Cpu className="h-4 w-4" aria-hidden />
+              CPU ticks
+            </h3>
+            <span className="font-mono text-xs text-muted">{formatBytes(totalIoBytes)} I/O</span>
           </div>
-        ) : (
-          <EmptyState text="No child process detected for the executor." />
-        )}
+          {chartData.length > 0 ? (
+            <div className="h-40">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(value) => [Number(value), "cpu ticks"]} />
+                  <Line type="monotone" dataKey="ticks" stroke="#0f766e" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} isAnimationActive={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <EmptyState text="No executor CPU samples available." />
+          )}
+        </div>
+        <div className="min-w-0">
+          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+            <Cpu className="h-4 w-4" aria-hidden />
+            Executor children
+          </h3>
+          {children.length > 0 ? (
+            <div className="grid gap-2">
+              {children.map((child) => (
+                <ProcessRow key={child.pid} process={child} />
+              ))}
+            </div>
+          ) : (
+            <EmptyState text="No child process detected for the executor." />
+          )}
+        </div>
       </div>
-      <p className="text-xs text-muted">{data.detail}</p>
     </div>
   );
 }
@@ -1022,12 +1071,12 @@ function ProcessRow({ process }: { process: ProcessSample }) {
   const read = process.io_bytes?.read_bytes ?? 0;
   const written = process.io_bytes?.write_bytes ?? 0;
   return (
-    <div className="rounded-md border border-border p-3">
+    <div className="rounded-md border border-border bg-white p-2.5">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="font-mono">pid {process.pid}</span>
         <span className="rounded-full border border-border px-2 text-xs text-muted">state {process.state}</span>
         <span className="rounded-full border border-border px-2 text-xs text-muted">cpu {process.cpu_ticks}</span>
-        <span className="rounded-full border border-border px-2 text-xs text-muted">I/O {read + written} B</span>
+        <span className="rounded-full border border-border px-2 text-xs text-muted">I/O {formatBytes(read + written)}</span>
       </div>
       <div className="mt-2 break-words font-mono text-xs text-muted">{process.cmd || "unknown command"}</div>
       {process.children && process.children.length > 0 ? (
@@ -1039,6 +1088,29 @@ function ProcessRow({ process }: { process: ProcessSample }) {
       ) : null}
     </div>
   );
+}
+
+function ProcessKpi({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border bg-white px-2 py-2">
+      <div className="font-mono text-sm font-semibold text-foreground">{value}</div>
+      <div className="mt-0.5 text-[11px] font-semibold uppercase text-muted">{label}</div>
+    </div>
+  );
+}
+
+function flattenProcessTree(process: ProcessSample): ProcessSample[] {
+  return [process, ...(process.children ?? []).flatMap((child) => flattenProcessTree(child))];
+}
+
+function totalIo(process: ProcessSample) {
+  return (process.io_bytes?.read_bytes ?? 0) + (process.io_bytes?.write_bytes ?? 0);
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {

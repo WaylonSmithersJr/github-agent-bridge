@@ -10,6 +10,7 @@
   body {
     margin: 0;
     min-width: 320px;
+    overflow-x: hidden;
     font-family:
       ui-sans-serif,
       system-ui,
@@ -18,6 +19,10 @@
       "Segoe UI",
       sans-serif;
     letter-spacing: 0;
+  }
+
+  #root {
+    overflow-x: hidden;
   }
 }
 

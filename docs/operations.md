@@ -64,6 +64,26 @@ It checks:
 - pending jobs older than 300 seconds;
 - running jobs older than review/work thresholds.
 
+By default the monitor command also writes bounded observability rows to the
+bridge database:
+
+- `process_samples`: recent executor child process trees, total CPU ticks, total
+  I/O bytes, running job ids and whether the sample changed since the previous
+  monitor run;
+- `alerts`: active and resolved monitor alert observations with first/last seen
+  timestamps and observation counts.
+
+Process sample retention defaults to 24 hours. Override it with
+`GITHUB_AGENT_BRIDGE_PROCESS_SAMPLE_RETENTION_SECONDS` or:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  monitor --process-sample-retention-seconds 21600
+```
+
+Use `--no-persist-observability` for ad hoc monitor runs that should not write
+observability records.
+
 ## Dashboard API service
 
 `github-agent-bridge-dashboard` is a separate FastAPI service for local
@@ -147,7 +167,9 @@ only this dashboard API; it does not restart or depend on
 
 Current scope covers the read-only API, OAuth/session guard, job detail, logs,
 summary metrics, an initial read-only React operations UI, a live `/proc`
-snapshot of executor child processes through `GET /api/processes`, and safe
+snapshot of executor child processes plus persisted monitor sample history
+through `GET /api/processes`, persistent monitor alert observations through
+`GET /api/alerts`, and safe
 OpenClaw session correlation through `GET /api/jobs/{id}/session`. New
 dispatches use a deterministic `github-agent-bridge-job-{id}` OpenClaw session
 id so operators can correlate a bridge job with the OpenClaw session that ran
@@ -178,8 +200,9 @@ session through `GET /api/jobs/{id}/session/transcript`. By default it looks up
 `~/.openclaw/agents/github/sessions/sessions.json`, or the path set in
 `GITHUB_AGENT_BRIDGE_OPENCLAW_SESSION_STORE`, and only returns entries for the
 job's deterministic session id. Transcript text is secret-redacted and truncated
-before it is returned to the authenticated dashboard. Persistent alert storage
-and historical proc sample retention remain later milestones.
+before it is returned to the authenticated dashboard. The process activity panel
+uses persisted process samples for a compact CPU history line chart when monitor
+samples exist, and falls back to the live executor snapshot otherwise.
 
 ## Operational SLOs
 

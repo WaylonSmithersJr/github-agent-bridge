@@ -3,6 +3,7 @@ import sqlite3
 from github_agent_bridge.models import Notification
 from github_agent_bridge import monitor as monitor_module
 from github_agent_bridge.monitor import MonitorThresholds, monitor
+from github_agent_bridge.observability import list_alerts, recent_process_samples
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
 
@@ -87,6 +88,61 @@ def test_monitor_reports_executor_child_processes(tmp_path, monkeypatch):
     assert report.metrics["executor_pid"] == 123
     assert report.metrics["executor_children"] == [{"pid": 456, "cmd": "openclaw agent"}]
     assert "executor children: 456:openclaw agent" in report.text()
+
+
+def test_monitor_persists_process_samples_and_alert_state(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.enqueue(notif(), Policy(trusted_orgs={"gisce"}))
+    q.claim_next("worker-1")
+    monkeypatch.setattr(monitor_module, "_is_active", lambda unit: "active")
+    monkeypatch.setattr(monitor_module, "_main_pid", lambda unit: 123)
+    monkeypatch.setattr(
+        monitor_module,
+        "_direct_children",
+        lambda pid: [
+            {
+                "pid": 456,
+                "ppid": 123,
+                "state": "S",
+                "cmd": "openclaw agent",
+                "cpu_ticks": 12,
+                "io_bytes": {"read_bytes": 100, "write_bytes": 50},
+                "children": [],
+            }
+        ],
+    )
+    monkeypatch.setattr(monitor_module, "_last_service_result", lambda unit: ("success", "0", 42))
+
+    monitor(db, persist_observability=True)
+    monitor(db, persist_observability=True)
+
+    samples = recent_process_samples(db)
+    assert len(samples) == 2
+    assert samples[0]["active_since_last_sample"] is True
+    assert samples[1]["active_since_last_sample"] is False
+    assert samples[1]["root_pid"] == 456
+    assert samples[1]["running_job_ids"] == [1]
+    assert list_alerts(db) == []
+
+
+def test_monitor_persists_and_resolves_alerts(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs={"gisce"}))
+    q.finish(job.id, "blocked", "boom", "details")
+
+    monitor(db, check_systemd=False, persist_observability=True)
+    active = list_alerts(db)
+    assert active[0]["message"] == "blocked jobs: 1"
+
+    with sqlite3.connect(db) as con:
+        con.execute("UPDATE jobs SET status='done' WHERE id=?", (job.id,))
+    monitor(db, check_systemd=False, persist_observability=True)
+
+    assert list_alerts(db) == []
+    resolved = list_alerts(db, include_resolved=True)
+    assert resolved[0]["resolved_at"] is not None
 
 
 def test_monitor_reports_recent_reader_from_systemd_age(tmp_path, monkeypatch):

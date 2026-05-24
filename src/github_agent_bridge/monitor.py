@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .dashboard_data import inspect_db_read_only
+from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS, record_monitor_observation
 from .process_inspection import direct_children
 
 
@@ -123,6 +124,8 @@ def monitor(
     reader_service_unit: str = "github-agent-bridge-reader.service",
     thresholds: MonitorThresholds | None = None,
     check_systemd: bool = True,
+    persist_observability: bool = False,
+    process_sample_retention_seconds: int = DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS,
 ) -> MonitorReport:
     thresholds = thresholds or MonitorThresholds()
     metrics = inspect_db(db)
@@ -182,6 +185,14 @@ def monitor(
             metrics["reader_recent"] = reader_recent
             if not reader_recent:
                 alerts.append(f"reader last run age {reader_age}s > {thresholds.reader_recent_seconds}s")
+
+    if persist_observability:
+        record_monitor_observation(
+            db,
+            metrics,
+            alerts,
+            process_sample_retention_seconds=process_sample_retention_seconds,
+        )
 
     return MonitorReport(ok=not alerts, alerts=alerts, metrics=metrics)
 

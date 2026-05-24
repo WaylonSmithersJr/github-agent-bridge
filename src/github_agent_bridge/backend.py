@@ -32,6 +32,7 @@ from .dashboard_data import (
     transcript_entry_from_session_event,
 )
 from .monitor import monitor
+from .observability import list_alerts, recent_process_samples
 
 
 DEFAULT_HOST = os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_HOST", "127.0.0.1")
@@ -365,12 +366,16 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
                 "children": metrics.get("executor_children", []),
             },
             "alerts": report.alerts,
-            "detail": "Live /proc snapshot; persistent process sample storage is planned for a later M3 increment.",
+            "samples": recent_process_samples(config.db, limit=60),
+            "detail": "Live /proc snapshot with persisted monitor samples when the monitor timer is enabled.",
         }
 
     @app.get("/api/alerts")
-    def api_alerts(_: str = Depends(current_user)) -> dict[str, Any]:
-        return {"alerts": [], "detail": "persistent alert storage is planned for M3"}
+    def api_alerts(include_resolved: bool = False, limit: int = 50, _: str = Depends(current_user)) -> dict[str, Any]:
+        return {
+            "alerts": list_alerts(config.db, include_resolved=include_resolved, limit=limit),
+            "detail": "Persistent monitor alert observations; unresolved alerts are active.",
+        }
 
     @app.get("/api/events/stream")
     def api_events(_: str = Depends(current_user)) -> Response:

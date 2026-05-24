@@ -16,6 +16,7 @@ from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
 from .executor import ExecutorConfig, ExecutorPool
 from .models import Notification, utc_now
 from .monitor import MonitorThresholds, monitor, report_json
+from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS
 from .parser import decode_header_value, extract_body_text, parse_auth_results
 from .policy import Policy
 from .queue import JobQueue
@@ -216,6 +217,8 @@ def cmd_monitor(args: argparse.Namespace) -> int:
         reader_service_unit=args.reader_service_unit,
         thresholds=thresholds,
         check_systemd=not args.no_systemd,
+        persist_observability=not args.no_persist_observability,
+        process_sample_retention_seconds=args.process_sample_retention_seconds,
     )
     print(report_json(report) if args.json else report.text())
     return 0 if report.ok else 2
@@ -308,6 +311,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--pending-warn-seconds", type=int, default=300)
     s.add_argument("--review-running-warn-seconds", type=int, default=1200)
     s.add_argument("--work-running-warn-seconds", type=int, default=4200)
+    s.add_argument(
+        "--process-sample-retention-seconds",
+        type=int,
+        default=int(os.getenv("GITHUB_AGENT_BRIDGE_PROCESS_SAMPLE_RETENTION_SECONDS", str(DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS))),
+    )
+    s.add_argument("--no-persist-observability", action="store_true", help="skip writing process samples and alert observations")
     s.set_defaults(func=cmd_monitor)
     s = sub.add_parser("feedback-rules", help="list curated feedback rules")
     s.add_argument("--scope", default="", help="filter by exact scope or scope prefix, e.g. repo:owner/name")

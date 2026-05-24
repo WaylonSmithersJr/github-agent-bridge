@@ -12,7 +12,18 @@ def test_sql_schema_is_packaged_resource_and_valid():
     con = sqlite3.connect(":memory:")
     con.executescript(schema)
     tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"jobs", "coalesced_notifications", "state", "worklog", "job_session_events", "feedback_events", "feedback_rules", "feedback_rule_proposals"} <= tables
+    assert {
+        "jobs",
+        "coalesced_notifications",
+        "state",
+        "worklog",
+        "job_session_events",
+        "process_samples",
+        "alerts",
+        "feedback_events",
+        "feedback_rules",
+        "feedback_rule_proposals",
+    } <= tables
 
 
 def test_packaged_resource_names_are_documented():

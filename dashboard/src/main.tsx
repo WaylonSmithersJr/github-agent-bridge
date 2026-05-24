@@ -38,6 +38,7 @@ type Job = {
   intent: string;
   subject: string;
   trigger_actor: string | null;
+  trigger_actor_avatar_url: string | null;
   attempts: number;
   coalesced_count: number;
   last_error: string | null;
@@ -830,7 +831,7 @@ function JobsList({
                 <div className="text-xs text-muted">{job.intent}</div>
               </td>
               <td className="px-2 py-3">
-                <ActorLabel actor={job.trigger_actor} />
+                <ActorLabel actor={job.trigger_actor} avatarUrl={job.trigger_actor_avatar_url} />
               </td>
               <td className="px-2 py-3">{job.attempts}</td>
               <td className="px-2 py-3">{formatSeconds(queueWaitSeconds(job, now))}</td>
@@ -866,7 +867,7 @@ function JobCard({
             <div className="line-clamp-2 text-sm leading-snug text-foreground">{job.subject}</div>
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
               <span>thread {job.thread ?? "n/a"} · {job.action}</span>
-              <ActorLabel actor={job.trigger_actor} />
+              <ActorLabel actor={job.trigger_actor} avatarUrl={job.trigger_actor_avatar_url} />
             </div>
           </div>
           <StatusBadge status={job.status} />
@@ -881,10 +882,15 @@ function JobCard({
   );
 }
 
-function ActorLabel({ actor, framed = false }: { actor: string | null | undefined; framed?: boolean }) {
+function ActorLabel({ actor, avatarUrl, framed = false }: { actor: string | null | undefined; avatarUrl?: string | null; framed?: boolean }) {
+  const avatar = avatarUrl ? (
+    <img className="h-4 w-4 shrink-0 rounded-full bg-slate-100" src={safeExternalUrl(avatarUrl)} alt={actor ? `${actor} avatar` : ""} referrerPolicy="no-referrer" />
+  ) : (
+    <UserCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+  );
   const content = (
     <>
-      <UserCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      {avatar}
       <span className="min-w-0 truncate">{actor ? `@${actor}` : "unknown actor"}</span>
     </>
   );
@@ -911,7 +917,7 @@ function JobDetail({ job, session, sessionEvents, transcript, now, compact = fal
             <Link className="h-3.5 w-3.5" aria-hidden />
             Job #{job.id}
           </a>
-          <ActorLabel actor={job.trigger_actor} framed />
+          <ActorLabel actor={job.trigger_actor} avatarUrl={job.trigger_actor_avatar_url} framed />
         </div>
         <div className="min-w-0 break-words font-mono text-sm [overflow-wrap:anywhere]">{job.work_key}</div>
         <p className="min-w-0 break-words text-sm text-muted [overflow-wrap:anywhere]">{job.subject}</p>

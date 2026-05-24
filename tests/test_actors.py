@@ -47,7 +47,7 @@ def test_backfill_trigger_actors_uses_stored_context(tmp_path, monkeypatch):
 
     def fake_run(args, check=False, stdout=None, stderr=None, text=False):
         calls.append(args)
-        return subprocess.CompletedProcess(args, 0, json.dumps({"user": {"login": "ecarreras"}}), "")
+        return subprocess.CompletedProcess(args, 0, json.dumps({"user": {"login": "ecarreras", "avatar_url": "https://avatars.githubusercontent.com/u/294235?v=4"}}), "")
 
     monkeypatch.setattr("github_agent_bridge.actors.subprocess.run", fake_run)
 
@@ -56,6 +56,7 @@ def test_backfill_trigger_actors_uses_stored_context(tmp_path, monkeypatch):
     assert calls == [["gh", "api", "repos/gisce/erp/issues/comments/99"]]
     assert result["updated"] == 1
     assert q.get(job.id).trigger_actor == "ecarreras"
+    assert q.get(job.id).trigger_actor_avatar_url == "https://avatars.githubusercontent.com/u/294235?v=4"
 
 
 def test_backfill_dry_run_does_not_migrate_legacy_schema(tmp_path, monkeypatch):
@@ -78,4 +79,35 @@ def test_backfill_dry_run_does_not_migrate_legacy_schema(tmp_path, monkeypatch):
     columns = {row[1] for row in con.execute("PRAGMA table_info(jobs)")}
     con.close()
     assert result["updated"] == 1
+    assert result["updates"][0]["trigger_actor_avatar_url"] == "https://github.com/ecarreras.png?size=80"
     assert "trigger_actor" not in columns
+    assert "trigger_actor_avatar_url" not in columns
+
+
+def test_backfill_trigger_actors_fills_missing_avatar_without_api(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(
+        Notification(
+            uid=1,
+            message_id="<1@github.com>",
+            subject="Re: [gisce/erp] issue",
+            from_addr="ecarreras <notifications@github.com>",
+            body="https://github.com/gisce/erp/issues/1#issuecomment-99",
+            auth={"spf": True, "dkim": True, "dmarc": True},
+        ),
+        Policy(trusted_orgs={"gisce"}),
+    )
+    with q.connect() as con:
+        con.execute("UPDATE jobs SET trigger_actor_avatar_url=NULL WHERE id=?", (job.id,))
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("existing trigger_actor should not need a GitHub API lookup")
+
+    monkeypatch.setattr("github_agent_bridge.actors.subprocess.run", fail_run)
+
+    result = backfill_trigger_actors(db)
+
+    assert result["updated"] == 1
+    assert q.get(job.id).trigger_actor == "ecarreras"
+    assert q.get(job.id).trigger_actor_avatar_url == "https://github.com/ecarreras.png?size=80"

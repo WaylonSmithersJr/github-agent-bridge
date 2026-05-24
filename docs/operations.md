@@ -224,9 +224,10 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 status
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 jobs --limit 20
 ```
 
-Jobs include `trigger_actor` when the bridge can identify the GitHub login that
-caused the notification. New GitHub notification jobs derive this from the
-notification sender. Existing jobs can be backfilled from stored GitHub context:
+Jobs include `trigger_actor` and `trigger_actor_avatar_url` when the bridge can
+identify the GitHub user that caused the notification. New GitHub notification
+jobs derive the login from the notification sender and use GitHub's avatar URL.
+Existing jobs can be backfilled from stored GitHub context:
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \

@@ -62,6 +62,7 @@ def job_summary(row: sqlite3.Row) -> dict[str, Any]:
         "intent": row["work_intent"],
         "subject": row["subject"],
         "trigger_actor": row_get(row, "trigger_actor"),
+        "trigger_actor_avatar_url": row_get(row, "trigger_actor_avatar_url"),
         "attempts": row["attempts"],
         "coalesced_count": row["coalesced_count"],
         "last_error": row["last_error"],
@@ -192,6 +193,7 @@ def get_job_detail(db: str | Path, job_id: int) -> dict[str, Any] | None:
                 "message_id": row["message_id"],
                 "subject": row["subject"],
                 "trigger_actor": row_get(row, "trigger_actor"),
+                "trigger_actor_avatar_url": row_get(row, "trigger_actor_avatar_url"),
                 "context": json.loads(row["context_json"] or "{}"),
                 "created_at": row["created_at"],
             }

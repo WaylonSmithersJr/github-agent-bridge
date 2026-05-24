@@ -91,7 +91,7 @@ def cmd_enqueue_json(args: argparse.Namespace) -> int:
     data = json.loads(Path(args.file).read_text(encoding="utf-8")) if args.file != "-" else json.load(__import__("sys").stdin)
     n = Notification(**data)
     job, state = q.enqueue(n, policy)
-    print(json.dumps({"state": state, "job_id": job.id if job else None, "work_key": job.work_key if job else None, "trigger_actor": job.trigger_actor if job else None}, ensure_ascii=False))
+    print(json.dumps({"state": state, "job_id": job.id if job else None, "work_key": job.work_key if job else None, "trigger_actor": job.trigger_actor if job else None, "trigger_actor_avatar_url": job.trigger_actor_avatar_url if job else None}, ensure_ascii=False))
     return 0
 
 
@@ -104,6 +104,7 @@ def cmd_enqueue_comment_url(args: argparse.Namespace) -> int:
         "job_id": job.id if job else None,
         "work_key": job.work_key if job else None,
         "trigger_actor": job.trigger_actor if job else None,
+        "trigger_actor_avatar_url": job.trigger_actor_avatar_url if job else None,
         "message_id": n.message_id,
         "subject": n.subject,
     }, ensure_ascii=False))
@@ -128,7 +129,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         job, state = q.enqueue(n, policy)
         count += 1
         if args.verbose:
-            print(json.dumps({"state": state, "job_id": job.id if job else None, "work_key": job.work_key if job else None, "trigger_actor": job.trigger_actor if job else None, "subject": n.subject}, ensure_ascii=False))
+            print(json.dumps({"state": state, "job_id": job.id if job else None, "work_key": job.work_key if job else None, "trigger_actor": job.trigger_actor if job else None, "trigger_actor_avatar_url": job.trigger_actor_avatar_url if job else None, "subject": n.subject}, ensure_ascii=False))
     print(json.dumps({"github_messages": count, "skipped": skipped, "mode": "replay-no-side-effects"}, ensure_ascii=False))
     return 0
 
@@ -172,10 +173,11 @@ def job_dict(job):
             "attempts": job["attempts"],
             "coalesced": job["coalesced_count"],
             "trigger_actor": job.get("trigger_actor"),
+            "trigger_actor_avatar_url": job.get("trigger_actor_avatar_url"),
             "updated_at": job["updated_at"],
             "error": job["last_error"],
         }
-    return {"id": job.id, "work_key": job.work_key, "status": job.status, "action": job.action, "intent": job.work_intent, "attempts": job.attempts, "coalesced": job.coalesced_count, "trigger_actor": job.trigger_actor, "updated_at": job.updated_at, "error": job.last_error}
+    return {"id": job.id, "work_key": job.work_key, "status": job.status, "action": job.action, "intent": job.work_intent, "attempts": job.attempts, "coalesced": job.coalesced_count, "trigger_actor": job.trigger_actor, "trigger_actor_avatar_url": job.trigger_actor_avatar_url, "updated_at": job.updated_at, "error": job.last_error}
 
 
 def cmd_status(args: argparse.Namespace) -> int:

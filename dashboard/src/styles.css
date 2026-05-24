@@ -2,6 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.35;
+    transform: scale(0.72);
+  }
+}
+
 @layer base {
   * {
     box-sizing: border-box;
@@ -27,6 +40,10 @@
 }
 
 @layer components {
+  .animate-live-pulse {
+    animation: live-pulse 1.25s ease-in-out infinite;
+  }
+
   .control {
     height: 36px;
     width: 100%;
@@ -36,5 +53,11 @@
     padding: 0 10px;
     color: hsl(216 28% 14%);
     font: inherit;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-live-pulse {
+    animation: none;
   }
 }

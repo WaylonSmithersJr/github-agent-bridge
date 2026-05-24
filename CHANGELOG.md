@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.14.7 (2026-05-24)
+
+### Bug Fixes
+
+- Improve dashboard indicators
+  ([`d8627c3`](https://github.com/pilipilisbot/github-agent-bridge/commit/d8627c3c002d3980c0ee75abb160e47409ac1eea))
+
+
 ## v0.14.6 (2026-05-24)
 
 ### Bug Fixes

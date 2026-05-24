@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import "./styles.css";
@@ -989,13 +989,13 @@ function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefine
           {chartData.length > 0 ? (
             <div className="h-40">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
+                <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} />
+                  <XAxis dataKey="label" tick={false} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
                   <Tooltip formatter={(value) => [Number(value), "cpu ticks"]} />
-                  <Bar dataKey="ticks" fill="#0f766e" radius={[3, 3, 0, 0]} />
-                </BarChart>
+                  <Line type="monotone" dataKey="ticks" stroke="#0f766e" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} isAnimationActive={false} />
+                </LineChart>
               </ResponsiveContainer>
             </div>
           ) : (

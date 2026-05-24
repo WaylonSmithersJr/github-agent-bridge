@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.14.6 (2026-05-24)
+
+### Bug Fixes
+
+- Compact mobile job detail indicators
+  ([`0407024`](https://github.com/pilipilisbot/github-agent-bridge/commit/0407024e1ef2dcf78ae46bb4729f6adce9cf0a50))
+
+- Make job detail page responsive
+  ([`9ddae1e`](https://github.com/pilipilisbot/github-agent-bridge/commit/9ddae1e39e2ad21a653083dc78dee989c2991272))
+
+
 ## v0.14.5 (2026-05-24)
 
 

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.15.0 (2026-05-24)
+
+### Features
+
+- Persist monitor observability
+  ([`bd8fdf9`](https://github.com/pilipilisbot/github-agent-bridge/commit/bd8fdf967e198f30ce0913610bf4e85cc8327dc1))
+
+
 ## v0.14.7 (2026-05-24)
 
 ### Bug Fixes

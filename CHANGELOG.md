@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.16.0 (2026-05-24)
+
+### Bug Fixes
+
+- Show trigger actor avatars
+  ([`c537c16`](https://github.com/pilipilisbot/github-agent-bridge/commit/c537c16f83b7866a1a561e4250c33fb5da3dbc3a))
+
+### Features
+
+- Track job trigger actors
+  ([`7515992`](https://github.com/pilipilisbot/github-agent-bridge/commit/75159926eef4370e4aef61a415b3cf0ad4a6638a))
+
+
 ## v0.15.0 (2026-05-24)
 
 ### Features

@@ -161,6 +161,8 @@ const queryClient = new QueryClient({
 
 const initialJobLimit = 12;
 const jobLimitStep = 12;
+const staleRelativeDateMs = 7 * 24 * 60 * 60 * 1000;
+const liveTickMs = 1000;
 
 function cn(...values: Array<string | false | null | undefined>) {
   return twMerge(clsx(values));
@@ -176,9 +178,10 @@ async function api<T>(path: string): Promise<T> {
 
 function formatSeconds(value: number | null | undefined) {
   if (value === null || value === undefined) return "n/a";
-  if (value < 60) return `${value}s`;
-  const minutes = Math.floor(value / 60);
-  if (minutes < 60) return `${minutes}m ${value % 60}s`;
+  const seconds = Math.max(0, Math.floor(value));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
@@ -214,14 +217,70 @@ function compactDate(value: string | null | undefined) {
   return date ? compactDateFormatter.format(date) : (value ?? "");
 }
 
-function TimeText({ value, compact = false }: { value: string | null | undefined; compact?: boolean }) {
+function formatRelativeTime(value: string | null | undefined, now: number) {
+  const date = parseDate(value);
+  if (!date) return value ?? "";
+  const diffMs = now - date.getTime();
+  const absMs = Math.abs(diffMs);
+  if (absMs > staleRelativeDateMs) return compactDate(value);
+  const suffix = diffMs >= 0 ? "ago" : "from now";
+  const seconds = Math.round(absMs / 1000);
+  if (seconds < 45) return diffMs >= 0 ? "just now" : "soon";
+  if (seconds < 90) return `1m ${suffix}`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${suffix}`;
+  if (minutes < 90) return `1h ${suffix}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ${suffix}`;
+  if (hours < 36) return `1d ${suffix}`;
+  return `${Math.round(hours / 24)}d ${suffix}`;
+}
+
+function TimeText({
+  value,
+  compact = false,
+  relative = false,
+  now = Date.now(),
+}: {
+  value: string | null | undefined;
+  compact?: boolean;
+  relative?: boolean;
+  now?: number;
+}) {
   const date = parseDate(value);
   if (!date) return <>{value ?? ""}</>;
   return (
     <time dateTime={date.toISOString()} title={`UTC: ${date.toISOString()}`}>
-      {compact ? compactDate(value) : formatDateTime(value)}
+      {relative ? formatRelativeTime(value, now) : compact ? compactDate(value) : formatDateTime(value)}
     </time>
   );
+}
+
+function elapsedSecondsSince(value: string | null | undefined, now: number) {
+  const date = parseDate(value);
+  if (!date) return null;
+  return Math.max(0, Math.floor((now - date.getTime()) / 1000));
+}
+
+function jobRuntimeSeconds(job: Job, now: number) {
+  if (job.status === "running") return elapsedSecondsSince(job.started_at, now) ?? job.runtime_seconds;
+  return job.runtime_seconds;
+}
+
+function queueWaitSeconds(job: Job, now: number) {
+  if (job.status === "pending") return elapsedSecondsSince(job.created_at, now) ?? job.queue_wait_seconds;
+  return job.queue_wait_seconds;
+}
+
+function useNow(enabled: boolean) {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!enabled) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), liveTickMs);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+  return now;
 }
 
 function firstLogLine(value: string | null | undefined) {
@@ -298,13 +357,13 @@ function defaultLogOpen(kind: string, running: boolean, index: number, total: nu
 
 function statusTone(status: string) {
   return {
-    pending: "border-amber-300 bg-amber-50 text-amber-800",
-    running: "border-blue-300 bg-blue-50 text-blue-700",
-    blocked: "border-red-300 bg-red-50 text-red-700",
-    denied: "border-red-300 bg-red-50 text-red-700",
-    done: "border-emerald-300 bg-emerald-50 text-emerald-700",
-    waiting_approval: "border-slate-300 bg-slate-50 text-slate-700",
-  }[status] ?? "border-slate-300 bg-slate-50 text-slate-700";
+    pending: { badge: "border-amber-300 bg-amber-50 text-amber-800", dot: "bg-amber-500" },
+    running: { badge: "border-blue-300 bg-blue-50 text-blue-700", dot: "bg-blue-600" },
+    blocked: { badge: "border-red-300 bg-red-50 text-red-700", dot: "bg-red-600" },
+    denied: { badge: "border-red-300 bg-red-50 text-red-700", dot: "bg-red-600" },
+    done: { badge: "border-emerald-300 bg-emerald-50 text-emerald-700", dot: "bg-emerald-600" },
+    waiting_approval: { badge: "border-slate-300 bg-slate-50 text-slate-700", dot: "bg-slate-500" },
+  }[status] ?? { badge: "border-slate-300 bg-slate-50 text-slate-700", dot: "bg-slate-500" };
 }
 
 function buildJobQuery(filters: JobFilters, limit: number) {
@@ -435,7 +494,9 @@ function App() {
     setJobLimit(initialJobLimit);
   }, []);
   const selectedJob = selectedJobId ? (detail.data?.job ?? null) : null;
-  const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} />;
+  const hasLiveJob = jobRows.some((job) => job.status === "running" || job.status === "pending") || selectedJob?.status === "running" || selectedJob?.status === "pending";
+  const now = useNow(hasLiveJob);
+  const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} now={now} />;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -476,7 +537,7 @@ function App() {
               <Panel title="Recent jobs" flushHeader>
                 <Filters filters={filters} onChange={applyFilters} />
                 {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-                <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} />
+                <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} now={now} />
                 {jobRows.length >= jobLimit ? (
                   <div className="mt-3 flex justify-center">
                     <button className="inline-flex h-9 items-center justify-center rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" type="button" onClick={() => setJobLimit((current) => current + jobLimitStep)}>
@@ -537,6 +598,7 @@ function JobDetailStatus({
   session,
   sessionEvents,
   transcript,
+  now,
 }: {
   selectedJobId: number | null;
   selectedJob: Job | null;
@@ -545,8 +607,9 @@ function JobDetailStatus({
   session: SessionCorrelation | undefined;
   sessionEvents: SessionEvent[] | undefined;
   transcript: TranscriptEntry[] | undefined;
+  now: number;
 }) {
-  if (selectedJob) return <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} />;
+  if (selectedJob) return <JobDetail job={selectedJob} session={session} sessionEvents={sessionEvents} transcript={transcript} now={now} />;
   if (selectedJobId !== null && loading) return <EmptyState text="Loading selected job..." />;
   if (selectedJobId !== null && error) return <Banner tone="error" text={`Job #${selectedJobId}: ${error.message}`} />;
   return <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />;
@@ -686,10 +749,12 @@ function JobsList({
   jobs,
   loading,
   onViewJob,
+  now,
 }: {
   jobs: Job[];
   loading: boolean;
   onViewJob: (id: number) => void;
+  now: number;
 }) {
   if (loading && jobs.length === 0) return <EmptyState text="Loading jobs..." />;
   if (jobs.length === 0) return <EmptyState text="No jobs match the current filters." />;
@@ -697,7 +762,7 @@ function JobsList({
     <>
       <div className="grid gap-2 md:hidden">
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} onViewJob={onViewJob} />
+          <JobCard key={job.id} job={job} onViewJob={onViewJob} now={now} />
         ))}
       </div>
       <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
@@ -734,9 +799,9 @@ function JobsList({
                 <div className="text-xs text-muted">{job.intent}</div>
               </td>
               <td className="px-2 py-3">{job.attempts}</td>
-              <td className="px-2 py-3">{formatSeconds(job.queue_wait_seconds)}</td>
-              <td className="px-2 py-3">{formatSeconds(job.runtime_seconds)}</td>
-              <td className="px-2 py-3 font-mono text-xs"><TimeText value={job.updated_at} compact /></td>
+              <td className="px-2 py-3">{formatSeconds(queueWaitSeconds(job, now))}</td>
+              <td className="px-2 py-3">{formatSeconds(jobRuntimeSeconds(job, now))}</td>
+              <td className="px-2 py-3 font-mono text-xs"><TimeText value={job.updated_at} compact relative now={now} /></td>
             </tr>
           ))}
         </tbody>
@@ -749,9 +814,11 @@ function JobsList({
 function JobCard({
   job,
   onViewJob,
+  now,
 }: {
   job: Job;
   onViewJob: (id: number) => void;
+  now: number;
 }) {
   return (
     <article className="rounded-md border border-border bg-white shadow-[0_1px_0_rgba(15,23,42,0.03)]">
@@ -768,21 +835,23 @@ function JobCard({
           <StatusBadge status={job.status} />
         </div>
         <div className="grid grid-cols-3 gap-2 text-xs">
-          <MiniStat label="Wait" value={formatSeconds(job.queue_wait_seconds)} />
-          <MiniStat label="Runtime" value={formatSeconds(job.runtime_seconds)} />
-          <MiniStat label="Updated" value={compactDate(job.updated_at)} />
+          <MiniStat label="Wait" value={formatSeconds(queueWaitSeconds(job, now))} />
+          <MiniStat label="Runtime" value={formatSeconds(jobRuntimeSeconds(job, now))} />
+          <MiniStat label="Updated" value={<TimeText value={job.updated_at} compact relative now={now} />} />
         </div>
       </button>
     </article>
   );
 }
 
-function JobDetail({ job, session, sessionEvents, transcript, compact = false }: { job: Job; session: SessionCorrelation | undefined; sessionEvents: SessionEvent[] | undefined; transcript: TranscriptEntry[] | undefined; compact?: boolean }) {
+function JobDetail({ job, session, sessionEvents, transcript, now, compact = false }: { job: Job; session: SessionCorrelation | undefined; sessionEvents: SessionEvent[] | undefined; transcript: TranscriptEntry[] | undefined; now: number; compact?: boolean }) {
   const shareHref = jobPath(job.id);
   const eventRows = sessionEvents ?? [];
   const transcriptRows = transcript ?? [];
   const activityGroups = groupSessionEvents(eventRows);
   const transcriptGroups = groupTranscriptEntries(transcriptRows);
+  const liveRuntime = jobRuntimeSeconds(job, now);
+  const liveWait = queueWaitSeconds(job, now);
   return (
     <div className="grid min-w-0 gap-4">
       <div className="grid gap-2">
@@ -797,15 +866,15 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
         <p className="min-w-0 break-words text-sm text-muted [overflow-wrap:anywhere]">{job.subject}</p>
       </div>
       <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-3")}>
-        <MiniStat label="Queue wait" value={formatSeconds(job.queue_wait_seconds)} />
-        <MiniStat label="Runtime" value={formatSeconds(job.runtime_seconds)} />
+        <MiniStat label="Queue wait" value={formatSeconds(liveWait)} />
+        <MiniStat label={job.status === "running" ? "Running for" : "Runtime"} value={formatSeconds(liveRuntime)} />
         <MiniStat label="Coalesced" value={String(job.coalesced_count)} />
       </div>
       <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-2 xl:grid-cols-4")}>
-        <MiniStat label="Created" value={<TimeText value={job.created_at} compact />} />
-        <MiniStat label="Started" value={job.started_at ? <TimeText value={job.started_at} compact /> : "n/a"} />
-        <MiniStat label="Updated" value={<TimeText value={job.updated_at} compact />} />
-        <MiniStat label="Finished" value={job.finished_at ? <TimeText value={job.finished_at} compact /> : "n/a"} />
+        <MiniStat label="Created" value={<TimeText value={job.created_at} compact relative now={now} />} />
+        <MiniStat label="Started" value={job.started_at ? <TimeText value={job.started_at} compact relative now={now} /> : "n/a"} />
+        <MiniStat label="Updated" value={<TimeText value={job.updated_at} compact relative now={now} />} />
+        <MiniStat label="Finished" value={job.finished_at ? <TimeText value={job.finished_at} compact relative now={now} /> : "n/a"} />
       </div>
       <div>
         <h3 className="mb-2 text-sm font-semibold">Timeline</h3>
@@ -814,7 +883,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
             job.worklog?.map((entry) => (
               <div key={entry.id} className="min-w-0 border-l-2 border-primary pl-3">
                 <div className="text-sm font-semibold">{entry.phase}</div>
-                <div className="font-mono text-xs text-muted"><TimeText value={entry.ts} /></div>
+                <div className="font-mono text-xs text-muted"><TimeText value={entry.ts} relative now={now} /></div>
                 <div className="break-words text-sm [overflow-wrap:anywhere]">{entry.summary}</div>
                 {entry.detail ? <div className="mt-1 break-words font-mono text-xs text-muted [overflow-wrap:anywhere]">{entry.detail}</div> : null}
               </div>
@@ -846,7 +915,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
         <div className="grid max-h-[460px] min-w-0 gap-2 overflow-auto pr-1">
           {activityGroups.length > 0 ? (
             activityGroups.map((event, index) => (
-              <SessionEventRow key={event.id} event={event} defaultOpen={defaultLogOpen(event.eventType, job.status === "running", index, activityGroups.length)} />
+              <SessionEventRow key={event.id} event={event} defaultOpen={defaultLogOpen(event.eventType, job.status === "running", index, activityGroups.length)} now={now} />
             ))
           ) : (
             <EmptyState text={job.status === "running" ? "Waiting for live agent output..." : "No agent activity has been recorded for this session."} />
@@ -858,7 +927,7 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
         <div className="grid max-h-[620px] min-w-0 gap-2 overflow-auto pr-1">
           {transcriptGroups.length > 0 ? (
             transcriptGroups.map((entry, index) => (
-              <TranscriptRow key={entry.id} entry={entry} defaultOpen={defaultLogOpen(entry.kind, job.status === "running", index, transcriptGroups.length)} />
+              <TranscriptRow key={entry.id} entry={entry} defaultOpen={defaultLogOpen(entry.kind, job.status === "running", index, transcriptGroups.length)} now={now} />
             ))
           ) : (
             <EmptyState text={job.status === "running" ? "Waiting for live transcript entries..." : "No OpenClaw transcript entries are available for this session."} />
@@ -886,11 +955,11 @@ function JobDetail({ job, session, sessionEvents, transcript, compact = false }:
   );
 }
 
-function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntryGroup; defaultOpen?: boolean }) {
+function TranscriptRow({ entry, defaultOpen, now }: { entry: TranscriptEntryGroup; defaultOpen?: boolean; now: number }) {
   return (
     <CollapsibleLogSection
       badge={entry.badge}
-      meta={<TimeText value={entry.meta} />}
+      meta={<TimeText value={entry.meta} relative now={now} />}
       count={entry.count}
       summary={entry.summary}
       defaultOpen={defaultOpen}
@@ -900,9 +969,9 @@ function TranscriptRow({ entry, defaultOpen }: { entry: TranscriptEntryGroup; de
   );
 }
 
-function SessionEventRow({ event, defaultOpen }: { event: SessionEventGroup; defaultOpen?: boolean }) {
+function SessionEventRow({ event, defaultOpen, now }: { event: SessionEventGroup; defaultOpen?: boolean; now: number }) {
   return (
-    <CollapsibleLogSection badge={event.badge} meta={<TimeText value={event.meta} />} count={event.count} summary={event.summary} defaultOpen={defaultOpen}>
+    <CollapsibleLogSection badge={event.badge} meta={<TimeText value={event.meta} relative now={now} />} count={event.count} summary={event.summary} defaultOpen={defaultOpen}>
       {event.detail ? <pre className="max-h-56 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-slate-950 px-2 py-1.5 font-mono text-xs leading-relaxed text-slate-100 [overflow-wrap:anywhere]">{event.detail}</pre> : null}
     </CollapsibleLogSection>
   );
@@ -1012,6 +1081,16 @@ function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefine
             <div className="mt-2 text-sm font-semibold text-foreground">
               {data.running_jobs.length > 0 ? `${data.running_jobs.length} running job${data.running_jobs.length === 1 ? "" : "s"}` : "No running jobs"}
             </div>
+            {data.running_jobs.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {data.running_jobs.slice(0, 4).map((job) => (
+                  <span key={job.id} className="inline-flex min-h-6 items-center gap-1.5 rounded-full border border-blue-200 bg-white px-2 font-mono text-[11px] font-semibold text-blue-700">
+                    <span className="h-2 w-2 rounded-full bg-blue-600 animate-live-pulse" aria-hidden />
+                    #{job.id} {formatSeconds(job.age_seconds)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <p className="mt-1 text-xs text-muted">{data.detail}</p>
           </div>
           <div className="grid min-w-[190px] grid-cols-3 gap-2 text-center text-xs">
@@ -1123,7 +1202,14 @@ function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  return <span className={cn("inline-flex min-h-6 items-center rounded-full border px-2 text-xs font-semibold", statusTone(status))}>{status}</span>;
+  const tone = statusTone(status);
+  const isRunning = status === "running";
+  return (
+    <span className={cn("inline-flex min-h-6 items-center gap-1.5 rounded-full border px-2 text-xs font-semibold", tone.badge)}>
+      <span className={cn("h-2.5 w-2.5 rounded-full", tone.dot, isRunning && "animate-live-pulse")} aria-hidden />
+      {status}
+    </span>
+  );
 }
 
 function EmptyState({ text }: { text: string }) {

@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from . import feedback
+from .actors import backfill_trigger_actors
 from .dashboard_data import inspect_db_read_only, list_jobs
 from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
 from .executor import ExecutorConfig, ExecutorPool
@@ -67,11 +68,12 @@ def notification_from_comment_url(url: str, gh_bin: str = "gh", message_id_prefi
     body = f"{comment.get('body') or ''}\n\n{html_url}\n"
     subject_kind = "PR" if "pull_request" in issue else "Issue"
     subject = f"Re: [{repo}] {issue.get('title') or subject_kind} ({subject_kind} #{issue_number})"
+    user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
     return Notification(
         uid=None,
         message_id=f"<{message_id_prefix}/{repo}/issues/{issue_number}/c{comment_id}@github.com>",
         subject=subject,
-        from_addr="GitHub <notifications@github.com>",
+        from_addr=f"{user.get('login') or 'GitHub'} <notifications@github.com>",
         body=body,
         received_at=utc_now(),
         auth={"spf": True, "dkim": True, "dmarc": True},
@@ -89,7 +91,7 @@ def cmd_enqueue_json(args: argparse.Namespace) -> int:
     data = json.loads(Path(args.file).read_text(encoding="utf-8")) if args.file != "-" else json.load(__import__("sys").stdin)
     n = Notification(**data)
     job, state = q.enqueue(n, policy)
-    print(json.dumps({"state": state, "job_id": job.id if job else None, "work_key": job.work_key if job else None}, ensure_ascii=False))
+    print(json.dumps({"state": state, "job_id": job.id if job else None, "work_key": job.work_key if job else None, "trigger_actor": job.trigger_actor if job else None}, ensure_ascii=False))
     return 0
 
 
@@ -101,6 +103,7 @@ def cmd_enqueue_comment_url(args: argparse.Namespace) -> int:
         "state": state,
         "job_id": job.id if job else None,
         "work_key": job.work_key if job else None,
+        "trigger_actor": job.trigger_actor if job else None,
         "message_id": n.message_id,
         "subject": n.subject,
     }, ensure_ascii=False))
@@ -125,7 +128,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         job, state = q.enqueue(n, policy)
         count += 1
         if args.verbose:
-            print(json.dumps({"state": state, "job_id": job.id if job else None, "work_key": job.work_key if job else None, "subject": n.subject}, ensure_ascii=False))
+            print(json.dumps({"state": state, "job_id": job.id if job else None, "work_key": job.work_key if job else None, "trigger_actor": job.trigger_actor if job else None, "subject": n.subject}, ensure_ascii=False))
     print(json.dumps({"github_messages": count, "skipped": skipped, "mode": "replay-no-side-effects"}, ensure_ascii=False))
     return 0
 
@@ -168,10 +171,11 @@ def job_dict(job):
             "intent": job["intent"],
             "attempts": job["attempts"],
             "coalesced": job["coalesced_count"],
+            "trigger_actor": job.get("trigger_actor"),
             "updated_at": job["updated_at"],
             "error": job["last_error"],
         }
-    return {"id": job.id, "work_key": job.work_key, "status": job.status, "action": job.action, "intent": job.work_intent, "attempts": job.attempts, "coalesced": job.coalesced_count, "updated_at": job.updated_at, "error": job.last_error}
+    return {"id": job.id, "work_key": job.work_key, "status": job.status, "action": job.action, "intent": job.work_intent, "attempts": job.attempts, "coalesced": job.coalesced_count, "trigger_actor": job.trigger_actor, "updated_at": job.updated_at, "error": job.last_error}
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -201,6 +205,12 @@ def cmd_dismiss(args: argparse.Namespace) -> int:
 def cmd_unlock_stale(args: argparse.Namespace) -> int:
     n = JobQueue(args.db).unlock_stale(args.older_than)
     print(json.dumps({"unlocked": n}, ensure_ascii=False))
+    return 0
+
+
+def cmd_backfill_trigger_actors(args: argparse.Namespace) -> int:
+    result = backfill_trigger_actors(args.db, gh_bin=args.gh_bin, limit=args.limit, dry_run=args.dry_run)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -302,6 +312,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("retry"); s.add_argument("job_id", type=int); s.set_defaults(func=cmd_retry)
     s = sub.add_parser("dismiss"); s.add_argument("job_id", type=int); s.add_argument("--reason", required=True); s.set_defaults(func=cmd_dismiss)
     s = sub.add_parser("unlock-stale"); s.add_argument("--older-than", type=int, default=1800); s.set_defaults(func=cmd_unlock_stale)
+    s = sub.add_parser("backfill-trigger-actors", help="fill missing job trigger_actor values from stored GitHub context")
+    s.add_argument("--gh-bin", default="gh")
+    s.add_argument("--limit", type=int, default=None)
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(func=cmd_backfill_trigger_actors)
     s = sub.add_parser("monitor")
     s.add_argument("--json", action="store_true", help="emit structured JSON")
     s.add_argument("--no-systemd", action="store_true", help="skip systemd unit checks")

@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import subprocess
+
+from github_agent_bridge.actors import actor_endpoint, backfill_trigger_actors, trigger_actor_from_notification
+from github_agent_bridge.models import GitHubContext, Notification
+from github_agent_bridge.policy import Policy
+from github_agent_bridge.queue import JobQueue
+
+
+def test_trigger_actor_from_notification_uses_github_sender_login():
+    n = Notification(
+        uid=1,
+        message_id="<1@github.com>",
+        subject="Re: [gisce/erp] issue",
+        from_addr="ecarreras <notifications@github.com>",
+        body="https://github.com/gisce/erp/issues/1",
+        auth={"spf": True, "dkim": True, "dmarc": True},
+    )
+
+    assert trigger_actor_from_notification(n) == "ecarreras"
+
+
+def test_actor_endpoint_prefers_exact_trigger_resource():
+    assert actor_endpoint(GitHubContext(urls=[], repo="gisce/erp", issue_number=1, comment_id=99)) == "repos/gisce/erp/issues/comments/99"
+    assert actor_endpoint(GitHubContext(urls=[], repo="gisce/erp", issue_number=1)) == "repos/gisce/erp/issues/1"
+
+
+def test_backfill_trigger_actors_uses_stored_context(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(
+        Notification(
+            uid=1,
+            message_id="<1@github.com>",
+            subject="Re: [gisce/erp] issue",
+            from_addr="GitHub <notifications@github.com>",
+            body="https://github.com/gisce/erp/issues/1#issuecomment-99",
+            auth={"spf": True, "dkim": True, "dmarc": True},
+        ),
+        Policy(trusted_orgs={"gisce"}),
+    )
+
+    calls = []
+
+    def fake_run(args, check=False, stdout=None, stderr=None, text=False):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, json.dumps({"user": {"login": "ecarreras"}}), "")
+
+    monkeypatch.setattr("github_agent_bridge.actors.subprocess.run", fake_run)
+
+    result = backfill_trigger_actors(db)
+
+    assert calls == [["gh", "api", "repos/gisce/erp/issues/comments/99"]]
+    assert result["updated"] == 1
+    assert q.get(job.id).trigger_actor == "ecarreras"
+
+
+def test_backfill_dry_run_does_not_migrate_legacy_schema(tmp_path, monkeypatch):
+    db = tmp_path / "legacy.sqlite3"
+    ctx = GitHubContext(urls=["https://github.com/gisce/erp/issues/1"], repo="gisce/erp", issue_number=1)
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY, context_json TEXT NOT NULL)")
+    con.execute("INSERT INTO jobs(id, context_json) VALUES(1, ?)", (ctx.to_json(),))
+    con.commit()
+    con.close()
+
+    def fake_run(args, check=False, stdout=None, stderr=None, text=False):
+        return subprocess.CompletedProcess(args, 0, json.dumps({"user": {"login": "ecarreras"}}), "")
+
+    monkeypatch.setattr("github_agent_bridge.actors.subprocess.run", fake_run)
+
+    result = backfill_trigger_actors(db, dry_run=True)
+
+    con = sqlite3.connect(db)
+    columns = {row[1] for row in con.execute("PRAGMA table_info(jobs)")}
+    con.close()
+    assert result["updated"] == 1
+    assert "trigger_actor" not in columns

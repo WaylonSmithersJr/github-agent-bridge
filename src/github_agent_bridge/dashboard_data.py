@@ -41,6 +41,10 @@ def duration_seconds(start: str | None, end: str | None = None) -> int | None:
     return max(0, int((finished - started).total_seconds()))
 
 
+def row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
+    return row[key] if key in row.keys() else default
+
+
 def coerce_limit(value: int, maximum: int = 200) -> int:
     return max(1, min(value, maximum))
 
@@ -57,6 +61,7 @@ def job_summary(row: sqlite3.Row) -> dict[str, Any]:
         "decision": row["decision"],
         "intent": row["work_intent"],
         "subject": row["subject"],
+        "trigger_actor": row_get(row, "trigger_actor"),
         "attempts": row["attempts"],
         "coalesced_count": row["coalesced_count"],
         "last_error": row["last_error"],
@@ -186,6 +191,7 @@ def get_job_detail(db: str | Path, job_id: int) -> dict[str, Any] | None:
                 "uid": row["uid"],
                 "message_id": row["message_id"],
                 "subject": row["subject"],
+                "trigger_actor": row_get(row, "trigger_actor"),
                 "context": json.loads(row["context_json"] or "{}"),
                 "created_at": row["created_at"],
             }

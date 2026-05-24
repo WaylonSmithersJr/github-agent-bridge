@@ -69,6 +69,18 @@ type ProcessSample = {
   children?: ProcessSample[];
 };
 
+type PersistedProcessSample = {
+  id: number;
+  ts: string;
+  executor_pid: number | null;
+  root_pid: number | null;
+  running_job_ids: number[];
+  cpu_ticks: number;
+  io_bytes: number;
+  active_since_last_sample: boolean;
+  idle_seconds: number | null;
+};
+
 type ProcessesResponse = {
   running_jobs: Array<{
     id: number;
@@ -84,7 +96,19 @@ type ProcessesResponse = {
     children: ProcessSample[];
   };
   alerts: string[];
+  samples: PersistedProcessSample[];
   detail: string;
+};
+
+type AlertRecord = {
+  fingerprint: string;
+  source: string;
+  severity: string;
+  message: string;
+  first_seen: string;
+  last_seen: string;
+  resolved_at: string | null;
+  observations: number;
 };
 
 type SessionCorrelation = {
@@ -428,6 +452,7 @@ function App() {
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
   const jobs = useQuery({ queryKey: ["jobs", filters, jobLimit], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters, jobLimit)), enabled: !isJobDetailRoute });
   const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: !isJobDetailRoute });
+  const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => api<{ alerts: AlertRecord[] }>("/api/alerts"), enabled: !isJobDetailRoute });
   const detail = useQuery({
     queryKey: ["job", selectedJobId],
     queryFn: () => api<{ job: Job }>(`/api/jobs/${selectedJobId}`),
@@ -553,12 +578,16 @@ function App() {
                 {processes.error ? <Banner tone="error" text={processes.error.message} /> : null}
                 <ProcessActivity data={processes.data} loading={processes.isLoading} />
               </Panel>
-              <Panel title="Runtime percentiles">
-                <PercentileChart label="runtime" values={metrics.data?.metrics.runtime_seconds} />
+              <Panel title="Monitor alerts" action={<RefreshButton onClick={() => alerts.refetch()} />}>
+                {alerts.error ? <Banner tone="error" text={alerts.error.message} /> : null}
+                <AlertsPanel alerts={alerts.data?.alerts} loading={alerts.isLoading} now={now} />
               </Panel>
             </section>
 
-            <section className="grid gap-4 xl:grid-cols-2">
+            <section className="grid gap-4 xl:grid-cols-3">
+              <Panel title="Runtime percentiles">
+                <PercentileChart label="runtime" values={metrics.data?.metrics.runtime_seconds} />
+              </Panel>
               <Panel title="Jobs per day">
                 <JobsPerDayChart values={metrics.data?.metrics.by_created_day} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
               </Panel>
@@ -1063,10 +1092,18 @@ function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefine
   const totalCpuTicks = allProcesses.reduce((total, process) => total + process.cpu_ticks, 0);
   const totalIoBytes = allProcesses.reduce((total, process) => total + totalIo(process), 0);
   const isActive = data.executor.service === "active";
-  const chartData = allProcesses.slice(0, 8).map((process) => ({
+  const currentChartData = allProcesses.slice(0, 8).map((process) => ({
     label: `pid ${process.pid}`,
     ticks: process.cpu_ticks,
   }));
+  const sampleChartData = (data.samples ?? []).map((sample) => ({
+    label: compactDate(sample.ts),
+    ticks: sample.cpu_ticks,
+    io: sample.io_bytes,
+    active: sample.active_since_last_sample ? "active" : "quiet",
+  }));
+  const chartData = sampleChartData.length > 0 ? sampleChartData : currentChartData;
+  const latestSample = data.samples?.[data.samples.length - 1];
   return (
     <div className="grid gap-4">
       <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
@@ -1091,6 +1128,11 @@ function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefine
                 ))}
               </div>
             ) : null}
+            {latestSample ? (
+              <p className="mt-1 text-xs text-muted">
+                Last persisted sample {compactDate(latestSample.ts)} · {latestSample.active_since_last_sample ? "activity observed" : `quiet ${formatSeconds(latestSample.idle_seconds)}`}
+              </p>
+            ) : null}
             <p className="mt-1 text-xs text-muted">{data.detail}</p>
           </div>
           <div className="grid min-w-[190px] grid-cols-3 gap-2 text-center text-xs">
@@ -1106,7 +1148,7 @@ function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefine
           <div className="mb-3 flex items-center justify-between gap-3">
             <h3 className="flex items-center gap-2 text-sm font-semibold">
               <Cpu className="h-4 w-4" aria-hidden />
-              CPU ticks
+              {sampleChartData.length > 0 ? "CPU history" : "CPU ticks"}
             </h3>
             <span className="font-mono text-xs text-muted">{formatBytes(totalIoBytes)} I/O</span>
           </div>
@@ -1142,6 +1184,27 @@ function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefine
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function AlertsPanel({ alerts, loading, now }: { alerts: AlertRecord[] | undefined; loading: boolean; now: number }) {
+  if (loading && !alerts) return <EmptyState text="Loading monitor alerts..." />;
+  const rows = alerts ?? [];
+  if (rows.length === 0) return <EmptyState text="No active monitor alerts." />;
+  return (
+    <div className="grid gap-2">
+      {rows.slice(0, 5).map((alert) => (
+        <div key={alert.fingerprint} className="rounded-md border border-red-200 bg-red-50 p-2.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-red-700">
+            <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+            <span>{alert.severity}</span>
+            <span className="font-normal text-red-600">{formatRelativeTime(alert.last_seen, now)}</span>
+            {alert.observations > 1 ? <span className="rounded-full border border-red-200 bg-white px-1.5">{alert.observations}x</span> : null}
+          </div>
+          <p className="mt-1 break-words text-sm font-medium text-red-950 [overflow-wrap:anywhere]">{alert.message}</p>
+        </div>
+      ))}
     </div>
   );
 }

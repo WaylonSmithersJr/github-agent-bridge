@@ -9,6 +9,7 @@ from github_agent_bridge.backend import DashboardConfig, _encode_session, _sessi
 from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
+from github_agent_bridge.observability import record_monitor_observation
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
 
@@ -478,3 +479,41 @@ def test_dashboard_processes_exposes_live_executor_snapshot(tmp_path, monkeypatc
     payload = response.json()
     assert payload["executor"]["service"] == "active"
     assert payload["executor"]["children"][0]["cpu_ticks"] == 12
+    assert payload["samples"] == []
+
+
+def test_dashboard_exposes_persisted_process_samples_and_alerts(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker-1")
+    assert claimed is not None
+    metrics = {
+        "running_jobs": [{"id": job.id, "work_key": job.work_key}],
+        "executor_service": "active",
+        "executor_pid": 123,
+        "executor_children": [
+            {
+                "pid": 456,
+                "ppid": 123,
+                "state": "S",
+                "cmd": "openclaw agent",
+                "cpu_ticks": 12,
+                "io_bytes": {"read_bytes": 100, "write_bytes": 50},
+                "children": [],
+            }
+        ],
+    }
+    record_monitor_observation(db, metrics, ["running job 1 old"])
+
+    def fake_monitor(_db):
+        return MonitorReport(ok=True, metrics=metrics)
+
+    monkeypatch.setattr("github_agent_bridge.backend.monitor", fake_monitor)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    processes = client.get("/api/processes").json()
+    alerts = client.get("/api/alerts").json()
+
+    assert processes["samples"][0]["cpu_ticks"] == 12
+    assert processes["samples"][0]["running_job_ids"] == [job.id]
+    assert alerts["alerts"][0]["message"] == "running job 1 old"

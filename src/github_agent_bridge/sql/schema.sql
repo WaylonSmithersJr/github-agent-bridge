@@ -54,6 +54,31 @@ CREATE TABLE IF NOT EXISTS job_session_events (
   detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_job_session_events_job_id ON job_session_events(job_id, id);
+CREATE TABLE IF NOT EXISTS process_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  executor_pid INTEGER,
+  root_pid INTEGER,
+  running_job_ids_json TEXT NOT NULL DEFAULT '[]',
+  process_tree_json TEXT NOT NULL DEFAULT '[]',
+  cpu_ticks INTEGER NOT NULL DEFAULT 0,
+  io_bytes INTEGER NOT NULL DEFAULT 0,
+  active_since_last_sample INTEGER NOT NULL DEFAULT 0,
+  idle_seconds INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_process_samples_ts ON process_samples(ts);
+CREATE TABLE IF NOT EXISTS alerts (
+  fingerprint TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  message TEXT NOT NULL,
+  context_json TEXT NOT NULL DEFAULT '{}',
+  first_seen TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  resolved_at TEXT,
+  observations INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_source_resolved ON alerts(source, resolved_at, last_seen);
 CREATE TABLE IF NOT EXISTS feedback_events (
   id TEXT PRIMARY KEY,
   occurred_at TEXT NOT NULL,

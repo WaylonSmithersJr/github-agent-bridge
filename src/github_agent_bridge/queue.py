@@ -10,6 +10,7 @@ from .parser import classify_github_action, classify_work_intent, extract_github
 from .policy import Policy
 from .session_correlation import session_id_for_job
 from . import feedback
+from .actors import trigger_actor_details_from_notification
 
 SCHEMA_PACKAGE = "github_agent_bridge.sql"
 
@@ -39,6 +40,7 @@ class JobQueue:
     def init(self) -> None:
         with self.connect() as con:
             con.executescript(SCHEMA)
+            self._ensure_columns(con)
 
     def enqueue(self, n: Notification, policy: Policy) -> tuple[Job | None, str]:
         ctx = extract_github_context(n.body)
@@ -47,6 +49,7 @@ class JobQueue:
         decision = policy.decision(n, ctx, action)
         status = {"auto": "done", "ask": "waiting_approval", "deny": "denied"}.get(decision, "pending")
         now = utc_now()
+        trigger_actor = trigger_actor_details_from_notification(n)
         metadata = {"received_at": n.received_at}
         with self.connect() as con:
             con.execute("BEGIN IMMEDIATE")
@@ -56,7 +59,10 @@ class JobQueue:
                     (ctx.work_key, *COALESCE_STATUSES),
                 ).fetchone()
                 if existing and decision == "auto_trusted":
-                    con.execute("INSERT OR IGNORE INTO coalesced_notifications(job_id,uid,message_id,subject,context_json,created_at) VALUES(?,?,?,?,?,?)", (existing["id"], n.uid, n.message_id, n.subject, ctx.to_json(), now))
+                    con.execute(
+                        "INSERT OR IGNORE INTO coalesced_notifications(job_id,uid,message_id,subject,trigger_actor,trigger_actor_avatar_url,context_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (existing["id"], n.uid, n.message_id, n.subject, trigger_actor.login if trigger_actor else None, trigger_actor.avatar_url if trigger_actor else None, ctx.to_json(), now),
+                    )
                     con.execute("UPDATE jobs SET coalesced_count=coalesced_count+1, uid=?, message_id=message_id, subject=?, context_json=?, updated_at=? WHERE id=?", (n.uid, n.subject, ctx.to_json(), now, existing["id"]))
                     self._log(con, existing["id"], ctx.work_key, "coalesced", "Notification coalesced into active job", n.message_id)
                     con.commit()
@@ -64,8 +70,8 @@ class JobQueue:
                         feedback.capture_feedback(self.path, n, ctx, action, decision, intent)
                     return self._row_to_job(existing), "coalesced"
                 con.execute(
-                    "INSERT INTO jobs(work_key,repo,thread,status,action,decision,work_intent,subject,message_id,uid,context_json,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (ctx.work_key, ctx.repo, ctx.issue_number, status, action, decision, intent, n.subject, n.message_id, n.uid, ctx.to_json(), json.dumps(metadata), now, now),
+                    "INSERT INTO jobs(work_key,repo,thread,status,action,decision,work_intent,subject,message_id,uid,trigger_actor,trigger_actor_avatar_url,context_json,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (ctx.work_key, ctx.repo, ctx.issue_number, status, action, decision, intent, n.subject, n.message_id, n.uid, trigger_actor.login if trigger_actor else None, trigger_actor.avatar_url if trigger_actor else None, ctx.to_json(), json.dumps(metadata), now, now),
                 )
                 job_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
                 self._log(con, job_id, ctx.work_key, "queued" if status == "pending" else status, f"decision={decision} action={action}", n.message_id)
@@ -222,7 +228,18 @@ class JobQueue:
             return {}
         return json.loads(row["metadata_json"] or "{}")
 
+    def _ensure_columns(self, con: sqlite3.Connection) -> None:
+        tables = {
+            "jobs": {"trigger_actor": "TEXT", "trigger_actor_avatar_url": "TEXT"},
+            "coalesced_notifications": {"trigger_actor": "TEXT", "trigger_actor_avatar_url": "TEXT"},
+        }
+        for table, columns in tables.items():
+            existing = {row["name"] for row in con.execute(f"PRAGMA table_info({table})")}
+            for column, definition in columns.items():
+                if column not in existing:
+                    con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
     def _row_to_job(self, row: sqlite3.Row | None) -> Job | None:
         if row is None:
             return None
-        return Job(id=row["id"], work_key=row["work_key"], repo=row["repo"], thread=row["thread"], status=row["status"], action=row["action"], work_intent=row["work_intent"], subject=row["subject"], message_id=row["message_id"], uid=row["uid"], context=GitHubContext.from_json(row["context_json"]), attempts=row["attempts"], coalesced_count=row["coalesced_count"], last_error=row["last_error"], locked_by=row["locked_by"], created_at=row["created_at"], updated_at=row["updated_at"], metadata=json.loads(row["metadata_json"] or "{}"))
+        return Job(id=row["id"], work_key=row["work_key"], repo=row["repo"], thread=row["thread"], status=row["status"], action=row["action"], work_intent=row["work_intent"], subject=row["subject"], message_id=row["message_id"], uid=row["uid"], trigger_actor=row["trigger_actor"], trigger_actor_avatar_url=row["trigger_actor_avatar_url"], context=GitHubContext.from_json(row["context_json"]), attempts=row["attempts"], coalesced_count=row["coalesced_count"], last_error=row["last_error"], locked_by=row["locked_by"], created_at=row["created_at"], updated_at=row["updated_at"], metadata=json.loads(row["metadata_json"] or "{}"))

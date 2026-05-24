@@ -69,6 +69,8 @@ class Job:
     message_id: str
     uid: int | None
     context: GitHubContext
+    trigger_actor: str | None = None
+    trigger_actor_avatar_url: str | None = None
     attempts: int = 0
     coalesced_count: int = 0
     last_error: str | None = None

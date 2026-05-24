@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   subject TEXT NOT NULL,
   message_id TEXT NOT NULL UNIQUE,
   uid INTEGER,
+  trigger_actor TEXT,
+  trigger_actor_avatar_url TEXT,
   context_json TEXT NOT NULL,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -30,6 +32,8 @@ CREATE TABLE IF NOT EXISTS coalesced_notifications (
   uid INTEGER,
   message_id TEXT NOT NULL UNIQUE,
   subject TEXT NOT NULL,
+  trigger_actor TEXT,
+  trigger_actor_avatar_url TEXT,
   context_json TEXT NOT NULL,
   created_at TEXT NOT NULL
 );

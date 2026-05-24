@@ -169,7 +169,8 @@ Current scope covers the read-only API, OAuth/session guard, job detail, logs,
 summary metrics, an initial read-only React operations UI, a live `/proc`
 snapshot of executor child processes plus persisted monitor sample history
 through `GET /api/processes`, persistent monitor alert observations through
-`GET /api/alerts`, and safe
+`GET /api/alerts`, the GitHub login that triggered a job when it can be derived
+from the notification or GitHub API, and safe
 OpenClaw session correlation through `GET /api/jobs/{id}/session`. New
 dispatches use a deterministic `github-agent-bridge-job-{id}` OpenClaw session
 id so operators can correlate a bridge job with the OpenClaw session that ran
@@ -221,6 +222,18 @@ samples exist, and falls back to the live executor snapshot otherwise.
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 status
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 jobs --limit 20
+```
+
+Jobs include `trigger_actor` and `trigger_actor_avatar_url` when the bridge can
+identify the GitHub user that caused the notification. New GitHub notification
+jobs derive the login from the notification sender and use GitHub's avatar URL.
+Existing jobs can be backfilled from stored GitHub context:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  backfill-trigger-actors --dry-run
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  backfill-trigger-actors
 ```
 
 ### Inspect feedback learning rules

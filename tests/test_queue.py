@@ -26,6 +26,22 @@ def test_enqueue_and_coalesce_same_work_key(tmp_path):
     contexts = q.coalesced_contexts(job1.id)
     assert len(contexts) == 1
     assert contexts[0].comment_id == 11
+    assert job1.trigger_actor == "Edu"
+    assert job1.trigger_actor_avatar_url == "https://github.com/Edu.png?size=80"
+
+
+def test_enqueue_stores_trigger_actor_and_coalesced_actor(tmp_path):
+    q = JobQueue(tmp_path / "q.sqlite3")
+    job, state = q.enqueue(Notification(uid=1, message_id="<1@github.com>", subject="Re: [gisce/erp] PR", from_addr="ecarreras <notifications@github.com>", body=BODY1, auth={"spf": True, "dkim": True, "dmarc": True}), policy())
+    q.enqueue(Notification(uid=2, message_id="<2@github.com>", subject="Re: [gisce/erp] PR", from_addr="marc <notifications@github.com>", body=BODY2, auth={"spf": True, "dkim": True, "dmarc": True}), policy())
+
+    assert state == "enqueued"
+    assert job.trigger_actor == "ecarreras"
+    assert job.trigger_actor_avatar_url == "https://github.com/ecarreras.png?size=80"
+    with q.connect() as con:
+        row = con.execute("SELECT trigger_actor, trigger_actor_avatar_url FROM coalesced_notifications WHERE job_id=?", (job.id,)).fetchone()
+    assert row["trigger_actor"] == "marc"
+    assert row["trigger_actor_avatar_url"] == "https://github.com/marc.png?size=80"
 
 
 def test_claim_parallel_different_work_keys_but_not_same(tmp_path):

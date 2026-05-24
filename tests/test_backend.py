@@ -39,6 +39,8 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
     assert response.json()["read_only"] is True
     assert response.json()["metrics"]["pending"] == 1
     assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"
+    assert jobs.json()["jobs"][0]["trigger_actor"] is None
+    assert jobs.json()["jobs"][0]["trigger_actor_avatar_url"] is None
 
 
 def test_dashboard_serves_built_react_ui_with_existing_auth(tmp_path):

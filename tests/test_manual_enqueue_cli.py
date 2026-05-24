@@ -14,6 +14,7 @@ def test_notification_from_comment_url_builds_bridge_notification(monkeypatch):
             return {
                 "html_url": "https://github.com/gisce/erp/pull/27675#issuecomment-4419572864",
                 "body": "@pilipilisbot pots mirar això?",
+                "user": {"login": "ecarreras"},
             }
         if args == ["api", "repos/gisce/erp/issues/27675"]:
             return {"title": "Eliminar descarga de módulos remotos", "pull_request": {}}
@@ -26,7 +27,7 @@ def test_notification_from_comment_url_builds_bridge_notification(monkeypatch):
 
     assert n.message_id == "<manual/gisce/erp/issues/27675/c4419572864@github.com>"
     assert n.subject == "Re: [gisce/erp] Eliminar descarga de módulos remotos (PR #27675)"
-    assert n.from_addr == "GitHub <notifications@github.com>"
+    assert n.from_addr == "ecarreras <notifications@github.com>"
     assert n.auth == {"spf": True, "dkim": True, "dmarc": True}
     assert ctx.repo == "gisce/erp"
     assert ctx.issue_number == 27675

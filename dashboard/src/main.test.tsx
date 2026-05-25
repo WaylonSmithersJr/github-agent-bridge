@@ -1,0 +1,102 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+import {
+  ActorFilter,
+  StatusBadge,
+  buildJobQuery,
+  groupSessionEvents,
+  groupTranscriptEntries,
+  selectedJobIdFromPath,
+} from "./main";
+
+describe("dashboard routing and API query helpers", () => {
+  it("builds trimmed job queries and preserves the requested limit", () => {
+    expect(
+      buildJobQuery(
+        {
+          status: " pending ",
+          repo: " pilipilisbot/github-agent-bridge ",
+          thread: "",
+          action: " open_issue ",
+          intent: " work_allowed ",
+          actor: " ecarreras ",
+        },
+        24,
+      ),
+    ).toBe("/api/jobs?status=pending&repo=pilipilisbot%2Fgithub-agent-bridge&action=open_issue&intent=work_allowed&actor=ecarreras&limit=24");
+  });
+
+  it("recognizes only canonical job detail routes", () => {
+    expect(selectedJobIdFromPath("/jobs/45")).toBe(45);
+    expect(selectedJobIdFromPath("/jobs/45/")).toBe(45);
+    expect(selectedJobIdFromPath("/jobs/not-a-number")).toBeNull();
+    expect(selectedJobIdFromPath("/jobs/45/activity")).toBeNull();
+  });
+});
+
+describe("status badges", () => {
+  it("pulses pending and running jobs, but leaves waiting approval static", () => {
+    const { rerender } = render(<StatusBadge status="pending" />);
+    expect(screen.getByText("pending").querySelector("span")).toHaveClass("animate-live-pulse");
+
+    rerender(<StatusBadge status="running" />);
+    expect(screen.getByText("running").querySelector("span")).toHaveClass("animate-live-pulse");
+
+    rerender(<StatusBadge status="waiting_approval" />);
+    expect(screen.getByText("waiting_approval").querySelector("span")).not.toHaveClass("animate-live-pulse");
+  });
+});
+
+describe("actor filter", () => {
+  it("filters actors, selects a suggestion, and clears the selection", async () => {
+    const user = userEvent.setup();
+    let value = "";
+    const options = [
+      { login: "ecarreras", avatar_url: "https://example.com/ecarreras.png", job_count: 7, last_seen: "2026-05-25T12:00:00Z" },
+      { login: "octocat", avatar_url: null, job_count: 2, last_seen: null },
+    ];
+    const onChange = (actor: string) => {
+      value = actor;
+      rerender(<ActorFilter value={value} options={options} onChange={onChange} />);
+    };
+    const { rerender } = render(<ActorFilter value={value} options={options} onChange={onChange} />);
+
+    await user.type(screen.getByPlaceholderText("@login"), "eca");
+    expect(screen.getByText("@ecarreras")).toBeInTheDocument();
+    expect(screen.queryByText("@octocat")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("@ecarreras"));
+    expect(screen.getByPlaceholderText("@login")).toHaveValue("ecarreras");
+
+    fireEvent.click(screen.getByLabelText("Clear actor filter"));
+    expect(screen.getByPlaceholderText("@login")).toHaveValue("");
+  });
+});
+
+describe("log grouping", () => {
+  it("collapses consecutive OpenClaw CLI events while preserving boundaries", () => {
+    const grouped = groupSessionEvents([
+      { id: 1, ts: "2026-05-25T12:00:00Z", job_id: 45, work_key: "repo#45", session_id: "s1", event_type: "openclaw_stdout", summary: "stdout", detail: "first line" },
+      { id: 2, ts: "2026-05-25T12:00:01Z", job_id: 45, work_key: "repo#45", session_id: "s1", event_type: "openclaw_stdout", summary: "stdout", detail: "second line" },
+      { id: 3, ts: "2026-05-25T12:00:02Z", job_id: 45, work_key: "repo#45", session_id: "s1", event_type: "agent_message", summary: "done", detail: null },
+    ]);
+
+    expect(grouped).toHaveLength(2);
+    expect(grouped[0]).toMatchObject({ count: 2, summary: "stdout (2): first line" });
+    expect(grouped[0].detail).toBe("first line\nsecond line");
+    expect(grouped[1]).toMatchObject({ count: 1, summary: "done" });
+  });
+
+  it("collapses consecutive transcript CLI entries", () => {
+    const grouped = groupTranscriptEntries([
+      { timestamp: "2026-05-25T12:00:00Z", role: "assistant", kind: "openclaw_stderr", title: "stderr", text: "warning" },
+      { timestamp: "2026-05-25T12:00:01Z", role: "assistant", kind: "openclaw_stderr", title: "stderr", text: "details" },
+      { timestamp: "2026-05-25T12:00:02Z", role: "assistant", kind: "message", title: "message", text: "finished" },
+    ]);
+
+    expect(grouped).toHaveLength(2);
+    expect(grouped[0]).toMatchObject({ count: 2, summary: "assistant · openclaw_stderr (2): warning" });
+    expect(grouped[0].text).toBe("warning\ndetails");
+  });
+});

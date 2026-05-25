@@ -87,6 +87,7 @@ def test_backfill_dry_run_does_not_migrate_legacy_schema(tmp_path, monkeypatch):
 
 def test_backfill_trigger_actors_fills_missing_avatar_without_api(tmp_path, monkeypatch):
     db = tmp_path / "q.sqlite3"
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
     q = JobQueue(db)
     job, _ = q.enqueue(
         Notification(

@@ -241,9 +241,10 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 jobs --limit 20
 
 Jobs include `trigger_actor` and `trigger_actor_avatar_url` when the bridge can
 identify the GitHub user that caused the notification. New GitHub notification
-jobs first derive the login from the notification sender and then fall back to
-the parsed GitHub context through the GitHub API when notifications arrive from
-the generic `GitHub <notifications@github.com>` sender. Existing jobs can be
+jobs first resolve the parsed issue, pull request, comment, review, commit
+comment, or workflow run through the GitHub API and store that resource author.
+If that lookup is unavailable, enqueue falls back to the notification sender
+display name when GitHub provides a concrete login there. Existing jobs can be
 backfilled from stored GitHub context:
 
 ```bash

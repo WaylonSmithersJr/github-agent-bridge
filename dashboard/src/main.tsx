@@ -752,7 +752,7 @@ function Filters({ filters, actorOptions, onChange }: { filters: JobFilters; act
         <ChevronDown className="h-4 w-4 text-muted" aria-hidden />
       </summary>
       <form
-        className="grid gap-3 border-t border-border bg-white p-3 md:grid-cols-3 xl:grid-cols-7"
+        className="grid gap-3 border-t border-border bg-white p-3 md:grid-cols-3 xl:grid-cols-8"
         onSubmit={(event) => {
           event.preventDefault();
           onChange(draft);
@@ -778,7 +778,7 @@ function Filters({ filters, actorOptions, onChange }: { filters: JobFilters; act
         <Field label="Action">
           <input className="control" value={draft.action} placeholder="reply_comment" onChange={(event) => setDraft({ ...draft, action: event.target.value })} />
         </Field>
-        <Field label="Actor">
+        <Field label="Actor" className="xl:col-span-2">
           <ActorFilter value={draft.actor} options={actorOptions} onChange={(actor) => setDraft({ ...draft, actor })} />
         </Field>
         <Field label="Intent">
@@ -806,7 +806,7 @@ function ActorFilter({ value, options, onChange }: { value: string; options: Job
   const selected = options.find((actor) => actor.login.toLowerCase() === normalizedValue);
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <div className="control flex items-center gap-2 px-2">
         {selected ? (
           <img className="h-5 w-5 shrink-0 rounded-full bg-slate-100" src={safeExternalUrl(selected.avatar_url ?? "")} alt={`${selected.login} avatar`} referrerPolicy="no-referrer" />
@@ -858,9 +858,9 @@ function ActorFilter({ value, options, onChange }: { value: string; options: Job
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
-    <label className="grid gap-1 text-xs font-semibold text-muted">
+    <label className={cn("grid min-w-0 gap-1 text-xs font-semibold text-muted", className)}>
       {label}
       {children}
     </label>

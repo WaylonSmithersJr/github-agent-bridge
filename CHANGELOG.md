@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.18.3 (2026-05-25)
+
+### Bug Fixes
+
+- Check latest release in monitor
+  ([`3da0665`](https://github.com/pilipilisbot/github-agent-bridge/commit/3da0665ad6f1e9448c26e90b26c534982127e229))
+
+- Prefer GitHub context actor on enqueue
+  ([`3552f21`](https://github.com/pilipilisbot/github-agent-bridge/commit/3552f21d6cdbec6f3d75dfd12e1471a3182af17d))
+
+- Resolve trigger actors during enqueue
+  ([`be15b2b`](https://github.com/pilipilisbot/github-agent-bridge/commit/be15b2b8276b8cfed2ab1c07b4105257b26a4ed0))
+
+### Documentation
+
+- Add release alert screenshot
+  ([`d1986e3`](https://github.com/pilipilisbot/github-agent-bridge/commit/d1986e3be920284b77c2c2e0d411dcfaf10ce191))
+
+
 ## v0.18.2 (2026-05-25)
 
 ### Bug Fixes

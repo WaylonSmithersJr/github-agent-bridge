@@ -602,7 +602,7 @@ function App() {
               </Panel>
             </section>
 
-            <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <section className="grid gap-4">
               <Panel title="Process activity" action={<RefreshButton onClick={() => processes.refetch()} />}>
                 {processes.error ? <Banner tone="error" text={processes.error.message} /> : null}
                 <ProcessActivity data={processes.data} loading={processes.isLoading} />

@@ -1,4 +1,4 @@
-from github_agent_bridge import reader_run
+from github_agent_bridge import cli, reader_run
 
 
 def test_reader_run_builds_imap_args_without_mark_seen(monkeypatch):
@@ -85,6 +85,44 @@ def test_reader_run_keeps_prequoted_mailbox(monkeypatch):
 
     assert reader_run.main() == 0
     assert captured["argv"][captured["argv"].index("--mailbox") + 1] == '"[Gmail]/All Mail"'
+
+
+def test_read_imap_cli_defaults_mailbox_from_env(monkeypatch):
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_MAILBOX", "Shared GitHub")
+
+    args = cli.build_parser().parse_args(["read-imap-once"])
+
+    assert args.mailbox == "Shared GitHub"
+
+
+def test_read_imap_cli_quotes_mailbox_with_spaces(monkeypatch, tmp_path, capsys):
+    captured = {}
+
+    class FakeReader:
+        def __init__(self, cfg, queue, policy, mark_seen=False):
+            captured["mailbox"] = cfg.mailbox
+
+        def fetch_once(self):
+            return 0
+
+    monkeypatch.setattr(cli, "ImapReader", FakeReader)
+    monkeypatch.setattr(cli, "load_policy", lambda path: object())
+
+    rc = cli.main([
+        "--db",
+        str(tmp_path / "bridge.sqlite3"),
+        "read-imap-once",
+        "--email",
+        "bot@example.com",
+        "--password",
+        "secret",
+        "--mailbox",
+        "[Gmail]/All Mail",
+    ])
+
+    assert rc == 0
+    assert captured["mailbox"] == '"[Gmail]/All Mail"'
+    assert '"enqueued_or_seen": 0' in capsys.readouterr().out
 
 
 def test_reader_run_requires_email_and_password(monkeypatch, capsys):

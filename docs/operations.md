@@ -38,6 +38,7 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   read-imap-once \
   --email "$GITHUB_AGENT_BRIDGE_EMAIL" \
   --password "$GITHUB_AGENT_BRIDGE_PASSWORD" \
+  --mailbox "$GITHUB_AGENT_BRIDGE_MAILBOX" \
   --mark-seen
 ```
 

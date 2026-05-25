@@ -21,7 +21,7 @@ from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS
 from .parser import decode_header_value, extract_body_text, parse_auth_results
 from .policy import Policy
 from .queue import JobQueue
-from .reader import ImapConfig, ImapReader
+from .reader import ImapConfig, ImapReader, imap_mailbox_arg
 
 DEFAULT_DB = os.path.expanduser("~/.local/state/github-agent-bridge/bridge.sqlite3")
 DEFAULT_POLICY = os.path.expanduser("~/.config/github-agent-bridge/policy.json")
@@ -136,7 +136,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
 
 def cmd_read_imap_once(args: argparse.Namespace) -> int:
     q = JobQueue(args.db); policy = load_policy(args.policy)
-    cfg = ImapConfig(args.imap_host, args.imap_port, args.email, args.password, args.mailbox)
+    cfg = ImapConfig(args.imap_host, args.imap_port, args.email, args.password, imap_mailbox_arg(args.mailbox))
     count = ImapReader(cfg, q, policy, mark_seen=args.mark_seen).fetch_once()
     print(json.dumps({"enqueued_or_seen": count, "mark_seen": args.mark_seen}, ensure_ascii=False))
     return 0
@@ -297,7 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--imap-port", type=int, default=int(os.getenv("GITHUB_AGENT_BRIDGE_IMAP_PORT", "993")))
     s.add_argument("--email", default=os.getenv("GITHUB_AGENT_BRIDGE_EMAIL", ""))
     s.add_argument("--password", default=os.getenv("GITHUB_AGENT_BRIDGE_PASSWORD", ""))
-    s.add_argument("--mailbox", default="INBOX"); s.add_argument("--mark-seen", action="store_true", help="mark GitHub notifications as seen; leave off for shadow mode")
+    s.add_argument("--mailbox", default=os.getenv("GITHUB_AGENT_BRIDGE_MAILBOX", "INBOX")); s.add_argument("--mark-seen", action="store_true", help="mark GitHub notifications as seen; leave off for shadow mode")
     s.set_defaults(func=cmd_read_imap_once)
     s = sub.add_parser("run")
     s.add_argument("--mode", choices=[m.value for m in RunMode], default=RunMode.SHADOW.value)

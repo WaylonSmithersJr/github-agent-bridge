@@ -10,6 +10,13 @@ from .policy import Policy
 from .queue import JobQueue
 
 
+def imap_mailbox_arg(value: str) -> str:
+    """Quote mailbox names with spaces for imaplib.select."""
+    if " " in value and not value.startswith('"'):
+        return f'"{value}"'
+    return value
+
+
 @dataclass(frozen=True)
 class ImapConfig:
     host: str
@@ -37,7 +44,7 @@ class ImapReader:
         imap = imaplib.IMAP4_SSL(self.config.host, self.config.port)
         try:
             imap.login(self.config.username, self.config.password)
-            imap.select(self.config.mailbox)
+            imap.select(imap_mailbox_arg(self.config.mailbox))
             status, data = imap.uid("search", None, f"UID {last_uid + 1}:*")
             if status != "OK" or not data or not data[0]:
                 return 0

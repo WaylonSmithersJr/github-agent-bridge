@@ -181,7 +181,7 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   run --mode live --workers 2
 ```
 
-Run the reader separately. Add `--mark-seen` only when the bridge should consume GitHub notifications from the inbox:
+Run the reader separately. Add `--mark-seen` only when the bridge should consume GitHub notifications from the configured mailbox:
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
@@ -189,6 +189,7 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   read-imap-once \
   --email "$GITHUB_AGENT_BRIDGE_EMAIL" \
   --password "$GITHUB_AGENT_BRIDGE_PASSWORD" \
+  --mailbox "$GITHUB_AGENT_BRIDGE_MAILBOX" \
   --mark-seen
 ```
 

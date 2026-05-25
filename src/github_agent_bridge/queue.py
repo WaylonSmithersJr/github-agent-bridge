@@ -179,9 +179,16 @@ class JobQueue:
                 self._log(con, job_id, row["work_key"] if row else None, "dismissed", "job dismissed manually", reason)
             return bool(cur.rowcount)
 
-    def unlock_stale(self, older_than_seconds: int) -> int:
+    def unlock_stale(self, older_than_seconds: int, job_ids: list[int] | None = None) -> int:
         with self.connect() as con:
-            rows = con.execute("SELECT id, work_key FROM jobs WHERE status='running' AND started_at IS NOT NULL AND (julianday('now') - julianday(started_at)) * 86400 > ?", (older_than_seconds,)).fetchall()
+            args: list[object] = [older_than_seconds]
+            sql = "SELECT id, work_key FROM jobs WHERE status='running' AND started_at IS NOT NULL AND (julianday('now') - julianday(started_at)) * 86400 > ?"
+            if job_ids is not None:
+                if not job_ids:
+                    return 0
+                sql += f" AND id IN ({','.join('?' for _ in job_ids)})"
+                args.extend(job_ids)
+            rows = con.execute(sql, args).fetchall()
             for row in rows:
                 con.execute("UPDATE jobs SET status='pending', locked_by=NULL, updated_at=? WHERE id=?", (utc_now(), row["id"]))
                 self._log(con, row["id"], row["work_key"], "unlock_stale", f"running job older than {older_than_seconds}s requeued", None)

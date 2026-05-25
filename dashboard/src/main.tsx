@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2 } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2, X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -187,12 +187,20 @@ type UserProfile = {
   html_url: string;
 };
 
+type JobActor = {
+  login: string;
+  avatar_url: string | null;
+  job_count: number;
+  last_seen: string | null;
+};
+
 type JobFilters = {
   status: string;
   repo: string;
   thread: string;
   action: string;
   intent: string;
+  actor: string;
 };
 
 const queryClient = new QueryClient({
@@ -462,7 +470,7 @@ function selectedJobIdFromPath(pathname = window.location.pathname) {
 
 function App() {
   const queryClient = useQueryClient();
-  const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "" });
+  const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "", actor: "" });
   const [jobLimit, setJobLimit] = React.useState(initialJobLimit);
   const [pathname, setPathname] = React.useState(() => window.location.pathname);
   const jobRouteId = selectedJobIdFromPath(pathname);
@@ -470,6 +478,7 @@ function App() {
   const selectedJobId = jobRouteId;
   const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary"), enabled: !isJobDetailRoute });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
+  const actorOptions = useQuery({ queryKey: ["job-actors"], queryFn: () => api<{ actors: JobActor[] }>("/api/jobs/actors"), enabled: !isJobDetailRoute });
   const jobs = useQuery({ queryKey: ["jobs", filters, jobLimit], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters, jobLimit)), enabled: !isJobDetailRoute });
   const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: !isJobDetailRoute });
   const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => api<{ alerts: AlertRecord[] }>("/api/alerts"), enabled: !isJobDetailRoute });
@@ -580,7 +589,7 @@ function App() {
             <section className="grid gap-3">
               <JobsHeader count={jobRows.length} limit={jobLimit} loading={jobs.isLoading} onRefresh={() => jobs.refetch()} />
               <Panel title="Recent jobs" flushHeader>
-                <Filters filters={filters} onChange={applyFilters} />
+                <Filters filters={filters} actorOptions={actorOptions.data?.actors ?? []} onChange={applyFilters} />
                 {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
                 <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} now={now} />
                 {jobRows.length >= jobLimit ? (
@@ -730,7 +739,7 @@ function Metric({ title, value, icon }: { title: string; value: number; icon: Re
   );
 }
 
-function Filters({ filters, onChange }: { filters: JobFilters; onChange: (filters: JobFilters) => void }) {
+function Filters({ filters, actorOptions, onChange }: { filters: JobFilters; actorOptions: JobActor[]; onChange: (filters: JobFilters) => void }) {
   const [draft, setDraft] = React.useState(filters);
   React.useEffect(() => setDraft(filters), [filters]);
   return (
@@ -743,7 +752,7 @@ function Filters({ filters, onChange }: { filters: JobFilters; onChange: (filter
         <ChevronDown className="h-4 w-4 text-muted" aria-hidden />
       </summary>
       <form
-        className="grid gap-3 border-t border-border bg-white p-3 md:grid-cols-3 xl:grid-cols-6"
+        className="grid gap-3 border-t border-border bg-white p-3 md:grid-cols-3 xl:grid-cols-7"
         onSubmit={(event) => {
           event.preventDefault();
           onChange(draft);
@@ -769,6 +778,9 @@ function Filters({ filters, onChange }: { filters: JobFilters; onChange: (filter
         <Field label="Action">
           <input className="control" value={draft.action} placeholder="reply_comment" onChange={(event) => setDraft({ ...draft, action: event.target.value })} />
         </Field>
+        <Field label="Actor">
+          <ActorFilter value={draft.actor} options={actorOptions} onChange={(actor) => setDraft({ ...draft, actor })} />
+        </Field>
         <Field label="Intent">
           <select className="control" value={draft.intent} onChange={(event) => setDraft({ ...draft, intent: event.target.value })}>
             <option value="">All</option>
@@ -782,6 +794,67 @@ function Filters({ filters, onChange }: { filters: JobFilters; onChange: (filter
         </button>
       </form>
     </details>
+  );
+}
+
+function ActorFilter({ value, options, onChange }: { value: string; options: JobActor[]; onChange: (actor: string) => void }) {
+  const [open, setOpen] = React.useState(false);
+  const normalizedValue = value.trim().replace(/^@/, "").toLowerCase();
+  const matches = options
+    .filter((actor) => !normalizedValue || actor.login.toLowerCase().includes(normalizedValue))
+    .slice(0, 8);
+  const selected = options.find((actor) => actor.login.toLowerCase() === normalizedValue);
+
+  return (
+    <div className="relative">
+      <div className="control flex items-center gap-2 px-2">
+        {selected ? (
+          <img className="h-5 w-5 shrink-0 rounded-full bg-slate-100" src={safeExternalUrl(selected.avatar_url ?? "")} alt={`${selected.login} avatar`} referrerPolicy="no-referrer" />
+        ) : (
+          <UserCircle2 className="h-4 w-4 shrink-0 text-muted" aria-hidden />
+        )}
+        <input
+          className="min-w-0 flex-1 bg-transparent font-mono text-sm outline-none"
+          value={value}
+          placeholder="@login"
+          onChange={(event) => {
+            onChange(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => window.setTimeout(() => setOpen(false), 100)}
+        />
+        {value ? (
+          <button className="rounded-sm p-1 text-muted hover:bg-slate-100" type="button" aria-label="Clear actor filter" onClick={() => onChange("")}>
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        ) : null}
+      </div>
+      {open && matches.length > 0 ? (
+        <div className="absolute left-0 right-0 z-20 mt-1 max-h-72 overflow-auto rounded-md border border-border bg-white p-1 shadow-lg">
+          {matches.map((actor) => (
+            <button
+              key={actor.login}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-slate-50"
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onChange(actor.login);
+                setOpen(false);
+              }}
+            >
+              {actor.avatar_url ? (
+                <img className="h-6 w-6 shrink-0 rounded-full bg-slate-100" src={safeExternalUrl(actor.avatar_url)} alt={`${actor.login} avatar`} referrerPolicy="no-referrer" />
+              ) : (
+                <UserCircle2 className="h-5 w-5 shrink-0 text-muted" aria-hidden />
+              )}
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">@{actor.login}</span>
+              <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-muted">{actor.job_count}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

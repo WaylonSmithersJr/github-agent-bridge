@@ -25,6 +25,7 @@ class AlertConfig:
     pending_warn_seconds: int
     review_running_warn_seconds: int
     work_running_warn_seconds: int
+    progress_warn_seconds: int
     kill_stale_children: bool
     terminate_grace_seconds: int
     proc_idle_seconds: int
@@ -54,6 +55,7 @@ class AlertConfig:
             pending_warn_seconds=int(values.get("GITHUB_AGENT_BRIDGE_PENDING_WARN_SECONDS", "300")),
             review_running_warn_seconds=int(values.get("GITHUB_AGENT_BRIDGE_REVIEW_RUNNING_WARN_SECONDS", "600")),
             work_running_warn_seconds=int(values.get("GITHUB_AGENT_BRIDGE_WORK_RUNNING_WARN_SECONDS", "900")),
+            progress_warn_seconds=int(values.get("GITHUB_AGENT_BRIDGE_PROGRESS_WARN_SECONDS", "600")),
             kill_stale_children=_parse_bool(values.get("GITHUB_AGENT_BRIDGE_KILL_STALE_CHILDREN", "")),
             terminate_grace_seconds=int(values.get("GITHUB_AGENT_BRIDGE_TERMINATE_GRACE_SECONDS", "5")),
             proc_idle_seconds=int(values.get("GITHUB_AGENT_BRIDGE_PROC_IDLE_SECONDS", "240")),
@@ -96,6 +98,8 @@ def run_monitor(config: AlertConfig) -> subprocess.CompletedProcess[str]:
             str(config.review_running_warn_seconds),
             "--work-running-warn-seconds",
             str(config.work_running_warn_seconds),
+            "--progress-warn-seconds",
+            str(config.progress_warn_seconds),
         ]
     )
 
@@ -278,7 +282,8 @@ def retry_jobs(config: AlertConfig, job_ids: list[str]) -> str:
 
 
 def maybe_unlock_stale(config: AlertConfig, output: str) -> str:
-    if config.auto_unlock_seconds is None or "running job " not in output:
+    job_ids = running_job_ids(output)
+    if config.auto_unlock_seconds is None or not job_ids:
         return ""
     main_pid = get_main_pid()
     if not main_pid or main_pid == "0":
@@ -304,6 +309,7 @@ def maybe_unlock_stale(config: AlertConfig, output: str) -> str:
             "unlock-stale",
             "--older-than",
             str(config.auto_unlock_seconds),
+            *(item for job_id in dict.fromkeys(job_ids) for item in ("--job-id", job_id)),
         ]
     )
     retry_output = retry_jobs(config, running_job_ids(output)) if child_output else ""

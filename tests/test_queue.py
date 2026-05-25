@@ -129,3 +129,19 @@ def test_dismiss_blocked_job_marks_done(tmp_path):
     assert stored is not None
     assert stored.status == "done"
     assert stored.last_error is None
+
+
+def test_unlock_stale_can_limit_to_selected_running_jobs(tmp_path):
+    q = JobQueue(tmp_path / "q.sqlite3")
+    job1, _ = q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
+    q.claim_next("worker")
+    job2, _ = q.enqueue(notif(2, "<2@github.com>", BODY_OTHER), policy())
+    q.claim_next("worker")
+
+    with q.connect() as con:
+        con.execute("UPDATE jobs SET started_at='2000-01-01T00:00:00Z', updated_at='2000-01-01T00:00:00Z'")
+
+    assert q.unlock_stale(older_than_seconds=1, job_ids=[job2.id]) == 1
+
+    assert q.get(job1.id).status == "running"
+    assert q.get(job2.id).status == "pending"

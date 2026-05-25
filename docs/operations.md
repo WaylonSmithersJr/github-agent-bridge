@@ -91,6 +91,9 @@ the latest semantic heartbeat, visible OpenClaw output, and persisted
 CPU/I/O/PID-tree activity to decide whether an old running job looks stalled.
 Use `--progress-warn-seconds` to tune how long a running job can go without a
 semantic or visible progress update before the monitor considers it quiet.
+The alert wrapper uses the same composite stalled-job alert before automatic
+unlock or child termination. It does not unlock every old running job; it passes
+only the job ids that the monitor flagged as stalled.
 
 ## Dashboard API service
 
@@ -346,6 +349,13 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 dismiss <job-id> --re
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 unlock-stale --older-than 1800
+```
+
+Limit a manual unlock to audited job ids when other long-running jobs are still
+making progress:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 unlock-stale --older-than 1800 --job-id 123
 ```
 
 ## Migration context

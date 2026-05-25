@@ -24,6 +24,10 @@ def table_exists(con: sqlite3.Connection, name: str) -> bool:
     return row is not None
 
 
+def column_exists(con: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(row["name"] == column for row in con.execute(f"PRAGMA table_info({table})"))
+
+
 def parse_utc(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -88,6 +92,14 @@ def where_clause(filters: dict[str, Any]) -> tuple[str, list[Any]]:
     return (" WHERE " + " AND ".join(clauses), args) if clauses else ("", args)
 
 
+def actor_where_clause(actor: str | None, *, has_trigger_actor: bool) -> tuple[str, list[Any]]:
+    if not actor or not actor.strip():
+        return "", []
+    if not has_trigger_actor:
+        return " WHERE 1=0", []
+    return " WHERE lower(trigger_actor)=lower(?)", [actor.strip().lstrip("@")]
+
+
 def inspect_db_read_only(db: str | Path) -> dict[str, Any]:
     path = Path(db).expanduser()
     out: dict[str, Any] = {"db_path": str(path), "db_exists": path.exists()}
@@ -145,6 +157,7 @@ def list_jobs(
     thread: int | None = None,
     action: str | None = None,
     intent: str | None = None,
+    actor: str | None = None,
     since: str | None = None,
     until: str | None = None,
     limit: int = 50,
@@ -152,20 +165,57 @@ def list_jobs(
     path = Path(db).expanduser()
     if not path.exists():
         return []
-    filters = {"status": status_filter, "repo": repo, "thread": thread, "action": action, "work_intent": intent}
-    where, args = where_clause(filters)
-    if since:
-        where += " AND created_at >= ?" if where else " WHERE created_at >= ?"
-        args.append(since)
-    if until:
-        where += " AND created_at <= ?" if where else " WHERE created_at <= ?"
-        args.append(until)
-    args.append(coerce_limit(limit))
     with readonly_connect(path) as con:
         if not table_exists(con, "jobs"):
             return []
+        filters = {"status": status_filter, "repo": repo, "thread": thread, "action": action, "work_intent": intent}
+        where, args = where_clause(filters)
+        actor_where, actor_args = actor_where_clause(actor, has_trigger_actor=column_exists(con, "jobs", "trigger_actor"))
+        if actor_where:
+            where += actor_where.replace(" WHERE ", " AND ", 1) if where else actor_where
+            args.extend(actor_args)
+        if since:
+            where += " AND created_at >= ?" if where else " WHERE created_at >= ?"
+            args.append(since)
+        if until:
+            where += " AND created_at <= ?" if where else " WHERE created_at <= ?"
+            args.append(until)
+        args.append(coerce_limit(limit))
         rows = con.execute(f"SELECT * FROM jobs{where} ORDER BY id DESC LIMIT ?", args).fetchall()
     return [job_summary(row) for row in rows]
+
+
+def list_job_actors(db: str | Path, *, limit: int = 100) -> list[dict[str, Any]]:
+    path = Path(db).expanduser()
+    if not path.exists():
+        return []
+    with readonly_connect(path) as con:
+        if not table_exists(con, "jobs") or not column_exists(con, "jobs", "trigger_actor"):
+            return []
+        rows = con.execute(
+            """
+            SELECT
+                trigger_actor,
+                max(trigger_actor_avatar_url) AS trigger_actor_avatar_url,
+                count(*) AS job_count,
+                max(updated_at) AS last_seen
+            FROM jobs
+            WHERE trigger_actor IS NOT NULL AND trigger_actor != ''
+            GROUP BY lower(trigger_actor)
+            ORDER BY job_count DESC, last_seen DESC, lower(trigger_actor)
+            LIMIT ?
+            """,
+            (coerce_limit(limit),),
+        ).fetchall()
+    return [
+        {
+            "login": row["trigger_actor"],
+            "avatar_url": row["trigger_actor_avatar_url"],
+            "job_count": row["job_count"],
+            "last_seen": row["last_seen"],
+        }
+        for row in rows
+    ]
 
 
 def get_job_detail(db: str | Path, job_id: int) -> dict[str, Any] | None:

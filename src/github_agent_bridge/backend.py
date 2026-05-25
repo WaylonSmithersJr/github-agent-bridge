@@ -27,6 +27,7 @@ from .dashboard_data import (
     job_session,
     job_session_events,
     job_session_transcript,
+    list_job_actors,
     list_jobs,
     metrics_summary,
     transcript_entry_from_session_event,
@@ -295,6 +296,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         thread: int | None = None,
         action: str | None = None,
         intent: str | None = None,
+        actor: str | None = None,
         since: str | None = None,
         until: str | None = None,
         limit: int = 50,
@@ -307,11 +309,16 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
                 thread=thread,
                 action=action,
                 intent=intent,
+                actor=actor,
                 since=since,
                 until=until,
                 limit=limit,
             )
         }
+
+    @app.get("/api/jobs/actors")
+    def api_job_actors(_: str = Depends(current_user), limit: int = 100) -> dict[str, Any]:
+        return {"actors": list_job_actors(config.db, limit=limit)}
 
     @app.get("/api/jobs/{job_id}")
     def api_job(job_id: int, _: str = Depends(current_user)) -> dict[str, Any]:

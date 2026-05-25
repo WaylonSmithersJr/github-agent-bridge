@@ -205,7 +205,7 @@ def cmd_dismiss(args: argparse.Namespace) -> int:
 
 
 def cmd_unlock_stale(args: argparse.Namespace) -> int:
-    n = JobQueue(args.db).unlock_stale(args.older_than)
+    n = JobQueue(args.db).unlock_stale(args.older_than, job_ids=args.job_id)
     print(json.dumps({"unlocked": n}, ensure_ascii=False))
     return 0
 
@@ -314,7 +314,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("jobs"); s.add_argument("--status"); s.add_argument("--limit", type=int, default=20); s.set_defaults(func=cmd_jobs)
     s = sub.add_parser("retry"); s.add_argument("job_id", type=int); s.set_defaults(func=cmd_retry)
     s = sub.add_parser("dismiss"); s.add_argument("job_id", type=int); s.add_argument("--reason", required=True); s.set_defaults(func=cmd_dismiss)
-    s = sub.add_parser("unlock-stale"); s.add_argument("--older-than", type=int, default=1800); s.set_defaults(func=cmd_unlock_stale)
+    s = sub.add_parser("unlock-stale")
+    s.add_argument("--older-than", type=int, default=1800)
+    s.add_argument("--job-id", type=int, action="append", help="only unlock a specific running job id; repeat for multiple jobs")
+    s.set_defaults(func=cmd_unlock_stale)
     s = sub.add_parser("backfill-trigger-actors", help="fill missing job trigger_actor values from stored GitHub context")
     s.add_argument("--gh-bin", default="gh")
     s.add_argument("--limit", type=int, default=None)

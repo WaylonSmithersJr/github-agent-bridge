@@ -16,6 +16,7 @@ ALLOWED_PROMPT_RULES = {
     "pr_metadata",
     "pr_review",
     "prompt_injection",
+    "repo_instructions",
     "sync_after_merge",
     "worktree",
 }

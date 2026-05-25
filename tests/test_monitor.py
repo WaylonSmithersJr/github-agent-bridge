@@ -50,11 +50,27 @@ def test_monitor_alerts_on_old_running_job(tmp_path):
     assert job is not None
     con = sqlite3.connect(db)
     con.execute("UPDATE jobs SET started_at='2000-01-01T00:00:00Z', updated_at='2000-01-01T00:00:00Z' WHERE id=?", (job.id,))
+    con.execute("UPDATE job_progress SET ts='2000-01-01T00:00:00Z' WHERE job_id=?", (job.id,))
     con.commit()
     report = monitor(db, thresholds=MonitorThresholds(work_running_warn_seconds=1), check_systemd=False)
     assert report.ok is False
     assert any("running job" in a for a in report.alerts)
     assert "running detail: job=" in report.text()
+
+
+def test_monitor_does_not_alert_on_old_running_job_with_recent_progress(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.enqueue(notif(), Policy(trusted_orgs={"gisce"}))
+    job = q.claim_next("worker-1")
+    assert job is not None
+    con = sqlite3.connect(db)
+    con.execute("UPDATE jobs SET started_at='2000-01-01T00:00:00Z' WHERE id=?", (job.id,))
+    con.commit()
+
+    report = monitor(db, thresholds=MonitorThresholds(work_running_warn_seconds=1), check_systemd=False)
+
+    assert report.ok is True
 
 
 def test_monitor_alerts_when_running_job_has_no_executor_child(tmp_path, monkeypatch):

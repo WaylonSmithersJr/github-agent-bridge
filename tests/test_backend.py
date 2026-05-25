@@ -182,9 +182,11 @@ def test_dashboard_exposes_redacted_job_session_events(tmp_path):
     events = job_session_events(db, job.id)
     client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
     payload = client.get(f"/api/jobs/{job.id}/session/events").json()["events"]
+    detail = client.get(f"/api/jobs/{job.id}").json()["job"]
 
     assert [event["event_type"] for event in events] == ["claimed", "dispatch_finished"]
     assert payload[-1]["detail"] == "token=[redacted] [redacted]"
+    assert [progress["kind"] for progress in detail["progress"]] == ["semantic", "semantic"]
 
 
 def test_dashboard_exposes_redacted_openclaw_session_transcript(tmp_path, monkeypatch):
@@ -455,7 +457,13 @@ def test_dashboard_processes_exposes_live_executor_snapshot(tmp_path, monkeypatc
         return MonitorReport(
             ok=True,
             metrics={
-                "running_jobs": [{"id": 1, "work_key": "gisce/erp#1"}],
+                "running_jobs": [
+                    {
+                        "id": 1,
+                        "work_key": "gisce/erp#1",
+                        "semantic_progress": {"phase": "claimed", "summary": "claimed by worker-1"},
+                    }
+                ],
                 "executor_service": "active",
                 "executor_pid": 123,
                 "executor_children": [
@@ -481,6 +489,8 @@ def test_dashboard_processes_exposes_live_executor_snapshot(tmp_path, monkeypatc
     payload = response.json()
     assert payload["executor"]["service"] == "active"
     assert payload["executor"]["children"][0]["cpu_ticks"] == 12
+    assert payload["signals"]["live_process"]["state"] == "live"
+    assert payload["signals"]["semantic_progress"][0]["semantic_progress"]["phase"] == "claimed"
     assert payload["samples"] == []
 
 
@@ -518,4 +528,5 @@ def test_dashboard_exposes_persisted_process_samples_and_alerts(tmp_path, monkey
 
     assert processes["samples"][0]["cpu_ticks"] == 12
     assert processes["samples"][0]["running_job_ids"] == [job.id]
+    assert processes["signals"]["process_activity"]["state"] == "active"
     assert alerts["alerts"][0]["message"] == "running job 1 old"

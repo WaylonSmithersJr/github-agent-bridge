@@ -83,6 +83,16 @@ type PersistedProcessSample = {
   idle_seconds: number | null;
 };
 
+type ProgressEntry = {
+  id: number;
+  ts: string;
+  kind: "semantic" | "visible";
+  phase: string;
+  summary: string;
+  detail: string | null;
+  age_seconds?: number | null;
+};
+
 type ProcessesResponse = {
   running_jobs: Array<{
     id: number;
@@ -91,11 +101,19 @@ type ProcessesResponse = {
     locked_by: string | null;
     age_seconds: number | null;
     idle_seconds: number | null;
+    semantic_progress?: ProgressEntry | null;
+    visible_progress?: ProgressEntry | null;
   }>;
   executor: {
     service: string;
     pid: number | null;
     children: ProcessSample[];
+  };
+  signals: {
+    live_process: { state: string; child_count: number };
+    process_activity: { state: string; idle_seconds: number | null; sample_ts: string | null };
+    semantic_progress: Array<{ id: number; semantic_progress?: ProgressEntry | null }>;
+    visible_progress: Array<{ id: number; visible_progress?: ProgressEntry | null }>;
   };
   alerts: string[];
   samples: PersistedProcessSample[];
@@ -1170,6 +1188,12 @@ function ProcessActivity({ data, loading }: { data: ProcessesResponse | undefine
           </div>
         </div>
       </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <SignalTile label="Live process" value={data.signals?.live_process.state ?? (allProcesses.length > 0 ? "live" : "no_child_process")} detail={`${data.signals?.live_process.child_count ?? allProcesses.length} children`} />
+        <SignalTile label="Process activity" value={data.signals?.process_activity.state ?? (latestSample?.active_since_last_sample ? "active" : "quiet")} detail={latestSample ? `sample ${compactDate(latestSample.ts)}` : "no sample"} />
+        <SignalTile label="Semantic progress" value={data.signals?.semantic_progress.length ? "recent" : "none"} detail={latestProgressSummary(data.running_jobs, "semantic_progress")} />
+        <SignalTile label="Visible progress" value={data.signals?.visible_progress.length ? "streaming" : "none"} detail={latestProgressSummary(data.running_jobs, "visible_progress")} />
+      </div>
       {data.alerts.length > 0 ? <Banner tone="error" text={data.alerts[0]} /> : null}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <div className="min-w-0 rounded-md border border-border p-3">
@@ -1267,6 +1291,23 @@ function ProcessKpi({ label, value }: { label: string; value: string }) {
       <div className="mt-0.5 text-[11px] font-semibold uppercase text-muted">{label}</div>
     </div>
   );
+}
+
+function SignalTile({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="min-w-0 rounded-md border border-border bg-white p-2.5">
+      <div className="text-[11px] font-semibold uppercase text-muted">{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold text-foreground">{value}</div>
+      <div className="mt-1 truncate font-mono text-[11px] text-muted">{detail}</div>
+    </div>
+  );
+}
+
+function latestProgressSummary(jobs: ProcessesResponse["running_jobs"], key: "semantic_progress" | "visible_progress") {
+  const job = jobs.find((item) => item[key]);
+  const progress = job?.[key];
+  if (!job || !progress) return "no running heartbeat";
+  return `#${job.id} ${progress.phase} ${formatSeconds(progress.age_seconds ?? null)}`;
 }
 
 function flattenProcessTree(process: ProcessSample): ProcessSample[] {

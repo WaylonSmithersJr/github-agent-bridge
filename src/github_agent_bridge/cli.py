@@ -221,6 +221,7 @@ def cmd_monitor(args: argparse.Namespace) -> int:
         pending_warn_seconds=args.pending_warn_seconds,
         review_running_warn_seconds=args.review_running_warn_seconds,
         work_running_warn_seconds=args.work_running_warn_seconds,
+        progress_warn_seconds=args.progress_warn_seconds,
     )
     report = monitor(
         args.db,
@@ -328,6 +329,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--pending-warn-seconds", type=int, default=300)
     s.add_argument("--review-running-warn-seconds", type=int, default=1200)
     s.add_argument("--work-running-warn-seconds", type=int, default=4200)
+    s.add_argument("--progress-warn-seconds", type=int, default=600)
     s.add_argument(
         "--process-sample-retention-seconds",
         type=int,

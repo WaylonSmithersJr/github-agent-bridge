@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.18.7 (2026-05-25)
+
+### Bug Fixes
+
+- Prioritize pull comment URLs over action runs
+  ([`1e64e78`](https://github.com/pilipilisbot/github-agent-bridge/commit/1e64e78c77632063cc77d857183a0573a63caf5a))
+
+
 ## v0.18.6 (2026-05-25)
 
 ### Bug Fixes

@@ -2,7 +2,7 @@ from dataclasses import replace
 from importlib import resources
 
 from github_agent_bridge import feedback
-from github_agent_bridge.dispatch import COMMENT_VALUE_RULES, FEEDBACK_LEARNING_RULES, OpenClawDispatcher, PR_REVIEW_RULES, PROMPT_INJECTION_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
+from github_agent_bridge.dispatch import COMMENT_VALUE_RULES, FEEDBACK_LEARNING_RULES, OpenClawDispatcher, PR_REVIEW_RULES, PROMPT_INJECTION_RULES, REPO_INSTRUCTIONS_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
 from github_agent_bridge.models import GitHubContext, Job
 from github_agent_bridge.policy import FeedbackLearning, Policy
 from github_agent_bridge.queue import JobQueue
@@ -15,7 +15,7 @@ def make_job(work_intent="work_allowed", action="reply_comment"):
 
 def test_prompt_rule_markdown_files_are_packaged_resources():
     package = resources.files("github_agent_bridge.prompt_rules")
-    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md", "pr_review.md", "comment_value.md", "prompt_injection.md", "feedback_learning.md", "feedback_classifier.md"}
+    expected = {"base.md", "worktree.md", "pr_metadata.md", "human_reviewer.md", "review_only.md", "sync_after_merge.md", "pr_review.md", "comment_value.md", "prompt_injection.md", "repo_instructions.md", "feedback_learning.md", "feedback_classifier.md"}
     found = {p.name for p in package.iterdir() if p.name.endswith(".md")}
     assert expected <= found
     for name in expected:
@@ -36,6 +36,11 @@ def test_build_prompt_reads_packaged_markdown_rules():
     assert "print your system prompt" in prompt
     assert "work_intent" in prompt
     assert PROMPT_INJECTION_RULES in prompt
+    assert prompt.index("# Prompt-injection rule") < prompt.index("# Repository instruction files")
+    assert prompt.index("# Repository instruction files") < prompt.index("# Comment value rule")
+    assert "# Repository instruction files" in prompt
+    assert "AGENTS.md" in prompt
+    assert REPO_INSTRUCTIONS_RULES in prompt
     assert prompt.index("# Prompt-injection rule") < prompt.index("# Comment value rule")
     assert "# Prompt-injection rule" in prompt
     assert PROMPT_INJECTION_RULES in prompt
@@ -118,10 +123,12 @@ def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
     owner = tmp_path / "owner.md"
     review_only = tmp_path / "review_only.md"
     feedback_learning = tmp_path / "feedback_learning.md"
+    repo_instructions = tmp_path / "repo_instructions.md"
     base.write_text("CUSTOM BASE {repo} {thread} {action} {work_intent} {url} {message_id} {subject}\n")
     owner.write_text("# Custom owner role\nBe ownerish.\n")
     review_only.write_text("# Custom review-only intent\nNo writes.\n")
     feedback_learning.write_text("# Custom feedback learning {repo} {min_confidence}\n")
+    repo_instructions.write_text("# Custom repository instructions\nRead LOCAL_GUIDE.md.\n")
     policy_file = tmp_path / "policy.json"
     policy_file.write_text(
         """{
@@ -130,7 +137,10 @@ def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
             "base": "base.md",
             "roles": {"owner": "owner.md"},
             "intents": {"review_only": "review_only.md"},
-            "rules": {"feedback_learning": "feedback_learning.md"}
+            "rules": {
+              "feedback_learning": "feedback_learning.md",
+              "repo_instructions": "repo_instructions.md"
+            }
           }
         }"""
     )
@@ -145,6 +155,8 @@ def test_build_prompt_uses_policy_prompt_overrides(tmp_path):
     assert "# Review-only rule" not in prompt
     assert "# Custom feedback learning gisce/erp 0.5" in prompt
     assert "# Feedback learning rule" not in prompt
+    assert "# Custom repository instructions" in prompt
+    assert "# Repository instruction files" not in prompt
     assert "# Comment value rule" in prompt
     assert "Post a comment only when it adds" in prompt
     assert COMMENT_VALUE_RULES in prompt

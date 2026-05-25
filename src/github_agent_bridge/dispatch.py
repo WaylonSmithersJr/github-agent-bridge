@@ -54,6 +54,7 @@ SYNC_AFTER_MERGE_RULES = load_prompt_rule("sync_after_merge.md")
 PR_REVIEW_RULES = load_prompt_rule("pr_review.md")
 COMMENT_VALUE_RULES = load_prompt_rule("comment_value.md")
 PROMPT_INJECTION_RULES = load_prompt_rule("prompt_injection.md")
+REPO_INSTRUCTIONS_RULES = load_prompt_rule("repo_instructions.md")
 FEEDBACK_LEARNING_RULES = load_prompt_rule("feedback_learning.md")
 
 
@@ -443,11 +444,12 @@ class OpenClawDispatcher:
             rules=self.feedback_rules_context(repo, feedback_min_confidence),
         )
         prompt_injection_rules = prompt_rule("prompt_injection", PROMPT_INJECTION_RULES, policy)
+        repo_instructions_rules = prompt_rule("repo_instructions", REPO_INSTRUCTIONS_RULES, policy)
         comment_value_rules = prompt_rule("comment_value", COMMENT_VALUE_RULES, policy)
         worktree_rules = prompt_rule("worktree", WORKTREE_RULES, policy)
         pr_metadata_rules = prompt_rule("pr_metadata", PR_METADATA_RULES, policy)
         human_reviewer_rules = prompt_rule("human_reviewer", HUMAN_REVIEWER_RULES, policy)
-        return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{prompt_injection_rules}{comment_value_rules}{worktree_rules}{pr_metadata_rules}{human_reviewer_rules}{feedback_rules}"
+        return f"{base_prompt}{role_prompt}{intent_rules}{action_rules}{prompt_injection_rules}{repo_instructions_rules}{comment_value_rules}{worktree_rules}{pr_metadata_rules}{human_reviewer_rules}{feedback_rules}"
 
     def feedback_rules_context(self, repo: str, min_confidence: float) -> str:
         if not self.feedback_db_path:

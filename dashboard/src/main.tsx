@@ -1442,10 +1442,23 @@ function RefreshButton({ onClick, compactOnMobile = false }: { onClick: () => vo
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </React.StrictMode>,
-);
+export {
+  ActorFilter,
+  StatusBadge,
+  buildJobQuery,
+  groupSessionEvents,
+  groupTranscriptEntries,
+  selectedJobIdFromPath,
+};
+
+const root = document.getElementById("root");
+
+if (root) {
+  ReactDOM.createRoot(root).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </React.StrictMode>,
+  );
+}

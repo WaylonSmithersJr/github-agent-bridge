@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +124,17 @@ def inspect_db(path: str | Path) -> dict[str, Any]:
     return inspect_db_read_only(path)
 
 
+def _package_version() -> str:
+    try:
+        return metadata.version("github-agent-bridge")
+    except metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _versions_match(actual: str, expected: str) -> bool:
+    return actual.strip().lstrip("v") == expected.strip().lstrip("v")
+
+
 def monitor(
     db: str | Path,
     executor_unit: str = "github-agent-bridge.service",
@@ -135,6 +148,13 @@ def monitor(
     thresholds = thresholds or MonitorThresholds()
     metrics = inspect_db(db)
     alerts: list[str] = []
+    package_version = _package_version()
+    expected_version = os.getenv("GITHUB_AGENT_BRIDGE_EXPECTED_VERSION", "").strip()
+    metrics["package_version"] = package_version
+    if expected_version:
+        metrics["expected_version"] = expected_version
+        if not _versions_match(package_version, expected_version):
+            alerts.append(f"installed package version {package_version} != expected {expected_version}")
 
     if not metrics.get("db_exists"):
         alerts.append(f"database missing: {metrics.get('db_path')}")

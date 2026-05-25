@@ -44,6 +44,57 @@ def test_enqueue_stores_trigger_actor_and_coalesced_actor(tmp_path):
     assert row["trigger_actor_avatar_url"] == "https://github.com/marc.png?size=80"
 
 
+def test_enqueue_falls_back_to_context_actor_for_generic_github_sender(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_actor(ctx, *, gh_bin="gh"):
+        calls.append((ctx.repo, ctx.issue_number, ctx.comment_id, gh_bin))
+        from github_agent_bridge.actors import TriggerActor
+
+        return TriggerActor(login="ecarreras", avatar_url="https://avatars.githubusercontent.com/u/294235?v=4")
+
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", fake_actor)
+    q = JobQueue(tmp_path / "q.sqlite3")
+
+    job, state = q.enqueue(
+        Notification(
+            uid=1,
+            message_id="<1@github.com>",
+            subject="Re: [gisce/erp] issue",
+            from_addr="GitHub <notifications@github.com>",
+            body="https://github.com/gisce/erp/issues/1#issuecomment-99",
+            auth={"spf": True, "dkim": True, "dmarc": True},
+        ),
+        policy(),
+    )
+
+    assert state == "enqueued"
+    assert calls == [("gisce/erp", 1, 99, "gh")]
+    assert job.trigger_actor == "ecarreras"
+    assert job.trigger_actor_avatar_url == "https://avatars.githubusercontent.com/u/294235?v=4"
+
+
+def test_enqueue_leaves_actor_null_when_context_lookup_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    q = JobQueue(tmp_path / "q.sqlite3")
+
+    job, state = q.enqueue(
+        Notification(
+            uid=1,
+            message_id="<1@github.com>",
+            subject="Re: [gisce/erp] issue",
+            from_addr="GitHub <notifications@github.com>",
+            body="https://github.com/gisce/erp/issues/1#issuecomment-99",
+            auth={"spf": True, "dkim": True, "dmarc": True},
+        ),
+        policy(),
+    )
+
+    assert state == "enqueued"
+    assert job.trigger_actor is None
+    assert job.trigger_actor_avatar_url is None
+
+
 def test_claim_parallel_different_work_keys_but_not_same(tmp_path):
     q = JobQueue(tmp_path / "q.sqlite3")
     q.enqueue(notif(1, "<1@github.com>", BODY1), policy())

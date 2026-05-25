@@ -30,6 +30,7 @@ def test_actor_endpoint_prefers_exact_trigger_resource():
 
 def test_backfill_trigger_actors_uses_stored_context(tmp_path, monkeypatch):
     db = tmp_path / "q.sqlite3"
+    monkeypatch.setattr("github_agent_bridge.queue.trigger_actor_details_for_enqueue", lambda notification, ctx: None)
     q = JobQueue(db)
     job, _ = q.enqueue(
         Notification(

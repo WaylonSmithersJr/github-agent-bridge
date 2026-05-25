@@ -9,7 +9,7 @@ from github_agent_bridge.queue import JobQueue
 
 
 def notif(uid=1, mid="<1@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/1#issuecomment-10"):
-    return Notification(uid=uid, message_id=mid, subject="Re: [gisce/erp] PR", from_addr="GitHub <notifications@github.com>", body=body, auth={"spf": True, "dkim": True, "dmarc": True})
+    return Notification(uid=uid, message_id=mid, subject="Re: [gisce/erp] PR", from_addr="ecarreras <notifications@github.com>", body=body, auth={"spf": True, "dkim": True, "dmarc": True})
 
 
 def test_monitor_ok_on_empty_initialized_db(tmp_path):
@@ -18,6 +18,20 @@ def test_monitor_ok_on_empty_initialized_db(tmp_path):
     report = monitor(db, check_systemd=False)
     assert report.ok is True
     assert "pending=0" in report.text()
+
+
+def test_monitor_alerts_on_expected_version_mismatch(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    monkeypatch.setattr(monitor_module, "_package_version", lambda: "0.18.1")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_EXPECTED_VERSION", "v0.18.2")
+
+    report = monitor(db, check_systemd=False)
+
+    assert report.ok is False
+    assert report.metrics["package_version"] == "0.18.1"
+    assert report.metrics["expected_version"] == "v0.18.2"
+    assert any("installed package version 0.18.1 != expected v0.18.2" in a for a in report.alerts)
 
 
 def test_monitor_alerts_on_blocked_job(tmp_path):

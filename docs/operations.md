@@ -241,14 +241,27 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 jobs --limit 20
 
 Jobs include `trigger_actor` and `trigger_actor_avatar_url` when the bridge can
 identify the GitHub user that caused the notification. New GitHub notification
-jobs derive the login from the notification sender and use GitHub's avatar URL.
-Existing jobs can be backfilled from stored GitHub context:
+jobs first derive the login from the notification sender and then fall back to
+the parsed GitHub context through the GitHub API when notifications arrive from
+the generic `GitHub <notifications@github.com>` sender. Existing jobs can be
+backfilled from stored GitHub context:
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   backfill-trigger-actors --dry-run
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   backfill-trigger-actors
+```
+
+### Detect install drift
+
+Set `GITHUB_AGENT_BRIDGE_EXPECTED_VERSION` in the systemd environment file after
+deploying a release. `gab monitor` reports the installed package version and
+alerts when it differs from the expected release:
+
+```bash
+GITHUB_AGENT_BRIDGE_EXPECTED_VERSION=v0.18.1 \
+  gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor --json
 ```
 
 ### Inspect feedback learning rules

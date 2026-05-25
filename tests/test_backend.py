@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from fastapi.testclient import TestClient
 
 from github_agent_bridge.backend import DashboardConfig, _encode_session, _session_stream_events, _sign, create_app
@@ -12,6 +13,11 @@ from github_agent_bridge.models import Notification
 from github_agent_bridge.observability import record_monitor_observation
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
+
+
+@pytest.fixture(autouse=True)
+def no_context_actor_lookup(monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
 
 
 def notif(uid=1, mid="<1@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/1#issuecomment-10", from_addr="GitHub <notifications@github.com>"):

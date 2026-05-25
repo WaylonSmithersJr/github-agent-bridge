@@ -10,7 +10,7 @@ from .parser import classify_github_action, classify_work_intent, extract_github
 from .policy import Policy
 from .session_correlation import session_id_for_job
 from . import feedback
-from .actors import trigger_actor_details_from_notification
+from .actors import trigger_actor_details_for_enqueue
 
 SCHEMA_PACKAGE = "github_agent_bridge.sql"
 
@@ -49,7 +49,7 @@ class JobQueue:
         decision = policy.decision(n, ctx, action)
         status = {"auto": "done", "ask": "waiting_approval", "deny": "denied"}.get(decision, "pending")
         now = utc_now()
-        trigger_actor = trigger_actor_details_from_notification(n)
+        trigger_actor = trigger_actor_details_for_enqueue(n, ctx)
         metadata = {"received_at": n.received_at}
         with self.connect() as con:
             con.execute("BEGIN IMMEDIATE")

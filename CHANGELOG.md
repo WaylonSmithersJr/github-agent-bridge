@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.18.4 (2026-05-25)
+
+### Bug Fixes
+
+- Prevent filter row overlap
+  ([`3ab1f4c`](https://github.com/pilipilisbot/github-agent-bridge/commit/3ab1f4cc3ceb87e6ac5fbb071ff532e152debf08))
+
+
 ## v0.18.3 (2026-05-25)
 
 ### Bug Fixes

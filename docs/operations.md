@@ -256,14 +256,20 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 
 ### Detect install drift
 
-Set `GITHUB_AGENT_BRIDGE_EXPECTED_VERSION` in the systemd environment file after
-deploying a release. `gab monitor` reports the installed package version and
-alerts when it differs from the expected release:
+Set `GITHUB_AGENT_BRIDGE_RELEASE_REPO` in the systemd environment file to the
+repository that publishes bridge releases. `gab monitor` reports the installed
+package version, fetches the latest published GitHub release, and alerts when a
+newer release is available. The alert includes the release URL and the first
+non-empty release-note line so operators can see what changed before updating:
 
 ```bash
-GITHUB_AGENT_BRIDGE_EXPECTED_VERSION=v0.18.1 \
+GITHUB_AGENT_BRIDGE_RELEASE_REPO=pilipilisbot/github-agent-bridge \
   gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor --json
 ```
+
+If GitHub release lookup fails, the monitor records `latest_release_error` in
+JSON output but does not fail the health check only because the network or
+GitHub API is temporarily unavailable.
 
 ### Inspect feedback learning rules
 

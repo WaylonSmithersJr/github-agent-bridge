@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.18.0 (2026-05-25)
+
+### Bug Fixes
+
+- Scope watchdog stale unlocks
+  ([`566ceea`](https://github.com/pilipilisbot/github-agent-bridge/commit/566ceea1c6497f7b3dc82488348ee7c5e057e10f))
+
+### Features
+
+- Filter jobs by actor
+  ([`4335c58`](https://github.com/pilipilisbot/github-agent-bridge/commit/4335c58a9832cbc630b8f8f3bd7b3c6549b9d6a4))
+
+
 ## v0.17.0 (2026-05-25)
 
 ### Features

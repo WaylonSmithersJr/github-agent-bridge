@@ -28,6 +28,23 @@ def test_extract_workflow_run_context():
     assert ctx.work_key == "pilipilisbot/github-agent-bridge/actions/runs/26325244472"
 
 
+def test_extract_pr_comment_context_before_workflow_run_link():
+    ctx = extract_github_context(
+        'Screenshot https://github.com/user-attachments/assets/5ac382c7-e004-429b-8e35-7feb3e8f9c6f"\n'
+        "Run https://github.com/gisce/webclient/actions/runs/26408091899)\n"
+        "Comment https://github.com/gisce/webclient/pull/3333#issuecomment-4535411370"
+    )
+
+    assert ctx.repo == "gisce/webclient"
+    assert ctx.issue_number == 3333
+    assert ctx.comment_id == 4535411370
+    assert ctx.workflow_run_id is None
+    assert ctx.target_kind == "issue_comment"
+    assert ctx.work_key == "gisce/webclient#3333"
+    assert ctx.short_url == "https://github.com/gisce/webclient/pull/3333#issuecomment-4535411370"
+    assert "https://github.com/gisce/webclient/actions/runs/26408091899" in ctx.urls
+
+
 def test_mentions_are_actionable():
     assert classify_github_action("Re: [x] PR", "@pilipilisbot fes-ho") == "reply_comment"
     assert classify_github_action("Re: [x] PR", "You are receiving this because you were mentioned.") == "reply_comment"

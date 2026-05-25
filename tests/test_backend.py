@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi.testclient import TestClient
 
 from github_agent_bridge.backend import DashboardConfig, _encode_session, _session_stream_events, _sign, create_app
-from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_jobs, metrics_summary
+from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_job_actors, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
 from github_agent_bridge.observability import record_monitor_observation
@@ -14,12 +14,12 @@ from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
 
 
-def notif(uid=1, mid="<1@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/1#issuecomment-10"):
+def notif(uid=1, mid="<1@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/1#issuecomment-10", from_addr="GitHub <notifications@github.com>"):
     return Notification(
         uid=uid,
         message_id=mid,
         subject="Re: [gisce/erp] thing (PR #1)",
-        from_addr="GitHub <notifications@github.com>",
+        from_addr=from_addr,
         body=body,
         auth={"spf": True, "dkim": True, "dmarc": True},
     )
@@ -123,16 +123,25 @@ def test_dashboard_missing_db_does_not_create_database(tmp_path):
     assert db.exists() is False
 
 
-def test_dashboard_jobs_can_filter_by_status_repo_action_and_intent(tmp_path):
+def test_dashboard_jobs_can_filter_by_status_repo_action_intent_and_actor(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)
-    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    job, _ = q.enqueue(notif(from_addr="ecarreras <notifications@github.com>"), Policy(trusted_orgs=["gisce"]))
+    q.enqueue(notif(uid=2, mid="<2@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/2#issuecomment-20", from_addr="marc <notifications@github.com>"), Policy(trusted_orgs=["gisce"]))
     q.finish(job.id, "blocked", "failed", "boom")
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
 
-    rows = list_jobs(db, status_filter="blocked", repo="gisce/erp", action="reply_comment", intent="review_only")
+    rows = list_jobs(db, status_filter="blocked", repo="gisce/erp", action="reply_comment", intent="review_only", actor="ECARRERAS")
+    actors = list_job_actors(db)
+    response = client.get("/api/jobs", params={"actor": "@ecarreras"})
+    actor_response = client.get("/api/jobs/actors")
 
     assert [row["status"] for row in rows] == ["blocked"]
-    assert list_jobs(db, status_filter="pending") == []
+    assert [row["trigger_actor"] for row in rows] == ["ecarreras"]
+    assert [actor["login"] for actor in actors] == ["ecarreras", "marc"]
+    assert response.json()["jobs"][0]["id"] == job.id
+    assert actor_response.json()["actors"][0]["avatar_url"] == "https://github.com/ecarreras.png?size=80"
+    assert list_jobs(db, status_filter="pending", actor="ecarreras") == []
 
 
 def test_dashboard_exposes_job_detail_logs_and_metrics(tmp_path):

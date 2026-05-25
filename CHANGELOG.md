@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.17.0 (2026-05-25)
+
+### Features
+
+- Track semantic job progress
+  ([`46efaf6`](https://github.com/pilipilisbot/github-agent-bridge/commit/46efaf60c74ae8ddbbc1e94912aacecf3f74d090))
+
+
 ## v0.16.0 (2026-05-24)
 
 ### Bug Fixes

@@ -43,6 +43,10 @@ def trigger_actor_details_from_notification(notification: Notification) -> Trigg
     return TriggerActor(login=login, avatar_url=github_avatar_url(login)) if login else None
 
 
+def trigger_actor_details_for_enqueue(notification: Notification, ctx: GitHubContext, *, gh_bin: str = "gh") -> TriggerActor | None:
+    return github_actor_details_for_context(ctx, gh_bin=gh_bin) or trigger_actor_details_from_notification(notification)
+
+
 def trigger_actor_from_notification(notification: Notification) -> str | None:
     actor = trigger_actor_details_from_notification(notification)
     return actor.login if actor else None
@@ -86,7 +90,10 @@ def github_actor_details_for_context(ctx: GitHubContext, *, gh_bin: str = "gh") 
     endpoint = actor_endpoint(ctx)
     if endpoint is None:
         return None
-    proc = subprocess.run([gh_bin, "api", endpoint], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        proc = subprocess.run([gh_bin, "api", endpoint], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except OSError:
+        return None
     if proc.returncode != 0:
         return None
     try:

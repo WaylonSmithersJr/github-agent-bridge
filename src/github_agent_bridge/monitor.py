@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +126,59 @@ def inspect_db(path: str | Path) -> dict[str, Any]:
     return inspect_db_read_only(path)
 
 
+def _package_version() -> str:
+    try:
+        return metadata.version("github-agent-bridge")
+    except metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _normalize_version(version: str) -> str:
+    return version.strip().lstrip("v")
+
+
+def _latest_github_release(repo: str, timeout_seconds: float = 5.0) -> dict[str, str] | None:
+    repo = repo.strip().strip("/")
+    if not repo:
+        return None
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/releases/latest",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "github-agent-bridge-monitor",
+        },
+    )
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    tag = str(payload.get("tag_name") or "").strip()
+    if not tag:
+        return None
+    return {
+        "tag_name": tag,
+        "name": str(payload.get("name") or tag),
+        "html_url": str(payload.get("html_url") or ""),
+        "published_at": str(payload.get("published_at") or ""),
+        "body": str(payload.get("body") or ""),
+    }
+
+
+def _release_summary(release: dict[str, str]) -> str:
+    body = release.get("body") or ""
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:180]
+    return release.get("name") or release.get("tag_name") or ""
+
+
 def monitor(
     db: str | Path,
     executor_unit: str = "github-agent-bridge.service",
@@ -135,6 +192,28 @@ def monitor(
     thresholds = thresholds or MonitorThresholds()
     metrics = inspect_db(db)
     alerts: list[str] = []
+    package_version = _package_version()
+    release_repo = os.getenv("GITHUB_AGENT_BRIDGE_RELEASE_REPO", "").strip()
+    metrics["package_version"] = package_version
+    if release_repo:
+        metrics["release_repo"] = release_repo
+        latest_release = _latest_github_release(release_repo)
+        if latest_release:
+            metrics["latest_release"] = {
+                key: latest_release[key]
+                for key in ("tag_name", "name", "html_url", "published_at")
+                if latest_release.get(key)
+            }
+            if package_version != "unknown" and _normalize_version(package_version) != _normalize_version(latest_release["tag_name"]):
+                summary = _release_summary(latest_release)
+                detail = f": {summary}" if summary else ""
+                url = f" ({latest_release['html_url']})" if latest_release.get("html_url") else ""
+                alerts.append(
+                    f"new github-agent-bridge release {latest_release['tag_name']} available; "
+                    f"installed package version is {package_version}{url}{detail}"
+                )
+        else:
+            metrics["latest_release_error"] = f"could not fetch latest release for {release_repo}"
 
     if not metrics.get("db_exists"):
         alerts.append(f"database missing: {metrics.get('db_path')}")

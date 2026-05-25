@@ -241,8 +241,11 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 jobs --limit 20
 
 Jobs include `trigger_actor` and `trigger_actor_avatar_url` when the bridge can
 identify the GitHub user that caused the notification. New GitHub notification
-jobs derive the login from the notification sender and use GitHub's avatar URL.
-Existing jobs can be backfilled from stored GitHub context:
+jobs first resolve the parsed issue, pull request, comment, review, commit
+comment, or workflow run through the GitHub API and store that resource author.
+If that lookup is unavailable, enqueue falls back to the notification sender
+display name when GitHub provides a concrete login there. Existing jobs can be
+backfilled from stored GitHub context:
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
@@ -250,6 +253,23 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   backfill-trigger-actors
 ```
+
+### Detect install drift
+
+Set `GITHUB_AGENT_BRIDGE_RELEASE_REPO` in the systemd environment file to the
+repository that publishes bridge releases. `gab monitor` reports the installed
+package version, fetches the latest published GitHub release, and alerts when a
+newer release is available. The alert includes the release URL and the first
+non-empty release-note line so operators can see what changed before updating:
+
+```bash
+GITHUB_AGENT_BRIDGE_RELEASE_REPO=pilipilisbot/github-agent-bridge \
+  gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor --json
+```
+
+If GitHub release lookup fails, the monitor records `latest_release_error` in
+JSON output but does not fail the health check only because the network or
+GitHub API is temporarily unavailable.
 
 ### Inspect feedback learning rules
 

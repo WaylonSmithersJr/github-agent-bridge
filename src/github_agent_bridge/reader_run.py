@@ -4,17 +4,11 @@ import os
 import sys
 
 from .cli import DEFAULT_DB, DEFAULT_POLICY, main as cli_main
+from .reader import imap_mailbox_arg
 
 
 def env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
-
-
-def imap_mailbox_arg(value: str) -> str:
-    """Quote Gmail-style mailbox names with spaces for imaplib.select."""
-    if " " in value and not value.startswith('"'):
-        return f'"{value}"'
-    return value
 
 
 def main() -> int:

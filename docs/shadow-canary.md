@@ -32,7 +32,8 @@ Read live IMAP with an independent bridge DB cursor, but do **not** mark message
 
 ```bash
 gab --db ~/.local/state/github-agent-bridge-shadow/bridge.sqlite3 read-imap-once \
-  --email "$EMAIL" --password "$APP_PASSWORD"
+  --email "$EMAIL" --password "$APP_PASSWORD" \
+  --mailbox "${GITHUB_AGENT_BRIDGE_MAILBOX:-INBOX}"
 gab --db ~/.local/state/github-agent-bridge-shadow/bridge.sqlite3 run --mode shadow --once --workers 4
 ```
 

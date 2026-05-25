@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.18.6 (2026-05-25)
+
+### Bug Fixes
+
+- Support configurable IMAP mailboxes
+  ([`6a5201f`](https://github.com/pilipilisbot/github-agent-bridge/commit/6a5201f4bfceefbb5dbb33430a61b1c32c209f7b))
+
+### Testing
+
+- Add dashboard frontend tests
+  ([`d6c80b4`](https://github.com/pilipilisbot/github-agent-bridge/commit/d6c80b4a158590430382fab90fd40669d63e6686))
+
+
 ## v0.18.5 (2026-05-25)
 
 ### Bug Fixes

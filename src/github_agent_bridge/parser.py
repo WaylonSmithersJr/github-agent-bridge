@@ -86,21 +86,34 @@ def classify_github_action(subject: str, body: str) -> str:
     return "archive_notification"
 
 
+def _github_urls(body: str) -> list[str]:
+    urls: list[str] = []
+    for raw_url in re.findall(r"https://github\.com/[^\s>]+", body):
+        url = raw_url.rstrip('.,;:!?)"]\'')
+        if url not in urls:
+            urls.append(url)
+    return urls
+
+
+def _prioritize_url(urls: list[str], primary_url: str | None) -> list[str]:
+    if primary_url is None:
+        return urls
+    return [primary_url, *[url for url in urls if url != primary_url]]
+
+
 def extract_github_context(body: str) -> GitHubContext:
-    urls = re.findall(r"https://github\.com/[^\s>]+", body)
+    urls = _github_urls(body)
     repo = None; issue_number = None; comment_id = None; review_id = None; review_comment_id = None; commit_comment_id = None; commit_sha = None; workflow_run_id = None; target_kind = None
+    primary_url = None
     for url in urls:
-        workflow_run = re.search(r"github\.com/([^/]+/[^/]+)/actions/runs/(\d+)", url)
-        if workflow_run:
-            repo = workflow_run.group(1).lower(); workflow_run_id = int(workflow_run.group(2)); target_kind = "workflow_run"
-            break
         commit = re.search(r"github\.com/([^/]+/[^/]+)/commit/([0-9a-fA-F]+)", url)
         if commit:
             repo = commit.group(1).lower(); commit_sha = commit.group(2)
             cc = re.search(r"#r(\d+)", url)
             if cc:
-                commit_comment_id = int(cc.group(1)); target_kind = "commit_comment"; break
+                commit_comment_id = int(cc.group(1)); target_kind = "commit_comment"; primary_url = url; break
             target_kind = "commit"
+            primary_url = primary_url or url
             continue
         m = re.search(r"github\.com/([^/]+/[^/]+)/(issues|pull)/(\d+)", url)
         if not m:
@@ -108,15 +121,21 @@ def extract_github_context(body: str) -> GitHubContext:
         repo = m.group(1).lower(); issue_number = int(m.group(3))
         cm = re.search(r"issuecomment-(\d+)", url); rv = re.search(r"pullrequestreview-(\d+)", url); rc = re.search(r"discussion_r(\d+)", url)
         if cm:
-            comment_id = int(cm.group(1)); target_kind = "issue_comment"; break
+            comment_id = int(cm.group(1)); target_kind = "issue_comment"; primary_url = url; break
         if rc:
-            review_comment_id = int(rc.group(1)); target_kind = "review_comment"; break
+            review_comment_id = int(rc.group(1)); target_kind = "review_comment"; primary_url = url; break
         if rv:
-            review_id = int(rv.group(1)); target_kind = "review"; continue
+            review_id = int(rv.group(1)); target_kind = "review"; primary_url = primary_url or url; continue
         if target_kind is None:
-            target_kind = "issue"
+            target_kind = "issue"; primary_url = primary_url or url
+    if target_kind is None:
+        for url in urls:
+            workflow_run = re.search(r"github\.com/([^/]+/[^/]+)/actions/runs/(\d+)", url)
+            if workflow_run:
+                repo = workflow_run.group(1).lower(); workflow_run_id = int(workflow_run.group(2)); target_kind = "workflow_run"; primary_url = url
+                break
     return GitHubContext(
-        urls=urls,
+        urls=_prioritize_url(urls, primary_url),
         repo=repo,
         issue_number=issue_number,
         comment_id=comment_id,

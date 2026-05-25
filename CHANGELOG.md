@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.18.2 (2026-05-25)
+
+### Bug Fixes
+
+- Stack process and alert panels
+  ([`5eb8830`](https://github.com/pilipilisbot/github-agent-bridge/commit/5eb883081da56a04269ffe4e29cbe897d25c39f6))
+
+
 ## v0.18.1 (2026-05-25)
 
 

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.18.5 (2026-05-25)
+
+### Bug Fixes
+
+- Prompt agents to read repo instructions
+  ([`81e6076`](https://github.com/pilipilisbot/github-agent-bridge/commit/81e6076928d66cba1e91778f10c9c97f73c576ed))
+
+
 ## v0.18.4 (2026-05-25)
 
 ### Bug Fixes

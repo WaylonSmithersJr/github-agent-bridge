@@ -1408,10 +1408,10 @@ function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {
 
 function StatusBadge({ status }: { status: string }) {
   const tone = statusTone(status);
-  const isRunning = status === "running";
+  const isLive = status === "running" || status === "pending";
   return (
     <span className={cn("inline-flex min-h-6 items-center gap-1.5 rounded-full border px-2 text-xs font-semibold", tone.badge)}>
-      <span className={cn("h-2.5 w-2.5 rounded-full", tone.dot, isRunning && "animate-live-pulse")} aria-hidden />
+      <span className={cn("h-2.5 w-2.5 rounded-full", tone.dot, isLive && "animate-live-pulse")} aria-hidden />
       {status}
     </span>
   );

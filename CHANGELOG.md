@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v0.19.1 (2026-05-26)
+
+### Bug Fixes
+
+- Preserve default bot login policy
+  ([`80dfee9`](https://github.com/pilipilisbot/github-agent-bridge/commit/80dfee9481dc8cdc011bc144ee50552ea3e21e43))
+
+- Support forwarded github notifications
+  ([`70f8e13`](https://github.com/pilipilisbot/github-agent-bridge/commit/70f8e13c4c28af9d5e9b4db3ed3925315bc53f4a))
+
+- Treat approved reviews as non-actionable
+  ([`e26c41b`](https://github.com/pilipilisbot/github-agent-bridge/commit/e26c41b78a0e7f3d0a3452b8d7e91cc56ab81bb2))
+
+
 ## v0.19.0 (2026-05-26)
 
 ### Documentation

@@ -21,6 +21,7 @@ ALLOWED_PROMPT_RULES = {
     "worktree",
 }
 DEFAULT_REPO_ROLE = "contributor"
+DEFAULT_BOT_LOGINS = frozenset({"pilipilisbot"})
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,7 @@ class Policy:
     org_routes: dict[str, Route] = field(default_factory=dict)
     repo_roles: dict[str, str] = field(default_factory=dict)
     org_roles: dict[str, str] = field(default_factory=dict)
-    bot_logins: set[str] = field(default_factory=set)
+    bot_logins: set[str] = field(default_factory=lambda: set(DEFAULT_BOT_LOGINS))
     prompt_overrides: PromptOverrides = field(default_factory=PromptOverrides)
     feedback_learning: FeedbackLearning = field(default_factory=FeedbackLearning)
 
@@ -162,7 +163,11 @@ class Policy:
             trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"])),
             repo_routes=routes(data.get("repoRoutes", {})), org_routes=routes(data.get("orgRoutes", {})),
             repo_roles=roles(data.get("repoRoles", {})), org_roles=roles(data.get("orgRoles", {})),
-            bot_logins={str(login).lower().lstrip("@") for login in data.get("botLogins", []) if str(login).strip()},
+            bot_logins=(
+                {str(login).lower().lstrip("@") for login in data.get("botLogins", []) if str(login).strip()}
+                if "botLogins" in data
+                else set(DEFAULT_BOT_LOGINS)
+            ),
             prompt_overrides=prompt_overrides(data.get("promptOverrides", {})),
             feedback_learning=feedback_learning(data.get("feedbackLearning", {})),
         )

@@ -71,6 +71,21 @@ def test_policy_from_file_loads_bot_logins(tmp_path):
     assert policy.bot_logins == {"giscebot", "pilipilisbot"}
 
 
+def test_policy_keeps_default_bot_login_when_not_configured(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text("{}")
+
+    assert Policy().bot_logins == {"pilipilisbot"}
+    assert Policy.from_file(policy_file).bot_logins == {"pilipilisbot"}
+
+
+def test_policy_allows_explicit_empty_bot_logins(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text('{"botLogins": []}')
+
+    assert Policy.from_file(policy_file).bot_logins == set()
+
+
 def test_policy_from_file_loads_feedback_learning(tmp_path):
     policy_file = tmp_path / "policy.json"
     policy_file.write_text('{"feedbackLearning": {"enabled": false, "minConfidence": 0.7, "autoApproveConfidence": 0.9, "maxEventsPerRun": 3, "model": "test-model", "thinking": "medium", "sessionId": "feedback-test"}}')

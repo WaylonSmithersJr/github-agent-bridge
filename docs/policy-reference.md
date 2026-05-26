@@ -44,11 +44,12 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 ```json
 {
   "source": {
-    "from": "notifications@github.com",
+    "from": ["notifications@github.com", "giscebot@gisce.net"],
     "requiredAuth": ["spf=pass", "dkim=pass", "dmarc=pass"],
     "requiredUrlPrefix": "https://github.com/",
     "messageIdDomain": "github.com"
   },
+  "botLogins": ["pilipilisbot"],
   "trustedRepos": ["your-org/your-repo"],
   "trustedOrgs": ["your-org"],
   "enabledRepos": ["your-org/your-repo"],
@@ -97,6 +98,7 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 | `orgRoutes` | object | `{}` | Per-owner delivery routes used when no `repoRoutes` entry matches. |
 | `repoRoles` | object | `{}` | Exact per-repo operating role. Takes precedence over `orgRoles`. |
 | `orgRoles` | object | `{}` | Per-owner operating role used when no `repoRoles` entry matches. |
+| `botLogins` | array of strings | `["pilipilisbot"]` | GitHub login names that should count as addressed bots when classifying mentions, assignments, and review requests. |
 | `actions` | object | built-in action defaults | Maps classified notification actions to policy decisions. |
 | `promptOverrides` | object | `{}` | Optional Markdown files that replace selected packaged prompt resources. |
 | `feedbackLearning` | object | `{ "enabled": true, "minConfidence": 0.5, "autoApproveConfidence": 0.8 }` | Controls candidate capture, autonomous learning, and prompt threshold for feedback rules. |
@@ -109,7 +111,7 @@ Unknown top-level keys are ignored by the current implementation.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `from` | string | `notifications@github.com` | Required substring in the decoded email `From` header. |
+| `from` | string or array of strings | `notifications@github.com` | Required substring in the decoded email `From` header. Use an array when GitHub notifications are forwarded or rewritten by a trusted mail gateway while GitHub reply headers and message ids are preserved. |
 | `requiredUrlPrefix` | string | `https://github.com/` | At least one extracted URL must start with this prefix. |
 | `messageIdDomain` | string | `github.com` | Required substring in the email `Message-ID`. |
 | `requiredAuth` | array of strings | currently documented only | Intended SPF/DKIM/DMARC requirements. See note below. |
@@ -123,13 +125,51 @@ Current auth behavior:
 Source trust fails when any of these are false:
 
 ```text
-source.from is in From header
+any configured source.from value is in From header
 AND auth is OK
 AND at least one GitHub URL has source.requiredUrlPrefix
 AND Message-ID contains source.messageIdDomain
 ```
 
 If source trust fails, the decision is always `deny`.
+
+Example with Google Groups or similar forwarded GitHub notifications:
+
+```json
+{
+  "source": {
+    "from": ["notifications@github.com", "giscebot@gisce.net"],
+    "requiredUrlPrefix": "https://github.com/",
+    "messageIdDomain": "github.com"
+  }
+}
+```
+
+The parser still requires GitHub-specific headers, a GitHub reply address, GitHub message id content, and normal source trust before forwarded messages are accepted.
+
+## `botLogins`
+
+`botLogins` defines the GitHub accounts that count as the addressed bot for mention, assignment, and review-request classification.
+
+Default:
+
+```json
+{
+  "botLogins": ["pilipilisbot"]
+}
+```
+
+Configured names are case-insensitive and may include or omit the leading `@`.
+
+Example:
+
+```json
+{
+  "botLogins": ["pilipilisbot", "giscebot"]
+}
+```
+
+With this policy, comments that mention `@giscebot`, assignments to `@giscebot`, and review requests from `@giscebot` are classified the same way as the default `@pilipilisbot` notifications. Set an explicit empty array only if the deployment should rely on GitHub footer text such as “You are receiving this because you were mentioned” instead of login matching.
 
 ## `trustedRepos`
 

@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.19.0 (2026-05-26)
+
+### Documentation
+
+- Add mobile version screenshot
+  ([`f5cae8d`](https://github.com/pilipilisbot/github-agent-bridge/commit/f5cae8dbce8f3e4d2542202390acf442f96680c1))
+
+### Features
+
+- Show bridge version in dashboard
+  ([`c2711d6`](https://github.com/pilipilisbot/github-agent-bridge/commit/c2711d63d1bab18f4df7a90600841da5f24439fa))
+
+
 ## v0.18.7 (2026-05-25)
 
 ### Bug Fixes

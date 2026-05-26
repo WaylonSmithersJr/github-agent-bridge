@@ -8,9 +8,9 @@ from .models import GitHubContext
 
 REVIEW_ONLY_PATTERNS = ("fes-ne una review", "fes una review", "fes review", "fer una review", "fes-ne una revisio", "fes-ne una revisió", "fes una revisio", "fes una revisió", "fer una revisio", "fer una revisió", "review de la pr", "revisió de la pr", "revisio de la pr", "revisa aquesta pr", "revisa els canvis", "revisar els canvis", "com veus els canvis", "què et semblen els canvis", "que et semblen els canvis", "what do you think of these changes", "please review", "can you review")
 IMPLEMENTATION_PATTERNS = ("fes els canvis", "fes-ho", "implementa", "modifica", "canvia", "arregla", "corregeix", "fix", "push", "commit", "aplica", "resol", "resolve")
-BOT_MENTION_PATTERNS = ("@pilipilisbot", "pilipilisbot", "you are receiving this because you were mentioned")
-ASSIGNMENT_PATTERNS = ("assigned you", "assigned to you", "you were assigned", "you are assigned", "assigned pilipilisbot", "assigned @pilipilisbot")
-REVIEW_REQUEST_PATTERNS = ("requested your review", "requested a review from you", "you were requested for review", "review requested", "requested review from pilipilisbot", "requested review from @pilipilisbot", "requested @pilipilisbot")
+BOT_MENTION_PATTERNS = ("you are receiving this because you were mentioned",)
+ASSIGNMENT_PATTERNS = ("assigned you", "assigned to you", "you were assigned", "you are assigned")
+REVIEW_REQUEST_PATTERNS = ("requested your review", "requested a review from you", "you were requested for review", "review requested")
 COPILOT_REVIEW_PATTERNS = ("copilot-pull-request-reviewer", "github-copilot", "github copilot", "copilot reviewed", "copilot commented", "copilot left a comment", "copilot suggested", "copilot requested changes")
 WORKFLOW_RUN_FAILED_PATTERNS = ("run failed", "workflow run failed", "workflow failed", "job failed", "failing after")
 
@@ -37,13 +37,41 @@ def parse_auth_results(msg: Message) -> dict[str, bool]:
     return {"spf": "spf=pass" in raw, "dkim": "dkim=pass" in raw, "dmarc": "dmarc=pass" in raw}
 
 
+def is_github_notification_message(msg: Message, from_addr: str | None = None) -> bool:
+    """Return True for direct GitHub notifications and Google Groups rewrites.
+
+    GISCE routes GitHub mail through a Google Group, so incoming notifications can
+    arrive as `From: ... via GISCE Bot <giscebot@gisce.net>` while retaining the
+    GitHub reply address, message id and X-GitHub headers.
+    """
+    sender = (from_addr or decode_header_value(msg.get("From", ""))).lower()
+    if "notifications@github.com" in sender:
+        return True
+    reply_to = decode_header_value(msg.get("Reply-To", "")).lower()
+    message_id = decode_header_value(msg.get("Message-ID", "")).lower()
+    return (
+        bool(msg.get("X-GitHub-Recipient"))
+        and bool(msg.get("X-GitHub-Reason"))
+        and "@reply.github.com" in reply_to
+        and "github.com" in message_id
+    )
+
+
 def _contains_any(text: str, patterns: tuple[str, ...]) -> bool:
     return any(p in text for p in patterns)
 
 
-def github_event_flags(subject: str, body: str) -> dict[str, bool]:
+def _bot_patterns(bot_logins: set[str] | None) -> tuple[str, ...]:
+    names = sorted({login.lower().lstrip("@") for login in (bot_logins or set()) if login.strip()})
+    return tuple(pattern for name in names for pattern in (f"@{name}", name))
+
+
+def github_event_flags(subject: str, body: str, bot_logins: set[str] | None = None) -> dict[str, bool]:
     text = f"{subject}\n{body}".lower()
-    return {"bot_mentioned": _contains_any(text, BOT_MENTION_PATTERNS), "assigned": _contains_any(text, ASSIGNMENT_PATTERNS), "review_requested": _contains_any(text, REVIEW_REQUEST_PATTERNS), "copilot_review": _contains_any(text, COPILOT_REVIEW_PATTERNS)}
+    bot_patterns = _bot_patterns(bot_logins)
+    assignment_patterns = ASSIGNMENT_PATTERNS + tuple(f"assigned {p}" for p in bot_patterns)
+    review_patterns = REVIEW_REQUEST_PATTERNS + tuple(f"requested review from {p}" for p in bot_patterns) + tuple(f"requested {p}" for p in bot_patterns)
+    return {"bot_mentioned": _contains_any(text, BOT_MENTION_PATTERNS + bot_patterns), "assigned": _contains_any(text, assignment_patterns), "review_requested": _contains_any(text, review_patterns), "copilot_review": _contains_any(text, COPILOT_REVIEW_PATTERNS)}
 
 
 def _looks_like_pr_thread(subject: str, body: str) -> bool:
@@ -51,9 +79,9 @@ def _looks_like_pr_thread(subject: str, body: str) -> bool:
     return bool(re.search(r"\bpr #\d+\b|\bpull request #\d+\b", text) or re.search(r"github\.com/[^/]+/[^/]+/pull/\d+", text))
 
 
-def classify_work_intent(subject: str, body: str) -> str:
+def classify_work_intent(subject: str, body: str, bot_logins: set[str] | None = None) -> str:
     text = f"{subject}\n{body}".lower()
-    flags = github_event_flags(subject, body)
+    flags = github_event_flags(subject, body, bot_logins)
     asks_review = flags["review_requested"] or _contains_any(text, REVIEW_ONLY_PATTERNS)
     asks_implementation = flags["assigned"] or _contains_any(text, IMPLEMENTATION_PATTERNS)
     if asks_review and not asks_implementation:
@@ -66,9 +94,9 @@ def classify_work_intent(subject: str, body: str) -> str:
     return "work_allowed"
 
 
-def classify_github_action(subject: str, body: str) -> str:
+def classify_github_action(subject: str, body: str, bot_logins: set[str] | None = None) -> str:
     text = f"{subject}\n{body}".lower()
-    flags = github_event_flags(subject, body)
+    flags = github_event_flags(subject, body, bot_logins)
     if re.search(r"github\.com/[^/]+/[^/]+/actions/runs/\d+", text) and _contains_any(text, WORKFLOW_RUN_FAILED_PATTERNS):
         return "workflow_run_failed"
     if "merged" in text:

@@ -97,6 +97,10 @@ The bridge is conservative by default. `policy.json` decides what is trusted, wh
 
 ```json
 {
+  "source": {
+    "from": ["notifications@github.com", "giscebot@gisce.net"]
+  },
+  "botLogins": ["pilipilisbot"],
   "trustedOrgs": ["your-org"],
   "enabledRepos": ["your-org/your-repo"],
   "orgRoutes": {

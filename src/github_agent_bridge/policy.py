@@ -21,6 +21,7 @@ ALLOWED_PROMPT_RULES = {
     "worktree",
 }
 DEFAULT_REPO_ROLE = "contributor"
+DEFAULT_BOT_LOGINS = frozenset({"pilipilisbot"})
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ class FeedbackLearning:
 
 @dataclass(frozen=True)
 class Policy:
-    source_from: str = "notifications@github.com"
+    source_from: str | tuple[str, ...] = "notifications@github.com"
     required_url_prefix: str = "https://github.com/"
     message_id_domain: str = "github.com"
     trusted_repos: set[str] = field(default_factory=set)
@@ -73,6 +74,7 @@ class Policy:
     org_routes: dict[str, Route] = field(default_factory=dict)
     repo_roles: dict[str, str] = field(default_factory=dict)
     org_roles: dict[str, str] = field(default_factory=dict)
+    bot_logins: set[str] = field(default_factory=lambda: set(DEFAULT_BOT_LOGINS))
     prompt_overrides: PromptOverrides = field(default_factory=PromptOverrides)
     feedback_learning: FeedbackLearning = field(default_factory=FeedbackLearning)
 
@@ -150,7 +152,7 @@ class Policy:
             )
 
         return cls(
-            source_from=source.get("from", cls.source_from),
+            source_from=tuple(source.get("from")) if isinstance(source.get("from"), list) else source.get("from", cls.source_from),
             required_url_prefix=source.get("requiredUrlPrefix", cls.required_url_prefix),
             message_id_domain=source.get("messageIdDomain", cls.message_id_domain),
             trusted_repos={r.lower() for r in data.get("trustedRepos", [])},
@@ -161,13 +163,21 @@ class Policy:
             trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"])),
             repo_routes=routes(data.get("repoRoutes", {})), org_routes=routes(data.get("orgRoutes", {})),
             repo_roles=roles(data.get("repoRoles", {})), org_roles=roles(data.get("orgRoles", {})),
+            bot_logins=(
+                {str(login).lower().lstrip("@") for login in data.get("botLogins", []) if str(login).strip()}
+                if "botLogins" in data
+                else set(DEFAULT_BOT_LOGINS)
+            ),
             prompt_overrides=prompt_overrides(data.get("promptOverrides", {})),
             feedback_learning=feedback_learning(data.get("feedbackLearning", {})),
         )
 
     def trusted_source(self, n: Notification, ctx: GitHubContext) -> bool:
         auth_ok = all(bool(n.auth.get(k)) for k in ("spf", "dkim", "dmarc")) if n.auth else True
-        return self.source_from in n.from_addr and auth_ok and any(u.startswith(self.required_url_prefix) for u in ctx.urls) and self.message_id_domain in n.message_id
+        sources = (self.source_from,) if isinstance(self.source_from, str) else self.source_from
+        from_addr = n.from_addr.lower()
+        source_ok = any(str(source).lower() in from_addr for source in sources)
+        return source_ok and auth_ok and any(u.startswith(self.required_url_prefix) for u in ctx.urls) and self.message_id_domain in n.message_id
 
     def repo_trusted(self, repo: str | None) -> bool:
         if not repo:

@@ -5,7 +5,7 @@ import imaplib
 from dataclasses import dataclass
 
 from .models import Notification
-from .parser import decode_header_value, extract_body_text, parse_auth_results
+from .parser import decode_header_value, extract_body_text, is_github_notification_message, parse_auth_results
 from .policy import Policy
 from .queue import JobQueue
 
@@ -57,7 +57,7 @@ class ImapReader:
                 from_addr = decode_header_value(msg.get("From", ""))
                 subject = decode_header_value(msg.get("Subject", ""))
                 message_id = decode_header_value(msg.get("Message-ID", ""))
-                if "notifications@github.com" in from_addr.lower():
+                if is_github_notification_message(msg, from_addr):
                     n = Notification(uid=uid, message_id=message_id, subject=subject, from_addr=from_addr, body=extract_body_text(msg), auth=parse_auth_results(msg))
                     self.queue.enqueue(n, self.policy)
                     # Only GitHub notifications belong to this bounded context.

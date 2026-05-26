@@ -1,6 +1,9 @@
 {
   "source": {
-    "from": "notifications@github.com",
+    "from": [
+      "notifications@github.com",
+      "giscebot@gisce.net"
+    ],
     "requiredAuth": [
       "spf=pass",
       "dkim=pass",
@@ -10,6 +13,9 @@
     "messageIdDomain": "github.com"
   },
   "trustedRepos": [],
+  "botLogins": [
+    "pilipilisbot"
+  ],
   "trustedOrgs": [
     "your-org"
   ],

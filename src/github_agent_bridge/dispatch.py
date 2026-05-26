@@ -131,6 +131,9 @@ class GitHubClient:
         review = self.pull_request_review(ctx)
         if not review:
             return False
+        state = (review.get("state") or "").upper()
+        if state == "APPROVED":
+            return True
         body = (review.get("body") or "").lower()
         non_actionable_markers = (
             "generated no new comments",

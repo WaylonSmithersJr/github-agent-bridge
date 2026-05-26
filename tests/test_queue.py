@@ -12,7 +12,7 @@ def notif(uid, mid, body):
 
 
 def policy():
-    return Policy(trusted_orgs={"gisce"})
+    return Policy(trusted_orgs={"gisce"}, bot_logins={"pilipilisbot"})
 
 
 def test_enqueue_and_coalesce_same_work_key(tmp_path, monkeypatch):

@@ -46,7 +46,7 @@ def test_extract_pr_comment_context_before_workflow_run_link():
 
 
 def test_mentions_are_actionable():
-    assert classify_github_action("Re: [x] PR", "@pilipilisbot fes-ho") == "reply_comment"
+    assert classify_github_action("Re: [x] PR", "@pilipilisbot fes-ho", {"pilipilisbot"}) == "reply_comment"
     assert classify_github_action("Re: [x] PR", "You are receiving this because you were mentioned.") == "reply_comment"
 
 
@@ -71,23 +71,23 @@ def test_review_request_uses_formal_review_flow():
     subject = "Re: [gisce/erp] Permitir caller en los dominios (PR #27315)"
     body = "ecarreras requested review from @pilipilisbot on this pull request."
 
-    assert classify_github_action(subject, body) == "submit_review"
-    assert classify_work_intent(subject, body) == "review_only"
+    assert classify_github_action(subject, body, {"pilipilisbot"}) == "submit_review"
+    assert classify_work_intent(subject, body, {"pilipilisbot"}) == "review_only"
 
 
 def test_pr_review_followup_is_read_only_without_explicit_implementation():
     subject = "Re: [gisce/erp] Permitir caller en los dominios (PR #27315)"
     body = "@pilipilisbot però la transacció en què s'executa que entra per eval_domain és amb una transacció readonly"
 
-    assert classify_github_action(subject, body) == "reply_comment"
-    assert classify_work_intent(subject, body) == "review_only"
+    assert classify_github_action(subject, body, {"pilipilisbot"}) == "reply_comment"
+    assert classify_work_intent(subject, body, {"pilipilisbot"}) == "review_only"
 
 
 def test_pr_followup_can_still_request_explicit_implementation():
     subject = "Re: [gisce/erp] Permitir caller en los dominios (PR #27315)"
     body = "@pilipilisbot aplica el canvi i fes push"
 
-    assert classify_github_action(subject, body) == "reply_comment"
+    assert classify_github_action(subject, body, {"pilipilisbot"}) == "reply_comment"
     assert classify_work_intent(subject, body) == "work_allowed"
 
 
@@ -95,5 +95,5 @@ def test_pr_assignment_allows_work():
     subject = "Re: [gisce/erp] Permitir caller en los dominios (PR #27315)"
     body = "ecarreras assigned @pilipilisbot to this pull request."
 
-    assert classify_github_action(subject, body) == "open_issue"
-    assert classify_work_intent(subject, body) == "work_allowed"
+    assert classify_github_action(subject, body, {"pilipilisbot"}) == "open_issue"
+    assert classify_work_intent(subject, body, {"pilipilisbot"}) == "work_allowed"

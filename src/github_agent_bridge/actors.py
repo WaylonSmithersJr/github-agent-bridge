@@ -11,7 +11,7 @@ from typing import Any
 
 from .models import GitHubContext, Notification
 
-LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\[bot\])?$")
 RESERVED_SENDERS = {"github", "notifications"}
 
 

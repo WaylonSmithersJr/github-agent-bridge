@@ -18,7 +18,7 @@ from .executor import ExecutorConfig, ExecutorPool
 from .models import Notification, utc_now
 from .monitor import MonitorThresholds, monitor, report_json
 from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS
-from .parser import decode_header_value, extract_body_text, parse_auth_results
+from .parser import decode_header_value, extract_body_text, is_github_notification_message, parse_auth_results
 from .policy import Policy
 from .queue import JobQueue
 from .reader import ImapConfig, ImapReader, imap_mailbox_arg
@@ -34,7 +34,7 @@ def load_policy(path: str | None) -> Policy:
 
 def msg_to_notification(msg, uid: int | None = None) -> Notification | None:
     from_addr = decode_header_value(msg.get("From", ""))
-    if "notifications@github.com" not in from_addr.lower():
+    if not is_github_notification_message(msg, from_addr):
         return None
     return Notification(
         uid=uid,

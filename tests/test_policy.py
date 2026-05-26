@@ -10,6 +10,22 @@ def test_trusted_org_auto_trusted():
     assert Policy(trusted_orgs={"gisce"}).decision(n, ctx, "reply_comment") == "auto_trusted"
 
 
+def test_trusted_source_accepts_configured_forwarder():
+    body = "@giscebot https://github.com/gisce/erp/pull/27853#issuecomment-4547966148"
+    n = Notification(
+        1,
+        "<gisce/erp/pull/27853/c4547966148@github.com>",
+        "subj",
+        "'Eduard Carreras' via GISCE Bot <giscebot@gisce.net>",
+        body,
+        auth={"spf": True, "dkim": True, "dmarc": True},
+    )
+    ctx = extract_github_context(body)
+    policy = Policy(source_from=("notifications@github.com", "giscebot@gisce.net"), trusted_orgs={"gisce"})
+
+    assert policy.decision(n, ctx, "reply_comment") == "auto_trusted"
+
+
 def test_enabled_repos_restricts_canary_scope():
     n = Notification(1, "<x@github.com>", "subj", "notifications@github.com", "", auth={"spf": True, "dkim": True, "dmarc": True})
     erp = extract_github_context("@pilipilisbot https://github.com/gisce/erp/issues/1#issuecomment-1")
@@ -44,6 +60,15 @@ def test_policy_from_file_loads_roles_and_rejects_unknown(tmp_path):
         assert "unknown repo role" in str(exc)
     else:
         raise AssertionError("expected ValueError for unknown repo role")
+
+
+def test_policy_from_file_loads_bot_logins(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text('{"botLogins": ["@GISCEBot", "pilipilisbot"]}')
+
+    policy = Policy.from_file(policy_file)
+
+    assert policy.bot_logins == {"giscebot", "pilipilisbot"}
 
 
 def test_policy_from_file_loads_feedback_learning(tmp_path):

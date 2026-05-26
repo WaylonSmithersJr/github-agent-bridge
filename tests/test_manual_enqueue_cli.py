@@ -1,6 +1,7 @@
 import json
+from email.message import EmailMessage
 
-from github_agent_bridge.cli import _parse_github_comment_url, notification_from_comment_url
+from github_agent_bridge.cli import _parse_github_comment_url, msg_to_notification, notification_from_comment_url
 from github_agent_bridge.parser import extract_github_context
 
 
@@ -32,3 +33,28 @@ def test_notification_from_comment_url_builds_bridge_notification(monkeypatch):
     assert ctx.repo == "gisce/erp"
     assert ctx.issue_number == 27675
     assert ctx.comment_id == 4419572864
+
+
+def test_giscebot_mention_classifies_as_reply_comment():
+    from github_agent_bridge.parser import classify_github_action
+
+    body = "@giscebot pots mirar això?\nhttps://github.com/gisce/erp/pull/27675#issuecomment-4419572864"
+
+    assert classify_github_action("Re: [gisce/erp] Example (PR #27675)", body, {"giscebot"}) == "reply_comment"
+
+
+def test_msg_to_notification_accepts_google_group_rewritten_github_mail():
+    msg = EmailMessage()
+    msg["From"] = "'Eduard Carreras' via GISCE Bot <giscebot@gisce.net>"
+    msg["Reply-To"] = "gisce/erp <reply+abc@reply.github.com>"
+    msg["Message-ID"] = "<gisce/erp/pull/27853/c4547966148@github.com>"
+    msg["Subject"] = "Re: [gisce/erp] Example (PR #27853)"
+    msg["X-GitHub-Recipient"] = "giscebot"
+    msg["X-GitHub-Reason"] = "mention"
+    msg.set_content("https://github.com/gisce/erp/pull/27853#issuecomment-4547966148")
+
+    n = msg_to_notification(msg, uid=6)
+
+    assert n is not None
+    assert n.uid == 6
+    assert n.from_addr == "'Eduard Carreras' via GISCE Bot <giscebot@gisce.net>"

@@ -44,8 +44,8 @@ class JobQueue:
 
     def enqueue(self, n: Notification, policy: Policy) -> tuple[Job | None, str]:
         ctx = extract_github_context(n.body)
-        action = classify_github_action(n.subject, n.body)
-        intent = classify_work_intent(n.subject, n.body)
+        action = classify_github_action(n.subject, n.body, policy.bot_logins)
+        intent = classify_work_intent(n.subject, n.body, policy.bot_logins)
         decision = policy.decision(n, ctx, action)
         status = {"auto": "done", "ask": "waiting_approval", "deny": "denied"}.get(decision, "pending")
         now = utc_now()

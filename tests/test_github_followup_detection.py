@@ -65,6 +65,28 @@ def test_visible_followup_ignores_review_comment_before_trigger():
     assert github.visible_followup_after_trigger(ctx) is None
 
 
+def test_approved_review_is_non_actionable():
+    ctx = GitHubContext(
+        urls=["https://github.com/gisce/erp/pull/27805#pullrequestreview-4325056741"],
+        repo="gisce/erp",
+        issue_number=27805,
+        review_id=4325056741,
+    )
+    github = RecordingGitHubClient(
+        {
+            ("api", "repos/gisce/erp/pulls/27805/reviews/4325056741"): json.dumps(
+                {
+                    "state": "APPROVED",
+                    "body": "Looks good after the follow-up commit.",
+                    "submitted_at": "2026-05-20T03:59:00Z",
+                }
+            ),
+        }
+    )
+
+    assert github.is_non_actionable_review(ctx) is True
+
+
 def test_visible_followup_for_issue_comment_returns_newest_bot_comment_after_trigger():
     ctx = GitHubContext(
         urls=["https://github.com/pilipilisbot/github-agent-bridge/pull/13#issuecomment-4524715895"],

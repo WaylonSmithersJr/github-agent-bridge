@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import {
   ActorFilter,
+  ProductMeta,
   StatusBadge,
   buildJobQuery,
   groupSessionEvents,
@@ -45,6 +46,15 @@ describe("status badges", () => {
 
     rerender(<StatusBadge status="waiting_approval" />);
     expect(screen.getByText("waiting_approval").querySelector("span")).not.toHaveClass("animate-live-pulse");
+  });
+});
+
+describe("product metadata", () => {
+  it("shows the bridge version and upstream repository link", () => {
+    render(<ProductMeta about={{ service: "github-agent-bridge-dashboard", version: "0.18.7", repository_url: "https://github.com/pilipilisbot/github-agent-bridge" }} />);
+
+    expect(screen.getByText("v0.18.7")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /github/i })).toHaveAttribute("href", "https://github.com/pilipilisbot/github-agent-bridge");
   });
 });
 

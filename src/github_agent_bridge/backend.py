@@ -19,6 +19,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, s
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
 from .cli import DEFAULT_DB
 from .dashboard_data import (
     get_job_detail,
@@ -43,6 +44,7 @@ OAUTH_STATE_COOKIE = "gab_dashboard_oauth_state"
 GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
+PROJECT_REPOSITORY_URL = "https://github.com/pilipilisbot/github-agent-bridge"
 SESSION_VERSION = 1
 
 
@@ -283,6 +285,14 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     @app.get("/api/status")
     def api_status(_: str = Depends(current_user)) -> dict[str, Any]:
         return {"service": "github-agent-bridge-dashboard", "read_only": True, "metrics": inspect_db_read_only(config.db)}
+
+    @app.get("/api/about")
+    def api_about(_: str = Depends(current_user)) -> dict[str, Any]:
+        return {
+            "service": "github-agent-bridge-dashboard",
+            "version": __version__,
+            "repository_url": PROJECT_REPOSITORY_URL,
+        }
 
     @app.get("/api/me")
     def api_me(profile: dict[str, Any] = Depends(current_profile)) -> dict[str, Any]:

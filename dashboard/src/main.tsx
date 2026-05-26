@@ -27,6 +27,12 @@ type Percentiles = {
   p99: number | null;
 };
 
+type About = {
+  service: string;
+  version: string;
+  repository_url: string;
+};
+
 type Job = {
   id: number;
   work_key: string;
@@ -478,6 +484,7 @@ function App() {
   const selectedJobId = jobRouteId;
   const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary"), enabled: !isJobDetailRoute });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
+  const about = useQuery({ queryKey: ["about"], queryFn: () => api<About>("/api/about") });
   const actorOptions = useQuery({ queryKey: ["job-actors"], queryFn: () => api<{ actors: JobActor[] }>("/api/jobs/actors"), enabled: !isJobDetailRoute });
   const jobs = useQuery({ queryKey: ["jobs", filters, jobLimit], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters, jobLimit)), enabled: !isJobDetailRoute });
   const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: !isJobDetailRoute });
@@ -558,7 +565,7 @@ function App() {
         <div className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-3 px-4 py-4 md:px-6">
           <div className="min-w-0">
             <h1 className="truncate text-xl font-semibold">GitHub Agent Bridge</h1>
-            <p className="text-sm text-slate-300">Read-only operational dashboard</p>
+            <ProductMeta about={about.data} />
           </div>
           <UserMenu user={me.data?.user} loading={me.isLoading} />
         </div>
@@ -628,6 +635,22 @@ function App() {
         )}
       </main>
     </div>
+  );
+}
+
+function ProductMeta({ about }: { about: About | undefined }) {
+  const version = about?.version ? `v${about.version}` : "version loading";
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-300">
+      <span>Read-only operational dashboard</span>
+      <span className="font-mono text-xs text-slate-400">{version}</span>
+      {about?.repository_url ? (
+        <a className="inline-flex items-center gap-1 text-xs font-semibold text-slate-200 hover:underline" href={safeExternalUrl(about.repository_url)} rel="noreferrer" target="_blank">
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+          GitHub
+        </a>
+      ) : null}
+    </p>
   );
 }
 
@@ -1444,6 +1467,7 @@ function RefreshButton({ onClick, compactOnMobile = false }: { onClick: () => vo
 
 export {
   ActorFilter,
+  ProductMeta,
   StatusBadge,
   buildJobQuery,
   groupSessionEvents,

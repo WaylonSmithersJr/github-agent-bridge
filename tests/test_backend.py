@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi.testclient import TestClient
 
+from github_agent_bridge import __version__
 from github_agent_bridge.backend import DashboardConfig, _encode_session, _session_stream_events, _sign, create_app
 from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_job_actors, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
@@ -47,6 +48,21 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
     assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"
     assert jobs.json()["jobs"][0]["trigger_actor"] is None
     assert jobs.json()["jobs"][0]["trigger_actor_avatar_url"] is None
+
+
+def test_dashboard_about_exposes_package_version_and_repository(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+
+    response = client.get("/api/about")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "service": "github-agent-bridge-dashboard",
+        "version": __version__,
+        "repository_url": "https://github.com/pilipilisbot/github-agent-bridge",
+    }
 
 
 def test_dashboard_serves_built_react_ui_with_existing_auth(tmp_path):

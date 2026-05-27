@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -11,8 +12,12 @@ from typing import Any
 
 from .models import GitHubContext, Notification
 
-LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:\[bot\])?$")
 RESERVED_SENDERS = {"github", "notifications"}
+
+
+def default_gh_bin() -> str:
+    return os.getenv("GITHUB_AGENT_BRIDGE_GH_BIN", "gh")
 
 
 @dataclass(frozen=True)
@@ -43,7 +48,8 @@ def trigger_actor_details_from_notification(notification: Notification) -> Trigg
     return TriggerActor(login=login, avatar_url=github_avatar_url(login)) if login else None
 
 
-def trigger_actor_details_for_enqueue(notification: Notification, ctx: GitHubContext, *, gh_bin: str = "gh") -> TriggerActor | None:
+def trigger_actor_details_for_enqueue(notification: Notification, ctx: GitHubContext, *, gh_bin: str | None = None) -> TriggerActor | None:
+    gh_bin = gh_bin or default_gh_bin()
     return github_actor_details_for_context(ctx, gh_bin=gh_bin) or trigger_actor_details_from_notification(notification)
 
 
@@ -86,7 +92,8 @@ def actor_endpoint(ctx: GitHubContext) -> str | None:
     return None
 
 
-def github_actor_details_for_context(ctx: GitHubContext, *, gh_bin: str = "gh") -> TriggerActor | None:
+def github_actor_details_for_context(ctx: GitHubContext, *, gh_bin: str | None = None) -> TriggerActor | None:
+    gh_bin = gh_bin or default_gh_bin()
     endpoint = actor_endpoint(ctx)
     if endpoint is None:
         return None
@@ -103,12 +110,13 @@ def github_actor_details_for_context(ctx: GitHubContext, *, gh_bin: str = "gh") 
     return actor_details_from_github_payload(payload if isinstance(payload, dict) else {})
 
 
-def github_actor_for_context(ctx: GitHubContext, *, gh_bin: str = "gh") -> str | None:
+def github_actor_for_context(ctx: GitHubContext, *, gh_bin: str | None = None) -> str | None:
     actor = github_actor_details_for_context(ctx, gh_bin=gh_bin)
     return actor.login if actor else None
 
 
-def backfill_trigger_actors(db: str | Path, *, gh_bin: str = "gh", limit: int | None = None, dry_run: bool = False) -> dict[str, Any]:
+def backfill_trigger_actors(db: str | Path, *, gh_bin: str | None = None, limit: int | None = None, dry_run: bool = False) -> dict[str, Any]:
+    gh_bin = gh_bin or default_gh_bin()
     path = Path(db).expanduser()
     if not path.exists():
         return {"db_exists": False, "checked": 0, "updated": 0, "missing": 0, "dry_run": dry_run}

@@ -252,6 +252,15 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_authorized")
         return profile
 
+    async def require_dashboard_profile_or_login(request: Request) -> RedirectResponse | None:
+        try:
+            await current_profile(request)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_401_UNAUTHORIZED and config.oauth_ready:
+                return RedirectResponse("/auth/login", status_code=status.HTTP_302_FOUND)
+            raise
+        return None
+
     @app.exception_handler(sqlite3.OperationalError)
     async def database_unavailable(_: Request, exc: sqlite3.OperationalError) -> JSONResponse:
         return JSONResponse({"error": "database_unavailable", "detail": str(exc)}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE, headers=_redacted_headers())
@@ -275,11 +284,17 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         return FileResponse(index, headers=_redacted_headers())
 
     @app.get("/")
-    def dashboard(_: str = Depends(current_user)) -> FileResponse:
+    async def dashboard(request: Request) -> Response:
+        redirect = await require_dashboard_profile_or_login(request)
+        if redirect is not None:
+            return redirect
         return dashboard_index()
 
     @app.get("/jobs/{job_path:path}")
-    def dashboard_job(job_path: str, _: str = Depends(current_user)) -> FileResponse:
+    async def dashboard_job(job_path: str, request: Request) -> Response:
+        redirect = await require_dashboard_profile_or_login(request)
+        if redirect is not None:
+            return redirect
         return dashboard_index()
 
     @app.get("/api/status")

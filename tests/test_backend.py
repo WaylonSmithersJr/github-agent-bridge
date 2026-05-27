@@ -111,17 +111,27 @@ def test_dashboard_job_frontend_route_falls_back_for_deep_links(tmp_path):
     assert "root" in response.text
 
 
-def test_dashboard_ui_requires_auth_by_default(tmp_path):
+def test_dashboard_ui_redirects_to_oauth_login_by_default(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     static_dir = tmp_path / "static"
     static_dir.mkdir()
     (static_dir / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
     JobQueue(db)
-    app = create_app(DashboardConfig(db=db, static_dir=static_dir, secret_key="secret", allowed_users={"alice"}))
+    app = create_app(
+        DashboardConfig(
+            db=db,
+            static_dir=static_dir,
+            secret_key="secret",
+            oauth_client_id="client",
+            oauth_client_secret="client-secret",
+            allowed_users={"alice"},
+        )
+    )
 
-    response = TestClient(app).get("/")
+    response = TestClient(app, follow_redirects=False).get("/")
 
-    assert response.status_code == 401
+    assert response.status_code == 302
+    assert response.headers["location"] == "/auth/login"
 
 
 def test_dashboard_ui_reports_missing_build_after_auth(tmp_path):

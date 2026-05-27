@@ -4,7 +4,13 @@ import json
 import sqlite3
 import subprocess
 
-from github_agent_bridge.actors import actor_endpoint, backfill_trigger_actors, trigger_actor_from_notification
+from github_agent_bridge.actors import (
+    actor_details_from_github_payload,
+    actor_endpoint,
+    backfill_trigger_actors,
+    normalize_github_login,
+    trigger_actor_from_notification,
+)
 from github_agent_bridge.models import GitHubContext, Notification
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
@@ -21,6 +27,25 @@ def test_trigger_actor_from_notification_uses_github_sender_login():
     )
 
     assert trigger_actor_from_notification(n) == "ecarreras"
+
+
+def test_normalize_github_login_accepts_github_app_bot_suffix():
+    assert normalize_github_login("copilot-pull-request-reviewer[bot]") == "copilot-pull-request-reviewer[bot]"
+
+
+def test_actor_details_from_github_payload_accepts_github_app_bot_login():
+    actor = actor_details_from_github_payload(
+        {
+            "user": {
+                "login": "copilot-pull-request-reviewer[bot]",
+                "avatar_url": "https://avatars.githubusercontent.com/in/946600?v=4",
+            }
+        }
+    )
+
+    assert actor is not None
+    assert actor.login == "copilot-pull-request-reviewer[bot]"
+    assert actor.avatar_url == "https://avatars.githubusercontent.com/in/946600?v=4"
 
 
 def test_actor_endpoint_prefers_exact_trigger_resource():

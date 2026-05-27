@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.19.2 (2026-05-27)
+
+### Bug Fixes
+
+- Accept github app bot trigger actors
+  ([`7478871`](https://github.com/pilipilisbot/github-agent-bridge/commit/747887182f28ba64dacd86523a178c4844d4a060))
+
+- Route dashboard login and use configured gh
+  ([`ba393ca`](https://github.com/pilipilisbot/github-agent-bridge/commit/ba393caad9d90ace3fee580ba97606cdbda138c2))
+
+### Testing
+
+- Cover github app bot actor normalization
+  ([`9a45ea2`](https://github.com/pilipilisbot/github-agent-bridge/commit/9a45ea2834e4598c15d55213b0fca1f9ecde3e75))
+
+
 ## v0.19.1 (2026-05-26)
 
 ### Bug Fixes

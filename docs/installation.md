@@ -245,6 +245,7 @@ GITHUB_AGENT_BRIDGE_DASHBOARD_SECRET_KEY=replace-with-random-secret
 GITHUB_OAUTH_CLIENT_ID=replace-with-github-oauth-client-id
 GITHUB_OAUTH_CLIENT_SECRET=replace-with-github-oauth-client-secret
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS=your-github-login
+GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS=
 EOF
 ```
 

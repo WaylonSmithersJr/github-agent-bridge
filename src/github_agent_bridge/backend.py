@@ -44,6 +44,7 @@ OAUTH_STATE_COOKIE = "gab_dashboard_oauth_state"
 GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
+GITHUB_TEAMS_URL = "https://api.github.com/user/teams"
 PROJECT_REPOSITORY_URL = "https://github.com/pilipilisbot/github-agent-bridge"
 SESSION_VERSION = 1
 
@@ -58,6 +59,7 @@ class DashboardConfig:
         oauth_client_secret: str | None = None,
         allowed_users: set[str] | None = None,
         allowed_orgs: set[str] | None = None,
+        allowed_teams: set[str] | None = None,
         require_auth: bool = True,
         static_dir: str | Path | None = None,
     ) -> None:
@@ -67,6 +69,7 @@ class DashboardConfig:
         self.oauth_client_secret = oauth_client_secret or os.getenv("GITHUB_OAUTH_CLIENT_SECRET", "")
         self.allowed_users = allowed_users if allowed_users is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS")
         self.allowed_orgs = allowed_orgs if allowed_orgs is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS")
+        self.allowed_teams = allowed_teams if allowed_teams is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS")
         self.require_auth = require_auth
         self.static_dir = Path(static_dir or os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_STATIC_DIR", Path(__file__).with_name("dashboard_static"))).expanduser()
 
@@ -76,7 +79,7 @@ class DashboardConfig:
 
     @property
     def has_authorization_policy(self) -> bool:
-        return bool(self.allowed_users or self.allowed_orgs)
+        return bool(self.allowed_users or self.allowed_orgs or self.allowed_teams)
 
 
 def _csv_env(name: str) -> set[str]:
@@ -193,10 +196,21 @@ def _profile_from_login(login: str) -> dict[str, str]:
     }
 
 
-def _github_json(url: str, token: str) -> dict[str, Any]:
+def _github_json(url: str, token: str) -> Any:
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}", "User-Agent": "github-agent-bridge-dashboard"})
     with urllib.request.urlopen(req, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def _team_key(team: dict[str, Any]) -> str | None:
+    org = team.get("organization")
+    if not isinstance(org, dict):
+        return None
+    org_login = str(org.get("login", "")).lower()
+    slug = str(team.get("slug", "")).lower()
+    if not org_login or not slug:
+        return None
+    return f"{org_login}/{slug}"
 
 
 def _exchange_code(config: DashboardConfig, code: str) -> str:
@@ -223,7 +237,14 @@ def _is_allowed(config: DashboardConfig, login: str, token: str | None = None) -
             orgs = _github_json("https://api.github.com/user/orgs", token)
         except (urllib.error.URLError, TimeoutError):
             return False
-        return any(str(org.get("login", "")).lower() in config.allowed_orgs for org in orgs if isinstance(org, dict))
+        if any(str(org.get("login", "")).lower() in config.allowed_orgs for org in orgs if isinstance(org, dict)):
+            return True
+    if config.allowed_teams and token:
+        try:
+            teams = _github_json(GITHUB_TEAMS_URL, token)
+        except (urllib.error.URLError, TimeoutError):
+            return False
+        return any(key in config.allowed_teams for key in (_team_key(team) for team in teams if isinstance(team, dict)) if key)
     return not config.has_authorization_policy
 
 
@@ -435,7 +456,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="oauth_not_configured")
         state = secrets.token_urlsafe(24)
         scopes = ["read:user"]
-        if config.allowed_orgs:
+        if config.allowed_orgs or config.allowed_teams:
             scopes.append("read:org")
         params = urllib.parse.urlencode({"client_id": config.oauth_client_id, "scope": " ".join(scopes), "state": state})
         response = RedirectResponse(f"{GITHUB_AUTHORIZE_URL}?{params}", status_code=status.HTTP_302_FOUND)

@@ -127,6 +127,7 @@ GITHUB_OAUTH_CLIENT_ID=replace-with-github-oauth-client-id
 GITHUB_OAUTH_CLIENT_SECRET=replace-with-github-oauth-client-secret
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS=alice,bob
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS=example-org
+GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS=example-org/platform
 ```
 
 See [`dashboard-github-oauth.md`](dashboard-github-oauth.md) for the GitHub

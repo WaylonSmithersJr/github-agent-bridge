@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from github_agent_bridge import __version__
-from github_agent_bridge.backend import DashboardConfig, _encode_session, _session_stream_events, _sign, create_app
+from github_agent_bridge.backend import DashboardConfig, _encode_session, _is_allowed, _session_stream_events, _sign, create_app
 from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_job_actors, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
@@ -486,6 +486,45 @@ def test_dashboard_oauth_login_requests_org_scope_only_for_org_allowlist(tmp_pat
     assert response.status_code == 302
     query = parse_qs(urlparse(response.headers["location"]).query)
     assert query["scope"] == ["read:user read:org"]
+
+
+def test_dashboard_oauth_login_requests_org_scope_for_team_allowlist(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(
+        DashboardConfig(
+            db=db,
+            secret_key="secret",
+            oauth_client_id="client-id",
+            oauth_client_secret="client-secret",
+            allowed_teams={"example/platform"},
+        )
+    )
+
+    response = TestClient(app, follow_redirects=False).get("/auth/login")
+
+    assert response.status_code == 302
+    query = parse_qs(urlparse(response.headers["location"]).query)
+    assert query["scope"] == ["read:user read:org"]
+
+
+def test_dashboard_session_authorization_allows_configured_team(monkeypatch):
+    def fake_github_json(url, token):
+        assert token == "token"
+        assert url.endswith("/user/teams")
+        return [
+            {"slug": "other", "organization": {"login": "example"}},
+            {"slug": "platform", "organization": {"login": "Example"}},
+        ]
+
+    monkeypatch.setattr("github_agent_bridge.backend._github_json", fake_github_json)
+    config = DashboardConfig(
+        secret_key="secret",
+        allowed_teams={"example/platform"},
+    )
+
+    assert _is_allowed(config, "alice", "token") is True
+    assert _is_allowed(config, "alice", None) is False
 
 
 def test_dashboard_processes_exposes_live_executor_snapshot(tmp_path, monkeypatch):

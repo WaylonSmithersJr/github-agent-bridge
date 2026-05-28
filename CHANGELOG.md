@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.20.0 (2026-05-28)
+
+### Features
+
+- Allow dashboard access by github team
+  ([`50d5d3d`](https://github.com/pilipilisbot/github-agent-bridge/commit/50d5d3d652052f9cbd5741d7cdc25c0787e4f182))
+
+
 ## v0.19.2 (2026-05-27)
 
 ### Bug Fixes

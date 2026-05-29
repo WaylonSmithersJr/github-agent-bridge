@@ -9,6 +9,7 @@ import {
   groupSessionEvents,
   groupTranscriptEntries,
   selectedJobIdFromPath,
+  shouldRefreshJobForSessionEvent,
 } from "./main";
 
 describe("dashboard routing and API query helpers", () => {
@@ -33,6 +34,14 @@ describe("dashboard routing and API query helpers", () => {
     expect(selectedJobIdFromPath("/jobs/45/")).toBe(45);
     expect(selectedJobIdFromPath("/jobs/not-a-number")).toBeNull();
     expect(selectedJobIdFromPath("/jobs/45/activity")).toBeNull();
+  });
+
+  it("refreshes job data only for session events that can change job state", () => {
+    expect(shouldRefreshJobForSessionEvent("claimed")).toBe(true);
+    expect(shouldRefreshJobForSessionEvent("dispatch_finished")).toBe(true);
+    expect(shouldRefreshJobForSessionEvent("done")).toBe(true);
+    expect(shouldRefreshJobForSessionEvent("openclaw_stdout")).toBe(false);
+    expect(shouldRefreshJobForSessionEvent("openclaw_stderr")).toBe(false);
   });
 });
 

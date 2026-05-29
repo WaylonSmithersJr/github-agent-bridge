@@ -222,6 +222,19 @@ before it is returned to the authenticated dashboard. The process activity panel
 uses persisted process samples for a compact CPU history line chart when monitor
 samples exist, and falls back to the live executor snapshot otherwise.
 
+When publishing the dashboard through nginx, disable buffering for the proxied
+dashboard location so SSE events flush immediately:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8765;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 1h;
+}
+```
+
 ## Operational SLOs
 
 | Signal | Target |

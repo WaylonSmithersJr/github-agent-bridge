@@ -469,6 +469,10 @@ function transcriptKey(item: TranscriptEntry) {
   return `${item.timestamp ?? ""}:${item.role}:${item.kind}:${item.title}:${item.text}`;
 }
 
+function shouldRefreshJobForSessionEvent(eventType: string) {
+  return ["claimed", "dispatch_started", "dispatch_finished", "done", "blocked", "denied", "waiting_approval"].includes(eventType);
+}
+
 function selectedJobIdFromPath(pathname = window.location.pathname) {
   const match = pathname.match(/^\/jobs\/(\d+)\/?$/);
   return match ? Number(match[1]) : null;
@@ -519,8 +523,10 @@ function App() {
       queryClient.setQueryData<{ events: SessionEvent[] }>(["job-session-events", selectedJobId], (current) => ({
         events: appendUniqueById(current?.events ?? [], event),
       }));
-      queryClient.invalidateQueries({ queryKey: ["job", selectedJobId] });
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      if (shouldRefreshJobForSessionEvent(event.event_type)) {
+        queryClient.invalidateQueries({ queryKey: ["job", selectedJobId] });
+        queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      }
     });
     source.addEventListener("transcript_entry", (message) => {
       const payload = parseSseData<{ job_id: number; entry: TranscriptEntry }>(message);
@@ -530,7 +536,9 @@ function App() {
       }));
     });
     source.onerror = () => {
-      source.close();
+      queryClient.invalidateQueries({ queryKey: ["job", selectedJobId] });
+      queryClient.invalidateQueries({ queryKey: ["job-session-events", selectedJobId] });
+      queryClient.invalidateQueries({ queryKey: ["job-session-transcript", selectedJobId] });
     };
     return () => source.close();
   }, [selectedJobId, queryClient]);
@@ -1473,6 +1481,7 @@ export {
   groupSessionEvents,
   groupTranscriptEntries,
   selectedJobIdFromPath,
+  shouldRefreshJobForSessionEvent,
 };
 
 const root = document.getElementById("root");

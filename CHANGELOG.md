@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.20.1 (2026-05-29)
+
+### Bug Fixes
+
+- Keep dashboard session stream live
+  ([`d2e034c`](https://github.com/pilipilisbot/github-agent-bridge/commit/d2e034c4b1b915541ecc7ff46d234293ecadc7a8))
+
+
 ## v0.20.0 (2026-05-28)
 
 ### Features

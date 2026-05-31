@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.20.2 (2026-05-31)
+
+### Bug Fixes
+
+- Keep job header above status badges
+  ([`abcc79d`](https://github.com/pilipilisbot/github-agent-bridge/commit/abcc79df862a10d8da7fb67e9e3bc26d6048c102))
+
+
 ## v0.20.1 (2026-05-29)
 
 ### Bug Fixes

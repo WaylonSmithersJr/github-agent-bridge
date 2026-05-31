@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import {
   ActorFilter,
+  JobsList,
   ProductMeta,
   StatusBadge,
   buildJobQuery,
@@ -55,6 +56,44 @@ describe("status badges", () => {
 
     rerender(<StatusBadge status="waiting_approval" />);
     expect(screen.getByText("waiting_approval").querySelector("span")).not.toHaveClass("animate-live-pulse");
+  });
+
+  it("keeps the jobs table header above animated status dots while scrolling", () => {
+    render(
+      <JobsList
+        jobs={[
+          {
+            id: 58,
+            work_key: "pilipilisbot/github-agent-bridge#58",
+            repo: "pilipilisbot/github-agent-bridge",
+            thread: 58,
+            status: "pending",
+            action: "open_issue",
+            decision: "allowed",
+            intent: "work_allowed",
+            subject: "El dot del badge queda per sobre del header de la taula",
+            trigger_actor: "ecarreras",
+            trigger_actor_avatar_url: null,
+            attempts: 1,
+            coalesced_count: 1,
+            last_error: null,
+            locked_by: null,
+            created_at: "2026-05-31T19:11:06Z",
+            updated_at: "2026-05-31T19:11:06Z",
+            started_at: null,
+            finished_at: null,
+            queue_wait_seconds: null,
+            runtime_seconds: null,
+            github_urls: [],
+          },
+        ]}
+        loading={false}
+        now={Date.parse("2026-05-31T19:12:00Z")}
+        onViewJob={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("columnheader", { name: "Status" }).parentElement).toHaveClass("sticky", "top-0", "z-10");
   });
 });
 

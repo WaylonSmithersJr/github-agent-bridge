@@ -919,51 +919,51 @@ function JobsList({
         ))}
       </div>
       <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
-      <table className="min-w-full border-collapse text-sm">
-        <thead>
-          <tr className="sticky top-0 border-b border-border bg-panel text-left text-xs text-muted">
-            <th className="px-2 py-2 font-semibold">ID</th>
-            <th className="px-2 py-2 font-semibold">Status</th>
-            <th className="px-2 py-2 font-semibold">Repo / thread</th>
-            <th className="px-2 py-2 font-semibold">Action</th>
-            <th className="px-2 py-2 font-semibold">Actor</th>
-            <th className="px-2 py-2 font-semibold">Attempts</th>
-            <th className="px-2 py-2 font-semibold">Queue wait</th>
-            <th className="px-2 py-2 font-semibold">Runtime</th>
-            <th className="px-2 py-2 font-semibold">Updated</th>
-          </tr>
-        </thead>
-        <tbody>
-          {jobs.map((job) => (
-            <tr
-              key={job.id}
-              className="cursor-pointer border-b border-border hover:bg-slate-50"
-              onClick={() => onViewJob(job.id)}
-            >
-              <td className="px-2 py-3 font-mono">#{job.id}</td>
-              <td className="px-2 py-3">
-                <StatusBadge status={job.status} />
-              </td>
-              <td className="px-2 py-3">
-                <div className="font-mono">{job.repo ?? job.work_key}</div>
-                <div className="text-xs text-muted">thread {job.thread ?? "n/a"}</div>
-              </td>
-              <td className="px-2 py-3">
-                <div>{job.action}</div>
-                <div className="text-xs text-muted">{job.intent}</div>
-              </td>
-              <td className="px-2 py-3">
-                <ActorLabel actor={job.trigger_actor} avatarUrl={job.trigger_actor_avatar_url} />
-              </td>
-              <td className="px-2 py-3">{job.attempts}</td>
-              <td className="px-2 py-3">{formatSeconds(queueWaitSeconds(job, now))}</td>
-              <td className="px-2 py-3">{formatSeconds(jobRuntimeSeconds(job, now))}</td>
-              <td className="px-2 py-3 font-mono text-xs"><TimeText value={job.updated_at} compact relative now={now} /></td>
+        <table className="min-w-full border-collapse text-sm">
+          <thead>
+            <tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted">
+              <th className="px-2 py-2 font-semibold">ID</th>
+              <th className="px-2 py-2 font-semibold">Status</th>
+              <th className="px-2 py-2 font-semibold">Repo / thread</th>
+              <th className="px-2 py-2 font-semibold">Action</th>
+              <th className="px-2 py-2 font-semibold">Actor</th>
+              <th className="px-2 py-2 font-semibold">Attempts</th>
+              <th className="px-2 py-2 font-semibold">Queue wait</th>
+              <th className="px-2 py-2 font-semibold">Runtime</th>
+              <th className="px-2 py-2 font-semibold">Updated</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {jobs.map((job) => (
+              <tr
+                key={job.id}
+                className="cursor-pointer border-b border-border hover:bg-slate-50"
+                onClick={() => onViewJob(job.id)}
+              >
+                <td className="px-2 py-3 font-mono">#{job.id}</td>
+                <td className="px-2 py-3">
+                  <StatusBadge status={job.status} />
+                </td>
+                <td className="px-2 py-3">
+                  <div className="font-mono">{job.repo ?? job.work_key}</div>
+                  <div className="text-xs text-muted">thread {job.thread ?? "n/a"}</div>
+                </td>
+                <td className="px-2 py-3">
+                  <div>{job.action}</div>
+                  <div className="text-xs text-muted">{job.intent}</div>
+                </td>
+                <td className="px-2 py-3">
+                  <ActorLabel actor={job.trigger_actor} avatarUrl={job.trigger_actor_avatar_url} />
+                </td>
+                <td className="px-2 py-3">{job.attempts}</td>
+                <td className="px-2 py-3">{formatSeconds(queueWaitSeconds(job, now))}</td>
+                <td className="px-2 py-3">{formatSeconds(jobRuntimeSeconds(job, now))}</td>
+                <td className="px-2 py-3 font-mono text-xs"><TimeText value={job.updated_at} compact relative now={now} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }
@@ -1475,6 +1475,7 @@ function RefreshButton({ onClick, compactOnMobile = false }: { onClick: () => vo
 
 export {
   ActorFilter,
+  JobsList,
   ProductMeta,
   StatusBadge,
   buildJobQuery,

@@ -24,6 +24,7 @@ def default_gh_bin() -> str:
 class TriggerActor:
     login: str
     avatar_url: str | None = None
+    user_id: int | None = None
 
 
 def normalize_github_login(value: str | None) -> str | None:
@@ -65,7 +66,12 @@ def actor_details_from_github_payload(payload: dict[str, Any]) -> TriggerActor |
             login = normalize_github_login(value.get("login"))
             if login:
                 avatar_url = value.get("avatar_url") if isinstance(value.get("avatar_url"), str) else None
-                return TriggerActor(login=login, avatar_url=avatar_url or github_avatar_url(login))
+                user_id = value.get("id")
+                return TriggerActor(
+                    login=login,
+                    avatar_url=avatar_url or github_avatar_url(login),
+                    user_id=user_id if isinstance(user_id, int) and user_id > 0 else None,
+                )
     return None
 
 

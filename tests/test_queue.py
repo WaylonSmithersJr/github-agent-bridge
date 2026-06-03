@@ -53,7 +53,7 @@ def test_enqueue_prefers_context_actor_over_notification_sender(tmp_path, monkey
         calls.append((ctx.repo, ctx.issue_number, ctx.comment_id, gh_bin))
         from github_agent_bridge.actors import TriggerActor
 
-        return TriggerActor(login="ecarreras", avatar_url="https://avatars.githubusercontent.com/u/294235?v=4")
+        return TriggerActor(login="ecarreras", avatar_url="https://avatars.githubusercontent.com/u/294235?v=4", user_id=294235)
 
     monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", fake_actor)
     q = JobQueue(tmp_path / "q.sqlite3")
@@ -74,6 +74,7 @@ def test_enqueue_prefers_context_actor_over_notification_sender(tmp_path, monkey
     assert calls == [("gisce/erp", 1, 99, "gh")]
     assert job.trigger_actor == "ecarreras"
     assert job.trigger_actor_avatar_url == "https://avatars.githubusercontent.com/u/294235?v=4"
+    assert job.metadata["trigger_actor_id"] == 294235
 
 
 def test_enqueue_accepts_github_app_bot_actor_from_context(tmp_path, monkeypatch):

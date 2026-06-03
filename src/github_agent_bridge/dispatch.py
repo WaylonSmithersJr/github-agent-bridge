@@ -58,6 +58,20 @@ REPO_INSTRUCTIONS_RULES = load_prompt_rule("repo_instructions.md")
 FEEDBACK_LEARNING_RULES = load_prompt_rule("feedback_learning.md")
 
 
+def coauthor_identity_for_job(job: Job) -> str:
+    """Render the GitHub identity agents should use in commit trailers."""
+    login = (job.trigger_actor or "").strip().lstrip("@")
+    if not login:
+        return "No triggering GitHub actor is known; do not add a user co-author trailer unless the issue/PR discussion provides an explicit commit email."
+    if login.endswith("[bot]"):
+        return f"Triggering actor @{login} is a bot; do not add it as a human co-author."
+
+    raw_user_id = job.metadata.get("trigger_actor_id")
+    user_id = raw_user_id if isinstance(raw_user_id, int) and raw_user_id > 0 else None
+    email = f"{user_id}+{login}@users.noreply.github.com" if user_id else f"{login}@users.noreply.github.com"
+    return f"Use this commit trailer when committing requested work: `Co-authored-by: {login} <{email}>`"
+
+
 class RunMode(StrEnum):
     SHADOW = "shadow"  # no external side effects: no GitHub reaction, no OpenClaw dispatch
     DRY_RUN = "dry-run"  # no external side effects, but render intended commands/actions
@@ -438,6 +452,8 @@ class OpenClawDispatcher:
             url=job.context.short_url,
             message_id=job.message_id,
             subject=job.subject,
+            trigger_actor=job.trigger_actor or "",
+            coauthor_identity=coauthor_identity_for_job(job),
         )
         feedback_min_confidence = policy.feedback_learning.min_confidence if policy else 0.5
         feedback_rules_template = prompt_rule("feedback_learning", FEEDBACK_LEARNING_RULES, policy)

@@ -45,6 +45,7 @@ def test_actor_details_from_github_payload_accepts_github_app_bot_login():
         {
             "user": {
                 "login": "copilot-pull-request-reviewer[bot]",
+                "id": 946600,
                 "avatar_url": "https://avatars.githubusercontent.com/in/946600?v=4",
             }
         }
@@ -53,6 +54,7 @@ def test_actor_details_from_github_payload_accepts_github_app_bot_login():
     assert actor is not None
     assert actor.login == "copilot-pull-request-reviewer[bot]"
     assert actor.avatar_url == "https://avatars.githubusercontent.com/in/946600?v=4"
+    assert actor.user_id == 946600
 
 
 def test_actor_endpoint_prefers_exact_trigger_resource():
@@ -80,7 +82,7 @@ def test_backfill_trigger_actors_uses_stored_context(tmp_path, monkeypatch):
 
     def fake_run(args, check=False, stdout=None, stderr=None, text=False):
         calls.append(args)
-        return subprocess.CompletedProcess(args, 0, json.dumps({"user": {"login": "ecarreras", "avatar_url": "https://avatars.githubusercontent.com/u/294235?v=4"}}), "")
+        return subprocess.CompletedProcess(args, 0, json.dumps({"user": {"login": "ecarreras", "id": 294235, "avatar_url": "https://avatars.githubusercontent.com/u/294235?v=4"}}), "")
 
     monkeypatch.setattr("github_agent_bridge.actors.subprocess.run", fake_run)
 

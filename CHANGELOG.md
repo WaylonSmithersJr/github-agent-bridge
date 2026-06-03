@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.21.1 (2026-06-03)
+
+### Bug Fixes
+
+- Format runtime usage in hours
+  ([`f2ba093`](https://github.com/pilipilisbot/github-agent-bridge/commit/f2ba0933d38c97d09b2ef5e42244fc5465992f58))
+
+
 ## v0.21.0 (2026-06-03)
 
 ### Bug Fixes

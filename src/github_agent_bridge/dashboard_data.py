@@ -7,6 +7,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .session_events import redact_event_detail
 from .session_correlation import job_session_metadata
@@ -544,10 +545,11 @@ def _bounded_transcript_text(text: str) -> str:
     return text
 
 
-def metrics_summary(db: str | Path) -> dict[str, Any]:
+def metrics_summary(db: str | Path, *, timezone_name: str = "UTC") -> dict[str, Any]:
     path = Path(db).expanduser()
     if not path.exists():
         return {"db_exists": False, "status_counts": {}, "runtime_seconds": {}}
+    timezone = dashboard_timezone(timezone_name)
     with readonly_connect(path) as con:
         if not table_exists(con, "jobs"):
             return {"db_exists": True, "schema_ok": False, "status_counts": {}, "runtime_seconds": {}}
@@ -556,7 +558,7 @@ def metrics_summary(db: str | Path) -> dict[str, Any]:
     by_repo = Counter(row["repo"] or "unknown" for row in rows)
     by_action = Counter(row["action"] for row in rows)
     by_intent = Counter(row["work_intent"] for row in rows)
-    by_created_day = Counter(day for day in (created_day(row["created_at"]) for row in rows) if day)
+    by_created_day = Counter(day for day in (created_day(row["created_at"], timezone) for row in rows) if day)
     runtimes = sorted(
         seconds for seconds in (duration_seconds(row["started_at"], row["finished_at"]) for row in rows if row["finished_at"]) if seconds is not None
     )
@@ -571,16 +573,66 @@ def metrics_summary(db: str | Path) -> dict[str, Any]:
         "by_action": dict(by_action),
         "by_intent": dict(by_intent),
         "by_created_day": dict(sorted(by_created_day.items())),
+        "runtime_usage": runtime_usage(rows, timezone),
         "runtime_seconds": percentiles(runtimes),
         "queue_wait_seconds": percentiles(waits),
     }
 
 
-def created_day(value: str | None) -> str | None:
+def dashboard_timezone(name: str | None) -> ZoneInfo:
+    if not name:
+        return ZoneInfo("UTC")
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
+def created_day(value: str | None, timezone: ZoneInfo = ZoneInfo("UTC")) -> str | None:
     created = parse_utc(value)
     if created is None:
         return None
-    return created.astimezone(UTC).date().isoformat()
+    return created.astimezone(timezone).date().isoformat()
+
+
+def runtime_usage(rows: list[sqlite3.Row], timezone: ZoneInfo) -> dict[str, list[dict[str, Any]]]:
+    daily: dict[str, dict[str, int]] = {}
+    monthly: dict[str, dict[str, int]] = {}
+    for row in rows:
+        started = parse_utc(row["started_at"])
+        if started is None:
+            continue
+        seconds = duration_seconds(row["started_at"], row["finished_at"])
+        if seconds is None:
+            continue
+        bucket_at = parse_utc(row["finished_at"]) or started
+        local = bucket_at.astimezone(timezone)
+        day = local.date().isoformat()
+        month = f"{local.year:04d}-{local.month:02d}"
+        add_runtime_bucket(daily, day, seconds)
+        add_runtime_bucket(monthly, month, seconds)
+    return {
+        "day": runtime_bucket_rows(daily),
+        "month": runtime_bucket_rows(monthly),
+    }
+
+
+def add_runtime_bucket(buckets: dict[str, dict[str, int]], bucket: str, seconds: int) -> None:
+    current = buckets.setdefault(bucket, {"seconds": 0, "jobs": 0})
+    current["seconds"] += seconds
+    current["jobs"] += 1
+
+
+def runtime_bucket_rows(buckets: dict[str, dict[str, int]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "bucket": bucket,
+            "seconds": values["seconds"],
+            "minutes": round(values["seconds"] / 60, 2),
+            "jobs": values["jobs"],
+        }
+        for bucket, values in sorted(buckets.items())
+    ]
 
 
 def percentiles(values: list[int]) -> dict[str, int | None]:

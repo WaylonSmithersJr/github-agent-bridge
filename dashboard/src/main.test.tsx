@@ -9,6 +9,8 @@ import {
   buildJobQuery,
   groupSessionEvents,
   groupTranscriptEntries,
+  metricsSummaryPath,
+  runtimeBucketLabel,
   selectedJobIdFromPath,
   shouldRefreshJobForSessionEvent,
 } from "./main";
@@ -43,6 +45,12 @@ describe("dashboard routing and API query helpers", () => {
     expect(shouldRefreshJobForSessionEvent("done")).toBe(true);
     expect(shouldRefreshJobForSessionEvent("openclaw_stdout")).toBe(false);
     expect(shouldRefreshJobForSessionEvent("openclaw_stderr")).toBe(false);
+  });
+
+  it("requests metrics using the browser timezone and labels runtime buckets", () => {
+    expect(metricsSummaryPath("America/New_York")).toBe("/api/metrics/summary?timezone=America%2FNew_York");
+    expect(runtimeBucketLabel("2026-06-02", "day")).toMatch(/Jun|2/);
+    expect(runtimeBucketLabel("2026-06", "month")).toMatch(/Jun|2026/);
   });
 });
 

@@ -636,9 +636,6 @@ function App() {
             </section>
 
             <section className="grid gap-4">
-              <Panel title="Runtime usage" action={<RefreshButton onClick={() => metrics.refetch()} />}>
-                <RuntimeUsageChart usage={metrics.data?.metrics.runtime_usage} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
-              </Panel>
               <Panel title="Process activity" action={<RefreshButton onClick={() => processes.refetch()} />}>
                 {processes.error ? <Banner tone="error" text={processes.error.message} /> : null}
                 <ProcessActivity data={processes.data} loading={processes.isLoading} />
@@ -646,6 +643,9 @@ function App() {
               <Panel title="Monitor alerts" action={<RefreshButton onClick={() => alerts.refetch()} />}>
                 {alerts.error ? <Banner tone="error" text={alerts.error.message} /> : null}
                 <AlertsPanel alerts={alerts.data?.alerts} loading={alerts.isLoading} now={now} />
+              </Panel>
+              <Panel title="Runtime usage" action={<RefreshButton onClick={() => metrics.refetch()} />}>
+                <RuntimeUsageChart usage={metrics.data?.metrics.runtime_usage} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
               </Panel>
             </section>
 

@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.21.0 (2026-06-03)
+
+### Bug Fixes
+
+- Place runtime usage below alerts
+  ([`f1d621f`](https://github.com/pilipilisbot/github-agent-bridge/commit/f1d621f9d736f0beb45caaf57e1a5c0413d5d950))
+
+- Render runtime usage as bars
+  ([`4ab0797`](https://github.com/pilipilisbot/github-agent-bridge/commit/4ab079738b19ef7a22c8458f4f61389f855354d3))
+
+### Features
+
+- Add runtime usage chart
+  ([`1bee39a`](https://github.com/pilipilisbot/github-agent-bridge/commit/1bee39acb20606a1cade7044cffb4e4288583358))
+
+
 ## v0.20.2 (2026-05-31)
 
 ### Bug Fixes

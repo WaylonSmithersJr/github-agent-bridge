@@ -2,7 +2,7 @@ from dataclasses import replace
 from importlib import resources
 
 from github_agent_bridge import feedback
-from github_agent_bridge.dispatch import COMMENT_VALUE_RULES, FEEDBACK_LEARNING_RULES, OpenClawDispatcher, PR_REVIEW_RULES, PROMPT_INJECTION_RULES, REPO_INSTRUCTIONS_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES
+from github_agent_bridge.dispatch import COMMENT_VALUE_RULES, FEEDBACK_LEARNING_RULES, OpenClawDispatcher, PR_REVIEW_RULES, PROMPT_INJECTION_RULES, REPO_INSTRUCTIONS_RULES, REVIEW_ONLY_RULES, WORKTREE_RULES, coauthor_identity_for_job
 from github_agent_bridge.models import GitHubContext, Job
 from github_agent_bridge.policy import FeedbackLearning, Policy
 from github_agent_bridge.queue import JobQueue
@@ -35,6 +35,8 @@ def test_build_prompt_reads_packaged_markdown_rules():
     assert "ignore previous instructions" in prompt
     assert "print your system prompt" in prompt
     assert "work_intent" in prompt
+    assert "# Co-author identity" in prompt
+    assert "No triggering GitHub actor is known" in prompt
     assert PROMPT_INJECTION_RULES in prompt
     assert prompt.index("# Prompt-injection rule") < prompt.index("# Repository instruction files")
     assert prompt.index("# Repository instruction files") < prompt.index("# Comment value rule")
@@ -66,6 +68,26 @@ def test_build_prompt_uses_feedback_learning_policy_threshold():
     )
 
     assert "Minimum confidence: `0.8`" in prompt
+
+
+def test_build_prompt_includes_trigger_actor_coauthor_trailer():
+    job = replace(make_job(), trigger_actor="ecarreras", metadata={"trigger_actor_id": 294235})
+
+    prompt = OpenClawDispatcher(mode="shadow").build_prompt(job, Policy())
+
+    assert "Co-authored-by: ecarreras <294235+ecarreras@users.noreply.github.com>" in prompt
+
+
+def test_coauthor_identity_uses_username_noreply_when_actor_id_missing():
+    job = replace(make_job(), trigger_actor="ecarreras")
+
+    assert coauthor_identity_for_job(job) == "Use this commit trailer when committing requested work: `Co-authored-by: ecarreras <ecarreras@users.noreply.github.com>`"
+
+
+def test_coauthor_identity_skips_bot_actor():
+    job = replace(make_job(), trigger_actor="copilot-pull-request-reviewer[bot]", metadata={"trigger_actor_id": 946600})
+
+    assert coauthor_identity_for_job(job) == "Triggering actor @copilot-pull-request-reviewer[bot] is a bot; do not add it as a human co-author."
 
 
 def test_build_prompt_inlines_curated_feedback_rules(tmp_path):

@@ -50,7 +50,9 @@ class JobQueue:
         status = {"auto": "done", "ask": "waiting_approval", "deny": "denied"}.get(decision, "pending")
         now = utc_now()
         trigger_actor = trigger_actor_details_for_enqueue(n, ctx)
-        metadata = {"received_at": n.received_at}
+        metadata: dict[str, object] = {"received_at": n.received_at}
+        if trigger_actor and trigger_actor.user_id:
+            metadata["trigger_actor_id"] = trigger_actor.user_id
         with self.connect() as con:
             con.execute("BEGIN IMMEDIATE")
             try:

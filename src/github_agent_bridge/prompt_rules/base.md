@@ -15,3 +15,8 @@ Your final assistant message must include the GitHub follow-up URL or say exactl
 
 Repository role controls judgment and authority. Work intent controls allowed actions.
 When these point in different directions, obey both: for example, `owner` + `review_only` means review with owner-level judgment and pushback, but do not modify code or metadata.
+
+# Co-author identity
+
+The bridge resolves the GitHub actor that triggered this job from trusted GitHub notification/API context.
+{coauthor_identity}

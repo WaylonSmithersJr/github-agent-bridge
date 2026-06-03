@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.22.0 (2026-06-03)
+
+### Features
+
+- Derive coauthor trailer from trigger actor
+  ([`d20a36b`](https://github.com/pilipilisbot/github-agent-bridge/commit/d20a36ba0f9dc2484eb9fa3731bbb44d4ae56d25))
+
+
 ## v0.21.1 (2026-06-03)
 
 ### Bug Fixes

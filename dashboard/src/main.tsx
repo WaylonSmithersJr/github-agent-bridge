@@ -1283,7 +1283,7 @@ function RuntimeUsageChart({ usage, loading, totalJobs }: { usage: RuntimeUsage 
       </div>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data}>
+          <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="label" minTickGap={16} tick={{ fontSize: 11 }} />
             <YAxis tickFormatter={(value) => formatRuntimeMinutes(Number(value), true)} />
@@ -1294,8 +1294,8 @@ function RuntimeUsageChart({ usage, loading, totalJobs }: { usage: RuntimeUsage 
               }}
               labelFormatter={(label) => String(label)}
             />
-            <Line type="monotone" dataKey="minutes" stroke="#0969da" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} isAnimationActive={false} />
-          </LineChart>
+            <Bar dataKey="minutes" fill="#0969da" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+          </BarChart>
         </ResponsiveContainer>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, UserCircle2, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, TimerReset, UserCircle2, X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -17,8 +17,21 @@ type MetricsSummary = {
   by_action: Record<string, number>;
   by_intent: Record<string, number>;
   by_created_day: Record<string, number>;
+  runtime_usage: RuntimeUsage;
   runtime_seconds: Percentiles;
   queue_wait_seconds: Percentiles;
+};
+
+type RuntimeUsage = {
+  day: RuntimeUsageBucket[];
+  month: RuntimeUsageBucket[];
+};
+
+type RuntimeUsageBucket = {
+  bucket: string;
+  seconds: number;
+  minutes: number;
+  jobs: number;
 };
 
 type Percentiles = {
@@ -221,6 +234,7 @@ const initialJobLimit = 12;
 const jobLimitStep = 12;
 const staleRelativeDateMs = 7 * 24 * 60 * 60 * 1000;
 const liveTickMs = 1000;
+const dashboardTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 function cn(...values: Array<string | false | null | undefined>) {
   return twMerge(clsx(values));
@@ -433,6 +447,10 @@ function buildJobQuery(filters: JobFilters, limit: number) {
   return `/api/jobs?${params.toString()}`;
 }
 
+function metricsSummaryPath(timezone = dashboardTimeZone) {
+  return `/api/metrics/summary?timezone=${encodeURIComponent(timezone)}`;
+}
+
 function safeExternalUrl(value: string) {
   try {
     const url = new URL(value);
@@ -486,7 +504,7 @@ function App() {
   const jobRouteId = selectedJobIdFromPath(pathname);
   const isJobDetailRoute = jobRouteId !== null;
   const selectedJobId = jobRouteId;
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: () => api<{ metrics: MetricsSummary }>("/api/metrics/summary"), enabled: !isJobDetailRoute });
+  const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: !isJobDetailRoute });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
   const about = useQuery({ queryKey: ["about"], queryFn: () => api<About>("/api/about") });
   const actorOptions = useQuery({ queryKey: ["job-actors"], queryFn: () => api<{ actors: JobActor[] }>("/api/jobs/actors"), enabled: !isJobDetailRoute });
@@ -625,6 +643,9 @@ function App() {
               <Panel title="Monitor alerts" action={<RefreshButton onClick={() => alerts.refetch()} />}>
                 {alerts.error ? <Banner tone="error" text={alerts.error.message} /> : null}
                 <AlertsPanel alerts={alerts.data?.alerts} loading={alerts.isLoading} now={now} />
+              </Panel>
+              <Panel title="Runtime usage" action={<RefreshButton onClick={() => metrics.refetch()} />}>
+                <RuntimeUsageChart usage={metrics.data?.metrics.runtime_usage} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
               </Panel>
             </section>
 
@@ -1230,6 +1251,75 @@ function JobsPerDayChart({ values, loading, totalJobs }: { values: Record<string
   );
 }
 
+function RuntimeUsageChart({ usage, loading, totalJobs }: { usage: RuntimeUsage | undefined; loading: boolean; totalJobs: number }) {
+  const [grouping, setGrouping] = React.useState<keyof RuntimeUsage>("day");
+  const rows = usage?.[grouping] ?? [];
+  const data = rows.map((row) => ({
+    ...row,
+    label: runtimeBucketLabel(row.bucket, grouping),
+  }));
+  const totalMinutes = rows.reduce((total, row) => total + row.seconds / 60, 0);
+  if (loading && data.length === 0) return <EmptyState text="Loading runtime usage..." />;
+  if (data.length === 0) return <EmptyState text={totalJobs > 0 ? "No jobs have recorded runtime yet." : "No job history available."} />;
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-muted">
+          <TimerReset className="h-4 w-4" aria-hidden />
+          <span>{formatRuntimeMinutes(totalMinutes)} consumed across {rows.reduce((total, row) => total + row.jobs, 0)} job{rows.reduce((total, row) => total + row.jobs, 0) === 1 ? "" : "s"}</span>
+        </div>
+        <div className="inline-flex h-8 rounded-md border border-border bg-white p-0.5" aria-label="Runtime grouping">
+          {(["day", "month"] as const).map((value) => (
+            <button
+              key={value}
+              className={cn("rounded px-2.5 text-xs font-semibold capitalize", grouping === value ? "bg-primary text-white" : "text-muted hover:bg-slate-50")}
+              type="button"
+              onClick={() => setGrouping(value)}
+            >
+              {value}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="label" minTickGap={16} tick={{ fontSize: 11 }} />
+            <YAxis tickFormatter={(value) => formatRuntimeMinutes(Number(value), true)} />
+            <Tooltip
+              formatter={(value, name) => {
+                if (name === "minutes") return [formatRuntimeMinutes(Number(value)), "runtime"];
+                return [Number(value), String(name)];
+              }}
+              labelFormatter={(label) => String(label)}
+            />
+            <Bar dataKey="minutes" fill="#0969da" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function runtimeBucketLabel(bucket: string, grouping: keyof RuntimeUsage) {
+  if (grouping === "month") {
+    const [year, month] = bucket.split("-").map(Number);
+    if (!year || !month) return bucket;
+    return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(new Date(year, month - 1, 1));
+  }
+  const [year, month, day] = bucket.split("-").map(Number);
+  if (!year || !month || !day) return bucket;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(year, month - 1, day));
+}
+
+function formatRuntimeMinutes(value: number, compact = false) {
+  if (value < 1) return `${Math.round(value * 60)}s`;
+  if (compact) return `${Math.round(value)}m`;
+  if (value < 10) return `${value.toFixed(1)}m`;
+  return `${Math.round(value)}m`;
+}
+
 function totalJobs(counts: StatusCounts) {
   return Object.values(counts).reduce((total, value) => total + value, 0);
 }
@@ -1481,6 +1571,8 @@ export {
   buildJobQuery,
   groupSessionEvents,
   groupTranscriptEntries,
+  metricsSummaryPath,
+  runtimeBucketLabel,
   selectedJobIdFromPath,
   shouldRefreshJobForSessionEvent,
 };

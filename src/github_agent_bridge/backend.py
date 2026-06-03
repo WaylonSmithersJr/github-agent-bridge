@@ -404,8 +404,8 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         return StreamingResponse(_session_stream_events(config.db, job_id, after_id=after_id), media_type="text/event-stream", headers=_sse_headers())
 
     @app.get("/api/metrics/summary")
-    def api_metrics(_: str = Depends(current_user)) -> dict[str, Any]:
-        return {"metrics": metrics_summary(config.db)}
+    def api_metrics(timezone: str = "UTC", _: str = Depends(current_user)) -> dict[str, Any]:
+        return {"metrics": metrics_summary(config.db, timezone_name=timezone)}
 
     @app.get("/api/processes")
     def api_processes(_: str = Depends(current_user)) -> dict[str, Any]:

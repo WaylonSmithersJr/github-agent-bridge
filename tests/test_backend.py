@@ -194,6 +194,37 @@ def test_dashboard_exposes_job_detail_logs_and_metrics(tmp_path):
     assert client.get("/api/metrics/summary").json()["metrics"]["by_repo"]["gisce/erp"] == 1
 
 
+def test_dashboard_metrics_groups_runtime_usage_by_requested_timezone(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    first, _ = q.enqueue(notif(uid=1, mid="<1@github.com>"), Policy(trusted_orgs=["gisce"]))
+    second, _ = q.enqueue(notif(uid=2, mid="<2@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/2#issuecomment-20"), Policy(trusted_orgs=["gisce"]))
+    q.finish(first.id, "done", "completed")
+    q.finish(second.id, "done", "completed")
+    with q.connect() as con:
+        con.execute(
+            "UPDATE jobs SET started_at=?, finished_at=? WHERE id=?",
+            ("2026-06-01T23:30:00Z", "2026-06-02T00:30:00Z", first.id),
+        )
+        con.execute(
+            "UPDATE jobs SET started_at=?, finished_at=? WHERE id=?",
+            ("2026-06-02T10:00:00Z", "2026-06-02T10:30:00Z", second.id),
+        )
+
+    metrics = metrics_summary(db, timezone_name="America/New_York")
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+    payload = client.get("/api/metrics/summary", params={"timezone": "America/New_York"}).json()["metrics"]
+
+    assert metrics["runtime_usage"]["day"] == [
+        {"bucket": "2026-06-01", "seconds": 3600, "minutes": 60.0, "jobs": 1},
+        {"bucket": "2026-06-02", "seconds": 1800, "minutes": 30.0, "jobs": 1},
+    ]
+    assert metrics["runtime_usage"]["month"] == [
+        {"bucket": "2026-06", "seconds": 5400, "minutes": 90.0, "jobs": 2},
+    ]
+    assert payload["runtime_usage"] == metrics["runtime_usage"]
+
+
 def test_dashboard_exposes_safe_openclaw_session_correlation(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)

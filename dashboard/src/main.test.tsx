@@ -7,6 +7,7 @@ import {
   ProductMeta,
   StatusBadge,
   buildJobQuery,
+  formatRuntimeUsageSeconds,
   groupSessionEvents,
   groupTranscriptEntries,
   metricsSummaryPath,
@@ -51,6 +52,13 @@ describe("dashboard routing and API query helpers", () => {
     expect(metricsSummaryPath("America/New_York")).toBe("/api/metrics/summary?timezone=America%2FNew_York");
     expect(runtimeBucketLabel("2026-06-02", "day")).toMatch(/Jun|2/);
     expect(runtimeBucketLabel("2026-06", "month")).toMatch(/Jun|2026/);
+  });
+
+  it("formats runtime usage as human-readable hours and minutes", () => {
+    expect(formatRuntimeUsageSeconds(30)).toBe("30s");
+    expect(formatRuntimeUsageSeconds(1800)).toBe("30m");
+    expect(formatRuntimeUsageSeconds(5400)).toBe("1h 30m");
+    expect(formatRuntimeUsageSeconds(7200)).toBe("2h");
   });
 });
 

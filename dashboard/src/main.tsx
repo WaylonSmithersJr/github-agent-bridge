@@ -1258,7 +1258,7 @@ function RuntimeUsageChart({ usage, loading, totalJobs }: { usage: RuntimeUsage 
     ...row,
     label: runtimeBucketLabel(row.bucket, grouping),
   }));
-  const totalMinutes = rows.reduce((total, row) => total + row.seconds / 60, 0);
+  const totalSeconds = rows.reduce((total, row) => total + row.seconds, 0);
   if (loading && data.length === 0) return <EmptyState text="Loading runtime usage..." />;
   if (data.length === 0) return <EmptyState text={totalJobs > 0 ? "No jobs have recorded runtime yet." : "No job history available."} />;
   return (
@@ -1266,7 +1266,7 @@ function RuntimeUsageChart({ usage, loading, totalJobs }: { usage: RuntimeUsage 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm text-muted">
           <TimerReset className="h-4 w-4" aria-hidden />
-          <span>{formatRuntimeMinutes(totalMinutes)} consumed across {rows.reduce((total, row) => total + row.jobs, 0)} job{rows.reduce((total, row) => total + row.jobs, 0) === 1 ? "" : "s"}</span>
+          <span>{formatRuntimeUsageSeconds(totalSeconds)} consumed across {rows.reduce((total, row) => total + row.jobs, 0)} job{rows.reduce((total, row) => total + row.jobs, 0) === 1 ? "" : "s"}</span>
         </div>
         <div className="inline-flex h-8 rounded-md border border-border bg-white p-0.5" aria-label="Runtime grouping">
           {(["day", "month"] as const).map((value) => (
@@ -1286,15 +1286,15 @@ function RuntimeUsageChart({ usage, loading, totalJobs }: { usage: RuntimeUsage 
           <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="label" minTickGap={16} tick={{ fontSize: 11 }} />
-            <YAxis tickFormatter={(value) => formatRuntimeMinutes(Number(value), true)} />
+            <YAxis tickFormatter={(value) => formatRuntimeUsageSeconds(Number(value))} />
             <Tooltip
               formatter={(value, name) => {
-                if (name === "minutes") return [formatRuntimeMinutes(Number(value)), "runtime"];
+                if (name === "seconds") return [formatRuntimeUsageSeconds(Number(value)), "runtime"];
                 return [Number(value), String(name)];
               }}
               labelFormatter={(label) => String(label)}
             />
-            <Bar dataKey="minutes" fill="#0969da" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+            <Bar dataKey="seconds" fill="#0969da" radius={[4, 4, 0, 0]} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -1313,11 +1313,15 @@ function runtimeBucketLabel(bucket: string, grouping: keyof RuntimeUsage) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(year, month - 1, day));
 }
 
-function formatRuntimeMinutes(value: number, compact = false) {
-  if (value < 1) return `${Math.round(value * 60)}s`;
-  if (compact) return `${Math.round(value)}m`;
-  if (value < 10) return `${value.toFixed(1)}m`;
-  return `${Math.round(value)}m`;
+function formatRuntimeUsageSeconds(value: number) {
+  const seconds = Math.max(0, Math.round(value));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (remainingMinutes === 0) return `${hours}h`;
+  return `${hours}h ${remainingMinutes}m`;
 }
 
 function totalJobs(counts: StatusCounts) {
@@ -1571,6 +1575,7 @@ export {
   buildJobQuery,
   groupSessionEvents,
   groupTranscriptEntries,
+  formatRuntimeUsageSeconds,
   metricsSummaryPath,
   runtimeBucketLabel,
   selectedJobIdFromPath,

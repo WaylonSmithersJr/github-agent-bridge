@@ -138,6 +138,56 @@ def test_add_rule_creates_curated_agent_rule(tmp_path):
     assert feedback.list_rules(db, "repo:gisce/erp", min_confidence=0.95) == []
 
 
+def test_list_rules_orders_newest_seen_first(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    with sqlite3.connect(db) as con:
+        con.executemany(
+            """INSERT INTO feedback_rules(
+                id, scope, type, confidence, rule, created_at, last_seen, source_events_json, observations
+            ) VALUES(?,?,?,?,?,?,?,?,?)""",
+            [
+                (
+                    "older",
+                    "repo:gisce/erp",
+                    "style_preference",
+                    0.8,
+                    "Older rule",
+                    "2026-06-01T09:00:00Z",
+                    "2026-06-01T10:00:00Z",
+                    "[]",
+                    1,
+                ),
+                (
+                    "newer",
+                    "repo:gisce/erp",
+                    "style_preference",
+                    0.8,
+                    "Newer rule",
+                    "2026-06-02T09:00:00Z",
+                    "2026-06-03T10:00:00Z",
+                    "[]",
+                    1,
+                ),
+                (
+                    "same-last-seen-newer-created",
+                    "repo:gisce/erp",
+                    "style_preference",
+                    0.8,
+                    "Same last seen but newer creation",
+                    "2026-06-03T09:00:00Z",
+                    "2026-06-03T10:00:00Z",
+                    "[]",
+                    1,
+                ),
+            ],
+        )
+
+    rules = feedback.list_rules(db, "repo:gisce/erp", min_confidence=0)
+
+    assert [rule["id"] for rule in rules] == ["same-last-seen-newer-created", "newer", "older"]
+
+
 def test_add_rule_rejects_invalid_confidence(tmp_path):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)

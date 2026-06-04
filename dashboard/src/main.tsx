@@ -257,6 +257,13 @@ type KnowledgeEvent = {
   source: string;
   scope: string;
   actor: string;
+  trigger_actor: string | null;
+  trigger_actor_avatar_url: string | null;
+  github_urls: string[];
+  source_url: string | null;
+  source_job_id: number | null;
+  source_table: string | null;
+  github_context: Record<string, unknown>;
   comment: string;
   context: Record<string, unknown>;
   classification: string;
@@ -1148,23 +1155,76 @@ function KnowledgeEvents({ events, loading, now }: { events: KnowledgeEvent[]; l
   if (events.length === 0) return <EmptyState text="No captured feedback events match the current filters." />;
   return (
     <div className="grid gap-2">
-      {events.map((event) => (
-        <details key={event.id} className="group rounded-md border border-border bg-white">
-          <summary className="grid cursor-pointer list-none gap-1 px-3 py-2 marker:hidden hover:bg-slate-50">
-            <div className="flex min-w-0 items-center justify-between gap-2">
-              <span className="inline-flex min-w-0 items-center gap-2 font-mono text-xs font-semibold text-muted">
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden />
-                <span className="truncate">{repoFromScope(event.scope)}</span>
-              </span>
-              <span className="shrink-0 font-mono text-xs text-muted"><TimeText value={event.occurred_at} relative now={now} /></span>
+      {events.map((event) => {
+        const actor = event.trigger_actor || (event.actor !== "github" ? event.actor : null);
+        return (
+          <details key={event.id} className="group rounded-md border border-border bg-white">
+            <summary className="grid cursor-pointer list-none gap-2 px-3 py-2 marker:hidden hover:bg-slate-50">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <span className="inline-flex min-w-0 items-center gap-2 font-mono text-xs font-semibold text-muted">
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden />
+                  <span className="truncate">{repoFromScope(event.scope)}</span>
+                </span>
+                <span className="shrink-0 font-mono text-xs text-muted"><TimeText value={event.occurred_at} relative now={now} /></span>
+              </div>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ActorLabel actor={actor} avatarUrl={event.trigger_actor_avatar_url} framed />
+                {event.source_job_id ? (
+                  <a className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-xs font-semibold text-foreground hover:bg-white" href={jobPath(event.source_job_id)}>
+                    <Link className="h-3.5 w-3.5" aria-hidden />
+                    Job #{event.source_job_id}
+                  </a>
+                ) : null}
+                {event.github_urls.length > 0 ? <GitHubLinkList urls={event.github_urls} compact /> : <span className="font-mono text-xs text-muted">No GitHub link</span>}
+              </div>
+              <p className="line-clamp-2 break-words text-sm [overflow-wrap:anywhere]">{event.comment}</p>
+            </summary>
+            <div className="grid gap-2 border-t border-border px-3 py-2">
+              <div>
+                <h3 className="mb-1 text-xs font-semibold text-muted">GitHub links</h3>
+                {event.github_urls.length > 0 ? <GitHubLinkList urls={event.github_urls} /> : <p className="text-xs text-muted">No links recorded.</p>}
+              </div>
+              <pre className="max-h-72 overflow-auto rounded-md bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-100">{JSON.stringify(event.context, null, 2)}</pre>
             </div>
-            <p className="line-clamp-2 break-words text-sm [overflow-wrap:anywhere]">{event.comment}</p>
-          </summary>
-          <pre className="max-h-72 overflow-auto border-t border-border bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-100">{JSON.stringify(event.context, null, 2)}</pre>
-        </details>
-      ))}
+          </details>
+        );
+      })}
     </div>
   );
+}
+
+function GitHubLinkList({ urls, compact = false }: { urls: string[]; compact?: boolean }) {
+  const visible = compact ? urls.slice(0, 2) : urls;
+  const extra = urls.length - visible.length;
+  return (
+    <div className="flex min-w-0 max-w-full flex-wrap gap-1.5">
+      {visible.map((url) => (
+        <a
+          key={url}
+          className={cn(
+            "inline-flex max-w-full items-center gap-1 rounded-md border border-border font-semibold text-primary hover:bg-white hover:underline",
+            compact ? "h-7 px-2 text-xs" : "min-h-7 px-2 py-1 text-xs",
+          )}
+          href={safeExternalUrl(url)}
+          rel="noreferrer"
+          target="_blank"
+        >
+          <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="truncate">{compact ? githubLinkLabel(url) : url}</span>
+        </a>
+      ))}
+      {extra > 0 ? <span className="inline-flex h-7 items-center rounded-md border border-border px-2 font-mono text-xs text-muted">+{extra}</span> : null}
+    </div>
+  );
+}
+
+function githubLinkLabel(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.replace(/^\//, "") + parsed.hash;
+  } catch {
+    return url;
+  }
 }
 
 function KnowledgeRowHeader({ scope, type, confidence, status, timestamp, now }: { scope: string; type: string; confidence: number; status: string; timestamp: string; now: number }) {

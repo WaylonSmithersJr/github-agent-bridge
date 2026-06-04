@@ -26,14 +26,71 @@ def test_capture_feedback_stores_candidate_event_without_synthesizing_rule(tmp_p
     db = tmp_path / "q.sqlite3"
     JobQueue(db)
 
-    assert feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+    assert feedback.capture_feedback(
+        db,
+        notification(),
+        context(),
+        "reply_comment",
+        "auto_trusted",
+        "review_only",
+        trigger_actor="ecarreras",
+        trigger_actor_avatar_url="https://avatars.githubusercontent.com/u/294235?v=4",
+    )
 
     with sqlite3.connect(db) as con:
-        event = con.execute("SELECT scope, classification, confidence, memorable FROM feedback_events").fetchone()
+        event = con.execute("SELECT scope, actor, context_json, classification, confidence, memorable FROM feedback_events").fetchone()
         rule_count = con.execute("SELECT count(*) FROM feedback_rules").fetchone()[0]
 
-    assert event == ("repo:gisce/erp", "unreviewed", 0.0, 0)
+    assert event[0] == "repo:gisce/erp"
+    assert event[1] == "ecarreras"
+    assert '"github_context"' in event[2]
+    assert '"source_url": "https://github.com/gisce/erp/pull/1#issuecomment-10"' in event[2]
+    assert event[3:] == ("unreviewed", 0.0, 0)
     assert rule_count == 0
+
+
+def test_list_events_enriches_legacy_feedback_from_job_source(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    n = notification()
+    ctx = context()
+    feedback.capture_feedback(db, n, ctx, "reply_comment", "auto_trusted", "review_only")
+    with sqlite3.connect(db) as con:
+        con.execute(
+            """INSERT INTO jobs(
+                work_key, repo, thread, status, action, decision, work_intent, subject, message_id,
+                uid, trigger_actor, trigger_actor_avatar_url, context_json, metadata_json, created_at, updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                ctx.work_key,
+                ctx.repo,
+                ctx.issue_number,
+                "pending",
+                "reply_comment",
+                "auto_trusted",
+                "review_only",
+                n.subject,
+                n.message_id,
+                n.uid,
+                "ecarreras",
+                "https://avatars.githubusercontent.com/u/294235?v=4",
+                ctx.to_json(),
+                "{}",
+                "2026-06-04T12:00:00Z",
+                "2026-06-04T12:00:00Z",
+            ),
+        )
+
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+
+    assert event["actor"] == "ecarreras"
+    assert event["trigger_actor"] == "ecarreras"
+    assert event["trigger_actor_avatar_url"] == "https://avatars.githubusercontent.com/u/294235?v=4"
+    assert event["github_urls"] == ["https://github.com/gisce/erp/pull/1#issuecomment-10"]
+    assert event["source_url"] == "https://github.com/gisce/erp/pull/1#issuecomment-10"
+    assert event["source_job_id"] == 1
+    assert event["source_table"] == "job"
+    assert event["github_context"]["comment_id"] == 10
 
 
 def test_capture_feedback_deduplicates_events(tmp_path):

@@ -368,6 +368,13 @@ describe("knowledge proposals", () => {
               source: "github",
               scope: "repo:pilipilisbot/github-agent-bridge",
               actor: "ecarreras",
+              trigger_actor: "ecarreras",
+              trigger_actor_avatar_url: "https://avatars.githubusercontent.com/u/294235?v=4",
+              github_urls: ["https://github.com/pilipilisbot/github-agent-bridge/issues/73#issuecomment-1"],
+              source_url: "https://github.com/pilipilisbot/github-agent-bridge/issues/73#issuecomment-1",
+              source_job_id: 510,
+              source_table: "job",
+              github_context: { urls: ["https://github.com/pilipilisbot/github-agent-bridge/issues/73#issuecomment-1"] },
               comment: "Prefer tabs for knowledge.",
               context: { issue: 73 },
               classification: "style_preference",
@@ -402,6 +409,9 @@ describe("knowledge proposals", () => {
 
     await user.click(screen.getByRole("tab", { name: /events \(1\)/i }));
     expect(screen.getByText("Prefer tabs for knowledge.")).toBeInTheDocument();
+    expect(screen.getByText("@ecarreras")).toBeInTheDocument();
+    expect(screen.getByText("Job #510")).toBeInTheDocument();
+    expect(screen.getByText("pilipilisbot/github-agent-bridge/issues/73#issuecomment-1")).toBeInTheDocument();
   });
 
   it("shows moderation actions only to admins for proposed rules", async () => {

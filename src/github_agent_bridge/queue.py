@@ -69,7 +69,16 @@ class JobQueue:
                     self._log(con, existing["id"], ctx.work_key, "coalesced", "Notification coalesced into active job", n.message_id)
                     con.commit()
                     if policy.feedback_learning.enabled and existing["message_id"] != n.message_id:
-                        feedback.capture_feedback(self.path, n, ctx, action, decision, intent)
+                        feedback.capture_feedback(
+                            self.path,
+                            n,
+                            ctx,
+                            action,
+                            decision,
+                            intent,
+                            trigger_actor=trigger_actor.login if trigger_actor else None,
+                            trigger_actor_avatar_url=trigger_actor.avatar_url if trigger_actor else None,
+                        )
                     return self._row_to_job(existing), "coalesced"
                 con.execute(
                     "INSERT INTO jobs(work_key,repo,thread,status,action,decision,work_intent,subject,message_id,uid,trigger_actor,trigger_actor_avatar_url,context_json,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -79,7 +88,16 @@ class JobQueue:
                 self._log(con, job_id, ctx.work_key, "queued" if status == "pending" else status, f"decision={decision} action={action}", n.message_id)
                 con.commit()
                 if policy.feedback_learning.enabled:
-                    feedback.capture_feedback(self.path, n, ctx, action, decision, intent)
+                    feedback.capture_feedback(
+                        self.path,
+                        n,
+                        ctx,
+                        action,
+                        decision,
+                        intent,
+                        trigger_actor=trigger_actor.login if trigger_actor else None,
+                        trigger_actor_avatar_url=trigger_actor.avatar_url if trigger_actor else None,
+                    )
                 return self.get(job_id), "enqueued"
             except sqlite3.IntegrityError:
                 con.rollback()

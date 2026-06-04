@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from .models import GitHubContext, Notification, utc_now
+from .parser import extract_github_context
+from .policy import Policy
 
 
 ACTIONABLE_FEEDBACK_ACTIONS = {"reply_comment", "open_issue", "submit_review", "docs_update", "content_change"}
@@ -198,16 +200,58 @@ def build_learning_prompt(event: dict[str, Any], prompt_template: str | None = N
     return template.format(event_json=json.dumps(event, ensure_ascii=False, sort_keys=True))
 
 
+def repo_from_event_scope(event: dict[str, Any]) -> str | None:
+    scope = str(event.get("scope") or "")
+    if not scope.startswith("repo:"):
+        return None
+    repo = scope.removeprefix("repo:").strip().lower()
+    return repo or None
+
+
+def route_agent_for_event(event: dict[str, Any], policy: Policy | None = None) -> str | None:
+    repo = repo_from_event_scope(event)
+    if not repo or not policy:
+        return None
+    return policy.route_for(repo).agent
+
+
+def is_model_override_not_allowed(exc: Exception) -> bool:
+    message = str(exc)
+    return "Model override" in message and "not allowed" in message
+
+
+def session_id_for_agent(base_session_id: str, agent: str | None) -> str:
+    if not agent:
+        return base_session_id
+    suffix = re.sub(r"[^A-Za-z0-9_.-]+", "-", agent).strip("-")
+    return f"{base_session_id}-{suffix}" if suffix else base_session_id
+
+
 def classify_event_with_llm(
     event: dict[str, Any],
     openclaw_bin: str = "openclaw",
+    agent: str | None = None,
     model: str | None = None,
     thinking: str = "low",
     session_id: str = "github-agent-bridge-feedback",
     timeout: int = 180,
     prompt_template: str | None = None,
 ) -> dict[str, Any]:
-    cmd = [openclaw_bin, "agent", "--json", "--session-id", session_id, "--timeout", str(timeout), "--thinking", thinking, "--message", build_learning_prompt(event, prompt_template)]
+    cmd = [
+        openclaw_bin,
+        "agent",
+        "--json",
+        "--session-id",
+        session_id,
+        "--timeout",
+        str(timeout),
+        "--thinking",
+        thinking,
+        "--message",
+        build_learning_prompt(event, prompt_template),
+    ]
+    if agent:
+        cmd.extend(["--agent", agent])
     if model:
         cmd.extend(["--model", model])
     env = os.environ.copy()
@@ -292,9 +336,51 @@ def store_proposal(
     return next(item for item in list_proposals(db_path, status="", limit=100) if item["id"] == pid)
 
 
+def reaction_endpoint(ctx: GitHubContext) -> str | None:
+    if not ctx.repo:
+        return None
+    if ctx.comment_id:
+        return f"repos/{ctx.repo}/issues/comments/{ctx.comment_id}/reactions"
+    if ctx.review_comment_id:
+        return f"repos/{ctx.repo}/pulls/comments/{ctx.review_comment_id}/reactions"
+    if ctx.commit_comment_id:
+        return f"repos/{ctx.repo}/comments/{ctx.commit_comment_id}/reactions"
+    return None
+
+
+def react_to_feedback_comment(event: dict[str, Any], gh_bin: str = "gh") -> bool:
+    ctx = extract_github_context(str(event.get("comment") or ""))
+    endpoint = reaction_endpoint(ctx)
+    if not endpoint:
+        return False
+    try:
+        result = subprocess.run(
+            [
+                gh_bin,
+                "api",
+                "-X",
+                "POST",
+                endpoint,
+                "-f",
+                "content=heart",
+                "-H",
+                "Accept: application/vnd.github+json",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
 def learn_from_events(
     db_path: str | Path,
     openclaw_bin: str = "openclaw",
+    gh_bin: str = "gh",
+    policy: Policy | None = None,
     model: str | None = None,
     thinking: str = "low",
     session_id: str = "github-agent-bridge-feedback",
@@ -305,10 +391,41 @@ def learn_from_events(
 ) -> dict[str, Any]:
     events = pending_events(db_path, limit=limit)
     proposals = []
+    reacted = 0
     for event in events:
         try:
-            proposal = classify_event_with_llm(event, openclaw_bin=openclaw_bin, model=model, thinking=thinking, session_id=session_id, timeout=timeout, prompt_template=prompt_template)
-            proposals.append(store_proposal(db_path, proposal, auto_approve_confidence, model=model or ""))
+            agent = route_agent_for_event(event, policy)
+            event_session_id = session_id_for_agent(session_id, agent)
+            model_used = model
+            try:
+                proposal = classify_event_with_llm(
+                    event,
+                    openclaw_bin=openclaw_bin,
+                    agent=agent,
+                    model=model,
+                    thinking=thinking,
+                    session_id=event_session_id,
+                    timeout=timeout,
+                    prompt_template=prompt_template,
+                )
+            except Exception as exc:
+                if not model or not is_model_override_not_allowed(exc):
+                    raise
+                model_used = None
+                proposal = classify_event_with_llm(
+                    event,
+                    openclaw_bin=openclaw_bin,
+                    agent=agent,
+                    model=None,
+                    thinking=thinking,
+                    session_id=event_session_id,
+                    timeout=timeout,
+                    prompt_template=prompt_template,
+                )
+            stored = store_proposal(db_path, proposal, auto_approve_confidence, model=model_used or "")
+            proposals.append(stored)
+            if stored["status"] == "approved" and react_to_feedback_comment(event, gh_bin=gh_bin):
+                reacted += 1
         except Exception as exc:
             fallback = {
                 "event_id": event["id"],
@@ -326,6 +443,7 @@ def learn_from_events(
         "proposed": sum(1 for item in proposals if item["status"] == "proposed"),
         "rejected": sum(1 for item in proposals if item["status"] == "rejected"),
         "errors": sum(1 for item in proposals if item["status"] == "error"),
+        "reacted": reacted,
         "proposals": proposals,
     }
 

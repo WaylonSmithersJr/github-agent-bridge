@@ -4,6 +4,7 @@ import pytest
 
 from github_agent_bridge import feedback
 from github_agent_bridge.models import GitHubContext, Notification
+from github_agent_bridge.policy import Policy, Route
 from github_agent_bridge.queue import JobQueue
 
 
@@ -114,6 +115,40 @@ def test_learning_prompt_accepts_policy_override_template():
     assert "# Feedback classifier prompt" not in prompt
 
 
+def test_route_agent_for_event_uses_policy_route():
+    event = {"id": "e1", "scope": "repo:gisce/erp"}
+    policy = Policy(org_routes={"gisce": Route(agent="gisce-developer")})
+
+    assert feedback.route_agent_for_event(event, policy) == "gisce-developer"
+    assert feedback.route_agent_for_event({"id": "e2", "scope": "global"}, policy) is None
+
+
+def test_classify_event_passes_route_agent_to_openclaw(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+
+        class Result:
+            returncode = 0
+            stdout = '{"result":{"payloads":[{"text":"{\\"is_feedback\\":false,\\"scope\\":\\"repo:gisce/erp\\",\\"type\\":\\"domain_context\\",\\"rule\\":\\"\\",\\"confidence\\":0,\\"reason\\":\\"shape test\\"}"}]}}'
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(feedback.subprocess, "run", fake_run)
+
+    feedback.classify_event_with_llm(
+        {"id": "e1", "scope": "repo:gisce/erp", "comment": "Prefer repo routing"},
+        openclaw_bin="openclaw",
+        agent="gisce-developer",
+        model="gpt-5.4-mini",
+    )
+
+    assert "--agent" in calls[0]
+    assert calls[0][calls[0].index("--agent") + 1] == "gisce-developer"
+
+
 def test_learn_from_events_auto_approves_high_confidence_feedback(tmp_path, monkeypatch):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)
@@ -131,14 +166,108 @@ def test_learn_from_events_auto_approves_high_confidence_feedback(tmp_path, monk
         }
 
     monkeypatch.setattr(feedback, "classify_event_with_llm", fake_classify)
+    monkeypatch.setattr(feedback, "react_to_feedback_comment", lambda *args, **kwargs: True)
 
     result = feedback.learn_from_events(db, limit=5, auto_approve_confidence=0.8)
 
     assert result["processed"] == 1
     assert result["approved"] == 1
+    assert result["reacted"] == 1
     rules = feedback.list_rules(db, "repo:gisce/erp", min_confidence=0.8)
     assert len(rules) == 1
     assert rules[0]["rule"] == "Read the repository guide before changing project architecture."
+
+
+def test_react_to_feedback_comment_posts_heart_to_origin_comment(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(feedback.subprocess, "run", fake_run)
+    event = {
+        "comment": "See https://github.com/gisce/erp/pull/1#issuecomment-10",
+    }
+
+    assert feedback.react_to_feedback_comment(event, gh_bin="gh") is True
+    assert calls == [
+        [
+            "gh",
+            "api",
+            "-X",
+            "POST",
+            "repos/gisce/erp/issues/comments/10/reactions",
+            "-f",
+            "content=heart",
+            "-H",
+            "Accept: application/vnd.github+json",
+        ]
+    ]
+
+
+def test_learn_from_events_passes_policy_route_agent(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+    captured = {}
+
+    def fake_classify(event, **kwargs):
+        captured["agent"] = kwargs.get("agent")
+        captured["session_id"] = kwargs.get("session_id")
+        return {
+            "event_id": event["id"],
+            "is_feedback": False,
+            "scope": event["scope"],
+            "type": "domain_context",
+            "rule": "",
+            "confidence": 0.2,
+            "reason": "Only about this PR.",
+        }
+
+    monkeypatch.setattr(feedback, "classify_event_with_llm", fake_classify)
+    policy = Policy(org_routes={"gisce": Route(agent="gisce-developer")})
+
+    feedback.learn_from_events(db, policy=policy, limit=5, auto_approve_confidence=0.8)
+
+    assert captured["agent"] == "gisce-developer"
+    assert captured["session_id"] == "github-agent-bridge-feedback-gisce-developer"
+
+
+def test_learn_from_events_falls_back_when_model_override_is_not_allowed(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+    seen_models = []
+
+    def fake_classify(event, **kwargs):
+        seen_models.append(kwargs.get("model"))
+        if kwargs.get("model"):
+            raise RuntimeError('GatewayClientRequestError: Error: Model override "openai/gpt-5.4-mini" is not allowed for agent "main".')
+        return {
+            "event_id": event["id"],
+            "is_feedback": False,
+            "scope": event["scope"],
+            "type": "domain_context",
+            "rule": "",
+            "confidence": 0.2,
+            "reason": "Only about this PR.",
+        }
+
+    monkeypatch.setattr(feedback, "classify_event_with_llm", fake_classify)
+
+    result = feedback.learn_from_events(db, model="gpt-5.4-mini", limit=5, auto_approve_confidence=0.8)
+
+    assert seen_models == ["gpt-5.4-mini", None]
+    assert result["rejected"] == 1
+    assert result["errors"] == 0
+    assert feedback.list_proposals(db, status="rejected")[0]["model"] == ""
 
 
 def test_learn_from_events_rejects_task_specific_comments(tmp_path, monkeypatch):

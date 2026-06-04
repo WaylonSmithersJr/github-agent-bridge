@@ -184,6 +184,56 @@ describe("status badges", () => {
     confirm.mockRestore();
   });
 
+  it("lets admins dismiss recoverable jobs from the jobs list without opening the detail page", async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn().mockResolvedValue(undefined);
+    const onViewJob = vi.fn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <JobsList
+        jobs={[
+          {
+            id: 58,
+            work_key: "pilipilisbot/github-agent-bridge#58",
+            repo: "pilipilisbot/github-agent-bridge",
+            thread: 58,
+            status: "blocked",
+            action: "reply_comment",
+            decision: "allowed",
+            intent: "work_allowed",
+            subject: "Needs an acknowledgement from the list",
+            trigger_actor: "ecarreras",
+            trigger_actor_avatar_url: null,
+            attempts: 1,
+            coalesced_count: 1,
+            last_error: null,
+            locked_by: null,
+            created_at: "2026-05-31T19:11:06Z",
+            updated_at: "2026-05-31T19:11:06Z",
+            started_at: null,
+            finished_at: null,
+            queue_wait_seconds: null,
+            runtime_seconds: null,
+            github_urls: [],
+          },
+        ]}
+        loading={false}
+        now={Date.parse("2026-05-31T19:12:00Z")}
+        onViewJob={onViewJob}
+        onDismiss={onDismiss}
+        user={{ login: "admin", avatar_url: "", html_url: "https://github.com/admin", is_admin: true }}
+      />,
+    );
+
+    await user.click(screen.getAllByRole("button", { name: "Dismiss job #58" })[0]);
+
+    expect(confirm).toHaveBeenCalledWith("Dismiss job #58?");
+    expect(onDismiss).toHaveBeenCalledWith(58);
+    expect(onViewJob).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
   it("hides list retry actions from read-only users and non-retryable jobs", () => {
     render(
       <JobsList
@@ -217,11 +267,13 @@ describe("status badges", () => {
         now={Date.parse("2026-05-31T19:12:00Z")}
         onViewJob={() => undefined}
         onRetry={vi.fn()}
+        onDismiss={vi.fn()}
         user={{ login: "reader", avatar_url: "", html_url: "https://github.com/reader", is_admin: false }}
       />,
     );
 
     expect(screen.queryByRole("button", { name: "Retry job #58" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Dismiss job #58" })).not.toBeInTheDocument();
   });
 });
 

@@ -364,7 +364,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         return {
             "service": "github-agent-bridge-dashboard",
             "read_only": False,
-            "admin_actions": ["retry_job", "approve_knowledge_proposal", "reject_knowledge_proposal", "delete_knowledge_rule"],
+            "admin_actions": ["retry_job", "dismiss_job", "approve_knowledge_proposal", "reject_knowledge_proposal", "delete_knowledge_rule"],
             "metrics": inspect_db_read_only(config.db),
         }
 
@@ -431,6 +431,15 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="job_not_retryable")
         job = get_job_detail(config.db, job_id)
         return {"job": job, "detail": "job_requeued"}
+
+    @app.post("/api/jobs/{job_id}/dismiss")
+    def api_job_dismiss(job_id: int, profile: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
+        if get_job_detail(config.db, job_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+        if not JobQueue(config.db).dismiss(job_id, f"dismissed by @{profile['login']}"):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="job_not_dismissable")
+        job = get_job_detail(config.db, job_id)
+        return {"job": job, "detail": "job_dismissed"}
 
     @app.get("/api/jobs/{job_id}/session")
     def api_job_session(job_id: int, _: str = Depends(current_user)) -> dict[str, Any]:

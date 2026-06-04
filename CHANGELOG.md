@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.24.0 (2026-06-04)
+
+### Features
+
+- Add knowledge dashboard management
+  ([`f975e91`](https://github.com/pilipilisbot/github-agent-bridge/commit/f975e91e37295928be03a6cf496301868c39dec3))
+
+
 ## v0.23.1 (2026-06-04)
 
 ### Bug Fixes

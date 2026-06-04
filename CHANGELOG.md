@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.26.0 (2026-06-04)
+
+### Documentation
+
+- Add dismiss job dashboard screenshots
+  ([`e673316`](https://github.com/pilipilisbot/github-agent-bridge/commit/e67331653089828eae3f106bd6cf27ee18306000))
+
+### Features
+
+- Dismiss blocked dashboard jobs
+  ([`e3f82ce`](https://github.com/pilipilisbot/github-agent-bridge/commit/e3f82ce1f3e3f911ad31e19a7dfc94b766162b34))
+
+
 ## v0.25.0 (2026-06-04)
 
 ### Features

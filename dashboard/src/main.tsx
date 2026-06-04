@@ -973,13 +973,7 @@ function KnowledgePage({
           </h2>
           <p className="text-xs text-muted">Captured feedback, proposed rules and curated agent memory.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <a className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" href="/">
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Dashboard
-          </a>
-          <RefreshButton onClick={onRefresh} />
-        </div>
+        <RefreshButton onClick={onRefresh} />
       </div>
 
       {error ? <Banner tone="error" text={error.message} /> : null}

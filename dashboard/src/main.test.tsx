@@ -391,6 +391,7 @@ describe("knowledge proposals", () => {
       />,
     );
 
+    expect(screen.queryByRole("link", { name: /^Dashboard$/i })).not.toBeInTheDocument();
     expect(screen.getByText("Keep knowledge moderation auditable.")).toBeInTheDocument();
     expect(screen.queryByText("Keep rule rows compact.")).not.toBeInTheDocument();
 

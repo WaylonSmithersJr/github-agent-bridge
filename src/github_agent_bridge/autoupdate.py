@@ -33,6 +33,14 @@ DASHBOARD_PATH_PREFIXES = (
     "src/github_agent_bridge/dashboard_data.py",
     "src/github_agent_bridge/dashboard_static/",
 )
+SYSTEMD_PATH_PREFIXES = ("systemd/",)
+DEFAULT_SYSTEMD_UNITS = {
+    "executor": "github-agent-bridge.service",
+    "dashboard": "github-agent-bridge-dashboard.service",
+    "reader": "github-agent-bridge-reader.timer",
+    "monitor": "github-agent-bridge-monitor.timer",
+    "feedback": "github-agent-bridge-feedback.timer",
+}
 
 
 @dataclass(frozen=True)
@@ -111,12 +119,15 @@ def classify_changed_files(files: Sequence[str]) -> dict[str, Any]:
     risky_files = [path for path in files if path.startswith(RISKY_PATH_PREFIXES)]
     migration_files = [path for path in files if path.startswith("src/github_agent_bridge/sql/") or "/migrations/" in path]
     dashboard_files = [path for path in files if path.startswith(DASHBOARD_PATH_PREFIXES)]
+    systemd_files = [path for path in files if path.startswith(SYSTEMD_PATH_PREFIXES)]
     dashboard_only = bool(files) and len(dashboard_files) == len(files)
     risk = "dashboard_only" if dashboard_only else "executor_or_shared"
     if migration_files:
         risk = "migration_required"
     elif risky_files:
         risk = "executor_or_queue"
+    elif systemd_files:
+        risk = "service_topology"
     elif not files:
         risk = "none"
     return {
@@ -124,7 +135,66 @@ def classify_changed_files(files: Sequence[str]) -> dict[str, Any]:
         "dashboard_only": dashboard_only,
         "risky_files": risky_files,
         "migration_files": migration_files,
+        "systemd_files": systemd_files,
         "changed_files": list(files),
+    }
+
+
+def plan_systemd_actions(decision: str, classification: dict[str, Any], *, units: dict[str, str] | None = None) -> dict[str, Any]:
+    unit_names = {**DEFAULT_SYSTEMD_UNITS, **(units or {})}
+    systemd_files = list(classification.get("systemd_files") or [])
+    daemon_reload = bool(systemd_files)
+
+    immediate: list[dict[str, str]] = []
+    deferred: list[dict[str, str]] = []
+    notes: list[str] = []
+
+    def action(command: str, unit_key: str, reason: str) -> dict[str, str]:
+        unit = unit_names.get(unit_key, "")
+        return {"command": command, "unit": unit, "reason": reason}
+
+    if daemon_reload:
+        immediate.append({"command": "daemon-reload", "unit": "--user", "reason": "systemd unit files changed"})
+
+    if decision == "stage_dashboard_reload":
+        immediate.append(action("try-restart", "dashboard", "dashboard-only update can reload independently"))
+    elif decision == "stage_defer_executor_reload":
+        immediate.append(action("try-restart", "dashboard", "dashboard can refresh while executor jobs finish"))
+        deferred.append(action("restart", "executor", "executor/shared update waits for active queue to drain"))
+    elif decision == "stage_full_reload":
+        immediate.append(action("try-restart", "dashboard", "refresh dashboard after package update"))
+        immediate.append(action("restart", "executor", "queue is quiet, executor reload is allowed"))
+    elif decision == "defer_migration":
+        deferred.append(action("restart", "executor", "schema migration must wait for active queue to drain"))
+        deferred.append(action("try-restart", "dashboard", "dashboard refresh waits for migration window"))
+
+    if daemon_reload:
+        affected_units = sorted(
+            {
+                unit_names[key]
+                for path in systemd_files
+                for key, filename in (
+                    ("executor", "github-agent-bridge.service"),
+                    ("dashboard", "github-agent-bridge-dashboard.service"),
+                    ("reader", "github-agent-bridge-reader.timer"),
+                    ("monitor", "github-agent-bridge-monitor.timer"),
+                    ("feedback", "github-agent-bridge-feedback.timer"),
+                )
+                if path.endswith(filename)
+            }
+        )
+        if affected_units:
+            notes.append("Unit changes detected: " + ", ".join(affected_units))
+        notes.append("Run systemctl --user daemon-reload before restarting changed units.")
+
+    return {
+        "manager": "systemd",
+        "scope": "user",
+        "units": unit_names,
+        "daemon_reload_required": daemon_reload,
+        "immediate": immediate,
+        "deferred": deferred,
+        "notes": notes,
     }
 
 
@@ -156,6 +226,7 @@ def plan_update(
     target_tag: str | None = None,
     gh_bin: str = "gh",
     installed_version: str = __version__,
+    systemd_units: dict[str, str] | None = None,
     runner: CommandRunner = _default_runner,
 ) -> dict[str, Any]:
     queue = JobQueue(db)
@@ -197,6 +268,8 @@ def plan_update(
         dashboard_restart_allowed = True
         executor_restart_allowed = True
 
+    service_plan = plan_systemd_actions(decision, classification, units=systemd_units)
+
     return {
         "checked_at": utc_now(),
         "installed_version": installed_version,
@@ -213,6 +286,7 @@ def plan_update(
         "executor_restart_allowed": executor_restart_allowed,
         "executor_reload_pending": executor_reload_pending,
         "blocked_reason": blocked_reason,
+        "service_plan": service_plan,
         "warnings": warnings,
     }
 
@@ -232,7 +306,9 @@ def record_update_plan(db: str | Path, plan: dict[str, Any]) -> dict[str, Any]:
             "risk": plan["classification"]["risk"],
             "migration_files": plan["classification"]["migration_files"],
             "risky_files": plan["classification"]["risky_files"],
+            "systemd_files": plan["classification"].get("systemd_files", []),
         },
+        "service_plan": plan.get("service_plan", {}),
         "warnings": plan["warnings"],
     }
     save_update_state(queue, state)

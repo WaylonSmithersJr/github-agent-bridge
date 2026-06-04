@@ -245,6 +245,13 @@ def cmd_update(args: argparse.Namespace) -> int:
         repo_dir=args.repo_dir,
         target_tag=args.target_tag,
         gh_bin=args.gh_bin,
+        systemd_units={
+            "executor": args.executor_unit,
+            "dashboard": args.dashboard_unit,
+            "reader": args.reader_timer_unit,
+            "monitor": args.monitor_timer_unit,
+            "feedback": args.feedback_timer_unit,
+        },
     )
     payload = {"plan": plan}
     if args.record:
@@ -359,10 +366,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-persist-observability", action="store_true", help="skip writing process samples and alert observations")
     s.set_defaults(func=cmd_monitor)
     s = sub.add_parser("update", help="check a GitHub release update and record safe reload state")
-    s.add_argument("--repo", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO", "pilipilisbot/github-agent-bridge"))
-    s.add_argument("--repo-dir", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO_DIR", "."))
+    s.add_argument("--repo", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO") or "pilipilisbot/github-agent-bridge")
+    s.add_argument("--repo-dir", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO_DIR") or ".")
     s.add_argument("--target-tag", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_TARGET_TAG"))
     s.add_argument("--gh-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_GH_BIN", "gh"))
+    s.add_argument("--executor-unit", default=os.getenv("GITHUB_AGENT_BRIDGE_EXECUTOR_UNIT") or "github-agent-bridge.service")
+    s.add_argument("--dashboard-unit", default=os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_UNIT") or "github-agent-bridge-dashboard.service")
+    s.add_argument("--reader-timer-unit", default=os.getenv("GITHUB_AGENT_BRIDGE_READER_TIMER_UNIT") or "github-agent-bridge-reader.timer")
+    s.add_argument("--monitor-timer-unit", default=os.getenv("GITHUB_AGENT_BRIDGE_MONITOR_TIMER_UNIT") or "github-agent-bridge-monitor.timer")
+    s.add_argument("--feedback-timer-unit", default=os.getenv("GITHUB_AGENT_BRIDGE_FEEDBACK_TIMER_UNIT") or "github-agent-bridge-feedback.timer")
     s.add_argument("--record", action="store_true", help="persist the update decision in the bridge state table")
     s.add_argument("--json", action="store_true", help="pretty-print structured JSON")
     s.set_defaults(func=cmd_update)

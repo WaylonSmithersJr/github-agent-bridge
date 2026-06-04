@@ -4,7 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from github_agent_bridge.autoupdate import load_update_state, plan_update, record_update_plan
+from github_agent_bridge.autoupdate import load_update_state, plan_systemd_actions, plan_update, record_update_plan
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
@@ -71,6 +71,13 @@ def test_dashboard_only_update_can_stage_while_jobs_are_active(tmp_path, monkeyp
     assert plan["classification"]["dashboard_only"] is True
     assert plan["dashboard_restart_allowed"] is True
     assert plan["executor_reload_pending"] is False
+    assert plan["service_plan"]["immediate"] == [
+        {
+            "command": "try-restart",
+            "unit": "github-agent-bridge-dashboard.service",
+            "reason": "dashboard-only update can reload independently",
+        }
+    ]
 
 
 def test_executor_update_records_pending_reload_when_jobs_are_active(tmp_path, monkeypatch):
@@ -89,8 +96,11 @@ def test_executor_update_records_pending_reload_when_jobs_are_active(tmp_path, m
 
     assert plan["decision"] == "stage_defer_executor_reload"
     assert plan["blocked_reason"] == "active_jobs_block_executor_reload"
+    assert plan["service_plan"]["immediate"][0]["unit"] == "github-agent-bridge-dashboard.service"
+    assert plan["service_plan"]["deferred"][0]["unit"] == "github-agent-bridge.service"
     assert state["executor_reload_pending"] is True
     assert load_update_state(q)["decision"] == "stage_defer_executor_reload"
+    assert load_update_state(q)["service_plan"]["deferred"][0]["command"] == "restart"
 
 
 def test_migration_update_is_deferred_while_jobs_are_active(tmp_path, monkeypatch):
@@ -110,6 +120,8 @@ def test_migration_update_is_deferred_while_jobs_are_active(tmp_path, monkeypatc
     assert plan["classification"]["migration_files"] == ["src/github_agent_bridge/sql/schema.sql"]
     assert plan["executor_restart_allowed"] is False
     assert plan["blocked_reason"] == "active_jobs_block_migration"
+    assert plan["service_plan"]["immediate"] == []
+    assert plan["service_plan"]["deferred"][0]["unit"] == "github-agent-bridge.service"
 
 
 def test_full_update_is_allowed_when_queue_is_quiet(tmp_path, monkeypatch):
@@ -126,3 +138,40 @@ def test_full_update_is_allowed_when_queue_is_quiet(tmp_path, monkeypatch):
 
     assert plan["decision"] == "stage_full_reload"
     assert plan["executor_restart_allowed"] is True
+    assert [item["unit"] for item in plan["service_plan"]["immediate"]] == [
+        "github-agent-bridge-dashboard.service",
+        "github-agent-bridge.service",
+    ]
+
+
+def test_systemd_unit_changes_require_daemon_reload(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+
+    plan = plan_update(
+        db,
+        repo_dir=tmp_path,
+        installed_version="1.2.3",
+        runner=release_runner("v1.2.4", ["systemd/github-agent-bridge.service"]),
+    )
+
+    assert plan["classification"]["risk"] == "service_topology"
+    assert plan["classification"]["systemd_files"] == ["systemd/github-agent-bridge.service"]
+    assert plan["service_plan"]["daemon_reload_required"] is True
+    assert plan["service_plan"]["immediate"][0] == {
+        "command": "daemon-reload",
+        "unit": "--user",
+        "reason": "systemd unit files changed",
+    }
+    assert "github-agent-bridge.service" in plan["service_plan"]["notes"][0]
+
+
+def test_systemd_plan_accepts_custom_unit_names():
+    plan = plan_systemd_actions(
+        "stage_full_reload",
+        {"systemd_files": [], "risk": "executor_or_queue"},
+        units={"executor": "custom-executor.service", "dashboard": "custom-dashboard.service"},
+    )
+
+    assert [item["unit"] for item in plan["immediate"]] == ["custom-dashboard.service", "custom-executor.service"]

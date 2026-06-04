@@ -8,6 +8,7 @@ import {
   KnowledgePage,
   KnowledgeProposals,
   ProductMeta,
+  SectionNav,
   StatusBadge,
   UserMenu,
   buildJobQuery,
@@ -52,6 +53,15 @@ describe("dashboard routing and API query helpers", () => {
     expect(selectedJobIdFromPath("/jobs/45/")).toBe(45);
     expect(selectedJobIdFromPath("/jobs/not-a-number")).toBeNull();
     expect(selectedJobIdFromPath("/jobs/45/activity")).toBeNull();
+  });
+
+  it("shows a knowledge badge when proposed rules need moderation", () => {
+    const { rerender } = render(<SectionNav isDashboardRoute={true} isKnowledgeRoute={false} knowledgeBadgeCount={2} />);
+
+    expect(screen.getByRole("link", { name: /Knowledge/i })).toContainElement(screen.getByLabelText("2 proposed knowledge items"));
+
+    rerender(<SectionNav isDashboardRoute={false} isKnowledgeRoute={true} knowledgeBadgeCount={0} />);
+    expect(screen.queryByLabelText(/proposed knowledge/i)).not.toBeInTheDocument();
   });
 
   it("refreshes job data only for session events that can change job state", () => {

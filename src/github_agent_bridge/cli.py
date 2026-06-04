@@ -262,6 +262,8 @@ def cmd_feedback_learn(args: argparse.Namespace) -> int:
     result = feedback.learn_from_events(
         args.db,
         openclaw_bin=args.openclaw_bin,
+        gh_bin=args.gh_bin,
+        policy=policy,
         model=args.model or policy.feedback_learning.model,
         thinking=args.thinking or policy.feedback_learning.thinking,
         session_id=args.session_id or policy.feedback_learning.session_id,
@@ -358,6 +360,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("feedback-learn", help="autonomously classify feedback candidates and promote high-confidence rules")
     s.add_argument("--limit", type=int, default=None)
     s.add_argument("--openclaw-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_OPENCLAW_BIN", os.getenv("OPENCLAW_BIN", "openclaw")))
+    s.add_argument("--gh-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_GH_BIN", "gh"))
     s.add_argument("--model", default=None)
     s.add_argument("--thinking", default=None)
     s.add_argument("--session-id", default=None)

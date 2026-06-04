@@ -640,7 +640,7 @@ function App() {
               <Panel title="Recent jobs" flushHeader>
                 <Filters filters={filters} actorOptions={actorOptions.data?.actors ?? []} onChange={applyFilters} />
                 {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-                <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} now={now} />
+                <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} now={now} user={me.data?.user} onRetry={retryJob} />
                 {jobRows.length >= jobLimit ? (
                   <div className="mt-3 flex justify-center">
                     <button className="inline-flex h-9 items-center justify-center rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" type="button" onClick={() => setJobLimit((current) => current + jobLimitStep)}>
@@ -979,19 +979,35 @@ function JobsList({
   loading,
   onViewJob,
   now,
+  user,
+  onRetry,
 }: {
   jobs: Job[];
   loading: boolean;
   onViewJob: (id: number) => void;
   now: number;
+  user?: UserProfile;
+  onRetry?: (jobId: number) => Promise<void>;
 }) {
+  const [retryingJobId, setRetryingJobId] = React.useState<number | null>(null);
+  const canRetryFromList = Boolean(user?.is_admin && onRetry);
+  const retryJobFromList = React.useCallback(async (jobId: number) => {
+    if (!onRetry) return;
+    setRetryingJobId(jobId);
+    try {
+      await onRetry(jobId);
+    } finally {
+      setRetryingJobId(null);
+    }
+  }, [onRetry]);
+
   if (loading && jobs.length === 0) return <EmptyState text="Loading jobs..." />;
   if (jobs.length === 0) return <EmptyState text="No jobs match the current filters." />;
   return (
     <>
       <div className="grid gap-2 md:hidden">
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} onViewJob={onViewJob} now={now} />
+          <JobCard key={job.id} job={job} onViewJob={onViewJob} now={now} canRetry={canRetryFromList && isRetryableStatus(job.status)} retrying={retryingJobId === job.id} onRetry={retryJobFromList} />
         ))}
       </div>
       <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
@@ -1007,6 +1023,7 @@ function JobsList({
               <th className="px-2 py-2 font-semibold">Queue wait</th>
               <th className="px-2 py-2 font-semibold">Runtime</th>
               <th className="px-2 py-2 font-semibold">Updated</th>
+              <th className="px-2 py-2 text-right font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1035,6 +1052,9 @@ function JobsList({
                 <td className="px-2 py-3">{formatSeconds(queueWaitSeconds(job, now))}</td>
                 <td className="px-2 py-3">{formatSeconds(jobRuntimeSeconds(job, now))}</td>
                 <td className="px-2 py-3 font-mono text-xs"><TimeText value={job.updated_at} compact relative now={now} /></td>
+                <td className="px-2 py-3 text-right">
+                  <RetryJobButton jobId={job.id} canRetry={canRetryFromList && isRetryableStatus(job.status)} retrying={retryingJobId === job.id} onRetry={retryJobFromList} compact />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1048,10 +1068,16 @@ function JobCard({
   job,
   onViewJob,
   now,
+  canRetry,
+  retrying,
+  onRetry,
 }: {
   job: Job;
   onViewJob: (id: number) => void;
   now: number;
+  canRetry: boolean;
+  retrying: boolean;
+  onRetry: (jobId: number) => Promise<void>;
 }) {
   return (
     <article className="rounded-md border border-border bg-white shadow-[0_1px_0_rgba(15,23,42,0.03)]">
@@ -1076,7 +1102,49 @@ function JobCard({
           <MiniStat label="Updated" value={<TimeText value={job.updated_at} compact relative now={now} />} />
         </div>
       </button>
+      {canRetry ? (
+        <div className="border-t border-border px-3 py-2">
+          <RetryJobButton jobId={job.id} canRetry={canRetry} retrying={retrying} onRetry={onRetry} />
+        </div>
+      ) : null}
     </article>
+  );
+}
+
+function RetryJobButton({
+  jobId,
+  canRetry,
+  retrying,
+  onRetry,
+  compact = false,
+}: {
+  jobId: number;
+  canRetry: boolean;
+  retrying: boolean;
+  onRetry: (jobId: number) => Promise<void>;
+  compact?: boolean;
+}) {
+  if (!canRetry) return null;
+  const label = retrying ? "Retrying..." : "Retry";
+  return (
+    <button
+      className={cn(
+        "inline-flex h-8 items-center justify-center gap-2 rounded-md border border-border text-sm font-semibold text-foreground hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60",
+        compact ? "w-8 px-0" : "px-3",
+      )}
+      type="button"
+      disabled={retrying}
+      aria-label={`Retry job #${jobId}`}
+      title={`Retry job #${jobId}`}
+      onClick={async (event) => {
+        event.stopPropagation();
+        if (!window.confirm(`Retry job #${jobId}?`)) return;
+        await onRetry(jobId);
+      }}
+    >
+      <RotateCcw className="h-4 w-4" aria-hidden />
+      <span className={cn(compact && "sr-only")}>{label}</span>
+    </button>
   );
 }
 

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ActorFilter,
   JobsList,
@@ -121,6 +121,96 @@ describe("status badges", () => {
     );
 
     expect(screen.getByRole("columnheader", { name: "Status" }).parentElement).toHaveClass("sticky", "top-0", "z-10");
+  });
+
+  it("lets admins retry recoverable jobs from the jobs list without opening the detail page", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn().mockResolvedValue(undefined);
+    const onViewJob = vi.fn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <JobsList
+        jobs={[
+          {
+            id: 58,
+            work_key: "pilipilisbot/github-agent-bridge#58",
+            repo: "pilipilisbot/github-agent-bridge",
+            thread: 58,
+            status: "blocked",
+            action: "reply_comment",
+            decision: "allowed",
+            intent: "work_allowed",
+            subject: "Needs a guarded retry from the list",
+            trigger_actor: "ecarreras",
+            trigger_actor_avatar_url: null,
+            attempts: 1,
+            coalesced_count: 1,
+            last_error: null,
+            locked_by: null,
+            created_at: "2026-05-31T19:11:06Z",
+            updated_at: "2026-05-31T19:11:06Z",
+            started_at: null,
+            finished_at: null,
+            queue_wait_seconds: null,
+            runtime_seconds: null,
+            github_urls: [],
+          },
+        ]}
+        loading={false}
+        now={Date.parse("2026-05-31T19:12:00Z")}
+        onViewJob={onViewJob}
+        onRetry={onRetry}
+        user={{ login: "admin", avatar_url: "", html_url: "https://github.com/admin", is_admin: true }}
+      />,
+    );
+
+    await user.click(screen.getAllByRole("button", { name: "Retry job #58" })[0]);
+
+    expect(confirm).toHaveBeenCalledWith("Retry job #58?");
+    expect(onRetry).toHaveBeenCalledWith(58);
+    expect(onViewJob).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
+  it("hides list retry actions from read-only users and non-retryable jobs", () => {
+    render(
+      <JobsList
+        jobs={[
+          {
+            id: 58,
+            work_key: "pilipilisbot/github-agent-bridge#58",
+            repo: "pilipilisbot/github-agent-bridge",
+            thread: 58,
+            status: "pending",
+            action: "reply_comment",
+            decision: "allowed",
+            intent: "work_allowed",
+            subject: "Pending jobs are not manually retried",
+            trigger_actor: "ecarreras",
+            trigger_actor_avatar_url: null,
+            attempts: 1,
+            coalesced_count: 1,
+            last_error: null,
+            locked_by: null,
+            created_at: "2026-05-31T19:11:06Z",
+            updated_at: "2026-05-31T19:11:06Z",
+            started_at: null,
+            finished_at: null,
+            queue_wait_seconds: null,
+            runtime_seconds: null,
+            github_urls: [],
+          },
+        ]}
+        loading={false}
+        now={Date.parse("2026-05-31T19:12:00Z")}
+        onViewJob={() => undefined}
+        onRetry={vi.fn()}
+        user={{ login: "reader", avatar_url: "", html_url: "https://github.com/reader", is_admin: false }}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Retry job #58" })).not.toBeInTheDocument();
   });
 });
 

@@ -211,6 +211,8 @@ cp systemd/github-agent-bridge-reader.service ~/.config/systemd/user/
 cp systemd/github-agent-bridge-reader.timer ~/.config/systemd/user/
 cp systemd/github-agent-bridge-monitor.service ~/.config/systemd/user/
 cp systemd/github-agent-bridge-monitor.timer ~/.config/systemd/user/
+cp systemd/github-agent-bridge-feedback.service ~/.config/systemd/user/
+cp systemd/github-agent-bridge-feedback.timer ~/.config/systemd/user/
 # Optional dashboard API for operator tooling:
 cp systemd/github-agent-bridge-dashboard.service ~/.config/systemd/user/
 
@@ -218,6 +220,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now github-agent-bridge.service
 systemctl --user enable --now github-agent-bridge-reader.timer
 systemctl --user enable --now github-agent-bridge-monitor.timer
+systemctl --user enable --now github-agent-bridge-feedback.timer
 # Optional:
 # systemctl --user enable --now github-agent-bridge-dashboard.service
 ```
@@ -233,6 +236,7 @@ Inspect status and logs:
 ```bash
 systemctl --user status github-agent-bridge.service
 systemctl --user status github-agent-bridge-reader.timer
+systemctl --user status github-agent-bridge-feedback.timer
 journalctl --user -u github-agent-bridge.service -f
 ```
 

@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .cli import DEFAULT_DB
+from .feedback import approve_proposal, delete_rule, list_events, list_proposals, list_repositories, list_rules, reject_proposal
 from .dashboard_data import (
     get_job_detail,
     inspect_db_read_only,
@@ -349,9 +350,21 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             return redirect
         return dashboard_index()
 
+    @app.get("/knowledge/{knowledge_path:path}")
+    async def dashboard_knowledge(knowledge_path: str, request: Request) -> Response:
+        redirect = await require_dashboard_profile_or_login(request)
+        if redirect is not None:
+            return redirect
+        return dashboard_index()
+
     @app.get("/api/status")
     def api_status(_: str = Depends(current_user)) -> dict[str, Any]:
-        return {"service": "github-agent-bridge-dashboard", "read_only": False, "admin_actions": ["retry_job"], "metrics": inspect_db_read_only(config.db)}
+        return {
+            "service": "github-agent-bridge-dashboard",
+            "read_only": False,
+            "admin_actions": ["retry_job", "approve_knowledge_proposal", "reject_knowledge_proposal", "delete_knowledge_rule"],
+            "metrics": inspect_db_read_only(config.db),
+        }
 
     @app.get("/api/about")
     def api_about(_: str = Depends(current_user)) -> dict[str, Any]:
@@ -485,6 +498,55 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "alerts": list_alerts(config.db, include_resolved=include_resolved, limit=limit),
             "detail": "Persistent monitor alert observations; unresolved alerts are active.",
         }
+
+    @app.get("/api/knowledge")
+    def api_knowledge(
+        _: str = Depends(current_user),
+        repo: str | None = None,
+        proposal_status: str | None = Query(default=None, alias="status"),
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        scope = f"repo:{repo.strip().lower()}" if repo and repo.strip() else ""
+        status_filter = (proposal_status or "").strip().lower()
+        proposals = list_proposals(config.db, status=status_filter, limit=limit)
+        if scope:
+            proposals = [item for item in proposals if item["scope"] == scope or item["scope"].startswith(f"{scope}:")]
+        events = list_events(config.db, scope=scope, limit=limit)
+        rules = list_rules(config.db, scope=scope, min_confidence=0)
+        return {
+            "repositories": list_repositories(config.db),
+            "events": events,
+            "proposals": proposals,
+            "rules": rules,
+            "summary": {
+                "events": len(events),
+                "rules": len(rules),
+                "proposed": sum(1 for item in proposals if item["status"] == "proposed"),
+                "approved": sum(1 for item in proposals if item["status"] == "approved"),
+                "rejected": sum(1 for item in proposals if item["status"] == "rejected"),
+                "errors": sum(1 for item in proposals if item["status"] == "error"),
+            },
+        }
+
+    @app.post("/api/knowledge/proposals/{proposal_id}/approve")
+    def api_knowledge_approve(proposal_id: str, _: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
+        proposal = approve_proposal(config.db, proposal_id)
+        if proposal is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="knowledge_proposal_not_found")
+        return {"proposal": proposal, "detail": "knowledge_proposal_approved"}
+
+    @app.post("/api/knowledge/proposals/{proposal_id}/reject")
+    def api_knowledge_reject(proposal_id: str, _: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
+        proposal = reject_proposal(config.db, proposal_id)
+        if proposal is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="knowledge_proposal_not_found")
+        return {"proposal": proposal, "detail": "knowledge_proposal_rejected"}
+
+    @app.delete("/api/knowledge/rules/{rule_id}")
+    def api_knowledge_rule_delete(rule_id: str, _: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
+        if not delete_rule(config.db, rule_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="knowledge_rule_not_found")
+        return {"detail": "knowledge_rule_deleted"}
 
     @app.get("/api/events/stream")
     def api_events(_: str = Depends(current_user)) -> Response:

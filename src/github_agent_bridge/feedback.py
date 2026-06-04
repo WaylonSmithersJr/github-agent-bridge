@@ -336,6 +336,39 @@ def store_proposal(
     return next(item for item in list_proposals(db_path, status="", limit=100) if item["id"] == pid)
 
 
+def approve_proposal(db_path: str | Path, proposal_id: str) -> dict[str, Any] | None:
+    now = utc_now()
+    with _connect(db_path) as con:
+        row = con.execute("SELECT * FROM feedback_rule_proposals WHERE id=?", (proposal_id,)).fetchone()
+        if not row:
+            return None
+        con.execute("UPDATE feedback_rule_proposals SET status='approved', updated_at=?, error=NULL WHERE id=?", (now, proposal_id))
+    add_rule(db_path, row["scope"], row["type"], row["rule"], float(row["confidence"]), [row["event_id"], proposal_id])
+    return get_proposal(db_path, proposal_id)
+
+
+def reject_proposal(db_path: str | Path, proposal_id: str) -> dict[str, Any] | None:
+    now = utc_now()
+    with _connect(db_path) as con:
+        row = con.execute("SELECT id FROM feedback_rule_proposals WHERE id=?", (proposal_id,)).fetchone()
+        if not row:
+            return None
+        con.execute("UPDATE feedback_rule_proposals SET status='rejected', updated_at=? WHERE id=?", (now, proposal_id))
+    return get_proposal(db_path, proposal_id)
+
+
+def get_proposal(db_path: str | Path, proposal_id: str) -> dict[str, Any] | None:
+    with _connect(db_path) as con:
+        row = con.execute("SELECT * FROM feedback_rule_proposals WHERE id=?", (proposal_id,)).fetchone()
+        return _proposal_dict(row) if row else None
+
+
+def delete_rule(db_path: str | Path, rule_id: str) -> bool:
+    with _connect(db_path) as con:
+        cur = con.execute("DELETE FROM feedback_rules WHERE id=?", (rule_id,))
+        return cur.rowcount > 0
+
+
 def reaction_endpoint(ctx: GitHubContext) -> str | None:
     if not ctx.repo:
         return None
@@ -457,23 +490,24 @@ def list_proposals(db_path: str | Path, status: str = "", limit: int = 20) -> li
     sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
     args.append(limit)
     with _connect(db_path) as con:
-        return [
-            {
-                "id": row["id"],
-                "event_id": row["event_id"],
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-                "status": row["status"],
-                "scope": row["scope"],
-                "type": row["type"],
-                "confidence": row["confidence"],
-                "rule": row["rule"],
-                "reason": row["reason"],
-                "model": row["model"],
-                "error": row["error"],
-            }
-            for row in con.execute(sql, args)
-        ]
+        return [_proposal_dict(row) for row in con.execute(sql, args)]
+
+
+def _proposal_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "event_id": row["event_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "status": row["status"],
+        "scope": row["scope"],
+        "type": row["type"],
+        "confidence": row["confidence"],
+        "rule": row["rule"],
+        "reason": row["reason"],
+        "model": row["model"],
+        "error": row["error"],
+    }
 
 
 def list_events(db_path: str | Path, scope: str = "", limit: int = 20) -> list[dict[str, Any]]:
@@ -489,6 +523,25 @@ def list_events(db_path: str | Path, scope: str = "", limit: int = 20) -> list[d
     args.append(limit)
     with _connect(db_path) as con:
         return [_event_dict(row) for row in con.execute(sql, args)]
+
+
+def list_repositories(db_path: str | Path) -> list[str]:
+    with _connect(db_path) as con:
+        rows = con.execute(
+            """
+            SELECT scope FROM feedback_events
+            UNION
+            SELECT scope FROM feedback_rules
+            UNION
+            SELECT scope FROM feedback_rule_proposals
+            """
+        ).fetchall()
+    repos = {
+        str(row["scope"]).removeprefix("repo:")
+        for row in rows
+        if str(row["scope"]).startswith("repo:") and str(row["scope"]).removeprefix("repo:")
+    }
+    return sorted(repos)
 
 
 def _event_dict(row: sqlite3.Row) -> dict[str, Any]:

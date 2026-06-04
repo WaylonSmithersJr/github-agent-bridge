@@ -85,7 +85,7 @@ class DashboardConfig:
 
     @property
     def has_authorization_policy(self) -> bool:
-        return bool(self.allowed_users or self.allowed_orgs or self.allowed_teams)
+        return bool(self.allowed_users or self.allowed_orgs or self.allowed_teams or self.admin_users or self.admin_teams)
 
     @property
     def has_admin_policy(self) -> bool:
@@ -243,6 +243,8 @@ def _exchange_code(config: DashboardConfig, code: str) -> str:
 
 def _is_allowed(config: DashboardConfig, login: str, token: str | None = None) -> bool:
     user = login.lower()
+    if _is_admin(config, login, token):
+        return True
     if config.allowed_users and user in config.allowed_users:
         return True
     if config.allowed_orgs and token:

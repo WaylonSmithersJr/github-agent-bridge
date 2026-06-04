@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.30.0 (2026-06-04)
+
+### Chores
+
+- Refresh dashboard autoupdate bundle
+  ([`247f705`](https://github.com/pilipilisbot/github-agent-bridge/commit/247f7054a6d97c7714d3c032412d18221e18ad36))
+
+### Features
+
+- Add safe autoupdate planning
+  ([`18fa4fb`](https://github.com/pilipilisbot/github-agent-bridge/commit/18fa4fbf0c9cb9fca34ad35751b52c61375f95d8))
+
+- Add systemd autoupdate service plan
+  ([`220d8e2`](https://github.com/pilipilisbot/github-agent-bridge/commit/220d8e2ea00060001102102fc84dcb2ab7ee703e))
+
+- Surface admin autoupdate notice
+  ([`d6d8e33`](https://github.com/pilipilisbot/github-agent-bridge/commit/d6d8e33f44c0900c1970b59573bf8b1a3d835654))
+
+
 ## v0.29.0 (2026-06-04)
 
 ### Bug Fixes

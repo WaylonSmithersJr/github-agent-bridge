@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.23.0 (2026-06-04)
+
+### Documentation
+
+- Install feedback learning timer
+  ([`4331293`](https://github.com/pilipilisbot/github-agent-bridge/commit/433129341072d52a186f59a6ce657b0b2b97fb33))
+
+### Features
+
+- Add dashboard list retry action
+  ([`d499ec0`](https://github.com/pilipilisbot/github-agent-bridge/commit/d499ec0a3f99cb26ed9449dea1ce6bd707f03b61))
+
+- Add guarded dashboard job retry
+  ([`4d3276a`](https://github.com/pilipilisbot/github-agent-bridge/commit/4d3276adb6561c20b66cb81f3aa2cb4bbd8ea895))
+
+
 ## v0.22.0 (2026-06-03)
 
 ### Features

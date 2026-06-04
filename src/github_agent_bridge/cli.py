@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import feedback
 from .actors import backfill_trigger_actors
+from .autoupdate import plan_update, record_update_plan
 from .dashboard_data import inspect_db_read_only, list_jobs
 from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
 from .executor import ExecutorConfig, ExecutorPool
@@ -237,6 +238,21 @@ def cmd_monitor(args: argparse.Namespace) -> int:
     return 0 if report.ok else 2
 
 
+def cmd_update(args: argparse.Namespace) -> int:
+    plan = plan_update(
+        args.db,
+        repo=args.repo,
+        repo_dir=args.repo_dir,
+        target_tag=args.target_tag,
+        gh_bin=args.gh_bin,
+    )
+    payload = {"plan": plan}
+    if args.record:
+        payload["state"] = record_update_plan(args.db, plan)
+    print(json.dumps(payload, ensure_ascii=False, indent=2 if args.json else None))
+    return 0
+
+
 def cmd_feedback_rules(args: argparse.Namespace) -> int:
     print(json.dumps({"rules": feedback.list_rules(args.db, args.scope, args.min_confidence)}, ensure_ascii=False, indent=2))
     return 0
@@ -342,6 +358,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     s.add_argument("--no-persist-observability", action="store_true", help="skip writing process samples and alert observations")
     s.set_defaults(func=cmd_monitor)
+    s = sub.add_parser("update", help="check a GitHub release update and record safe reload state")
+    s.add_argument("--repo", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO", "pilipilisbot/github-agent-bridge"))
+    s.add_argument("--repo-dir", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO_DIR", "."))
+    s.add_argument("--target-tag", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_TARGET_TAG"))
+    s.add_argument("--gh-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_GH_BIN", "gh"))
+    s.add_argument("--record", action="store_true", help="persist the update decision in the bridge state table")
+    s.add_argument("--json", action="store_true", help="pretty-print structured JSON")
+    s.set_defaults(func=cmd_update)
     s = sub.add_parser("feedback-rules", help="list curated feedback rules")
     s.add_argument("--scope", default="", help="filter by exact scope or scope prefix, e.g. repo:owner/name")
     s.add_argument("--min-confidence", type=float, default=None)

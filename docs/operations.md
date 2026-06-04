@@ -87,6 +87,33 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 Use `--no-persist-observability` for ad hoc monitor runs that should not write
 observability records.
 
+## Safe update planning
+
+Use `gab update` to inspect a published release and decide which reloads are
+safe before touching services:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  update --repo-dir /path/to/github-agent-bridge --json
+```
+
+The command reads the latest GitHub release, compares it with the installed
+package version tag, classifies changed files, and checks active queue statuses
+(`pending`, `running`, and `waiting_approval`). Add `--record` to persist the
+decision in the bridge `state` table so `/api/status` can show an outstanding
+executor reload or migration blocker:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  update --repo-dir /path/to/github-agent-bridge --record --json
+```
+
+The planner is deliberately conservative. Dashboard-only changes can be staged
+while executor jobs are active, executor/shared changes set a pending reload
+when the queue is busy, and SQLite schema changes are deferred while active jobs
+exist. This first workflow records the safe action and blocker state; package
+installation and systemd restarts remain operator-controlled.
+
 Running-job age is not treated as a failure signal by itself. The monitor uses
 the latest semantic heartbeat, visible OpenClaw output, and persisted
 CPU/I/O/PID-tree activity to decide whether an old running job looks stalled.

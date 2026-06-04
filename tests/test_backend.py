@@ -67,6 +67,7 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
         "reject_knowledge_proposal",
         "delete_knowledge_rule",
     ]
+    assert response.json()["autoupdate"] == {}
     assert response.json()["metrics"]["pending"] == 1
     assert response.json()["metrics"]["knowledge"]["proposed"] == 1
     assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"

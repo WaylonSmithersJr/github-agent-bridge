@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.27.0 (2026-06-04)
+
+### Features
+
+- Show feedback rule source context
+  ([`e6ab80c`](https://github.com/pilipilisbot/github-agent-bridge/commit/e6ab80c8d4e50dca5e8d7b770294b22c4badaa8a))
+
+- Show feedback source context
+  ([`dc9a6d1`](https://github.com/pilipilisbot/github-agent-bridge/commit/dc9a6d1ba14bd799e99628c3a383e6477b904575))
+
+
 ## v0.26.1 (2026-06-04)
 
 ### Bug Fixes

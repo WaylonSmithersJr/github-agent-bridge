@@ -132,6 +132,8 @@ def test_add_rule_creates_curated_agent_rule(tmp_path):
     assert rule["type"] == "style_preference"
     assert rule["confidence"] == 0.8
     assert rule["source_events"] == [event_id]
+    assert rule["source_event_details"][0]["id"] == event_id
+    assert rule["source_event_details"][0]["source_url"] == "https://github.com/gisce/erp/pull/1#issuecomment-10"
     assert feedback.list_rules(db, "repo:gisce/erp", min_confidence=0.75) == [rule]
     assert feedback.list_rules(db, "repo:gisce/erp", min_confidence=0.95) == []
 

@@ -247,6 +247,7 @@ type KnowledgeRule = {
   created_at: string;
   last_seen: string;
   source_events: string[];
+  source_event_details: KnowledgeEvent[];
   observations: number;
 };
 
@@ -1119,33 +1120,49 @@ function KnowledgeRules({ rules, loading, isAdmin, now, onDeleteRule }: { rules:
   if (rules.length === 0) return <EmptyState text="No curated rules match the current filters." />;
   return (
     <div className="grid gap-2">
-      {rules.map((rule) => (
-        <article key={rule.id} className="grid min-w-0 gap-2 rounded-md border border-border bg-white p-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <KnowledgeRowHeader scope={rule.scope} type={rule.type} confidence={rule.confidence} status={`${rule.observations} observation${rule.observations === 1 ? "" : "s"}`} timestamp={rule.last_seen} now={now} />
-            {isAdmin ? (
-              <button
-                className="inline-flex h-8 items-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
-                type="button"
-                disabled={busyId === rule.id}
-                onClick={async () => {
-                  if (!window.confirm("Delete this curated rule?")) return;
-                  setBusyId(rule.id);
-                  try {
-                    await onDeleteRule(rule.id);
-                  } finally {
-                    setBusyId(null);
-                  }
-                }}
-              >
-                <Trash2 className="h-4 w-4" aria-hidden />
-                Delete
-              </button>
-            ) : null}
-          </div>
-          <p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">{rule.rule}</p>
-        </article>
-      ))}
+      {rules.map((rule) => {
+        const sources = rule.source_event_details ?? [];
+        const primarySource = sources[0];
+        const actor = primarySource ? primarySource.trigger_actor || (primarySource.actor !== "github" ? primarySource.actor : null) : null;
+        const sourceUrls = sources.flatMap((source) => source.github_urls ?? []);
+        return (
+          <article key={rule.id} className="grid min-w-0 gap-2 rounded-md border border-border bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <KnowledgeRowHeader scope={rule.scope} type={rule.type} confidence={rule.confidence} status={`${rule.observations} observation${rule.observations === 1 ? "" : "s"}`} timestamp={rule.last_seen} now={now} />
+              {isAdmin ? (
+                <button
+                  className="inline-flex h-8 items-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
+                  type="button"
+                  disabled={busyId === rule.id}
+                  onClick={async () => {
+                    if (!window.confirm("Delete this curated rule?")) return;
+                    setBusyId(rule.id);
+                    try {
+                      await onDeleteRule(rule.id);
+                    } finally {
+                      setBusyId(null);
+                    }
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                  Delete
+                </button>
+              ) : null}
+            </div>
+            <p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">{rule.rule}</p>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <ActorLabel actor={actor} avatarUrl={primarySource?.trigger_actor_avatar_url} framed />
+              {primarySource?.source_job_id ? (
+                <a className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-xs font-semibold text-foreground hover:bg-white" href={jobPath(primarySource.source_job_id)}>
+                  <Link className="h-3.5 w-3.5" aria-hidden />
+                  Job #{primarySource.source_job_id}
+                </a>
+              ) : null}
+              {sourceUrls.length > 0 ? <GitHubLinkList urls={sourceUrls} compact /> : <span className="font-mono text-xs text-muted">No GitHub link</span>}
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
 }

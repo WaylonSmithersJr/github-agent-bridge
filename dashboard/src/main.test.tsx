@@ -358,6 +358,28 @@ describe("knowledge proposals", () => {
               source_events: ["event-1"],
               created_at: "2026-06-04T10:00:00Z",
               last_seen: "2026-06-04T10:01:00Z",
+              source_event_details: [
+                {
+                  id: "event-1",
+                  occurred_at: "2026-06-04T10:00:00Z",
+                  captured_at: "2026-06-04T10:01:00Z",
+                  source: "github",
+                  scope: "repo:pilipilisbot/github-agent-bridge",
+                  actor: "ecarreras",
+                  trigger_actor: "ecarreras",
+                  trigger_actor_avatar_url: "https://avatars.githubusercontent.com/u/294235?v=4",
+                  github_urls: ["https://github.com/pilipilisbot/github-agent-bridge/issues/73#issuecomment-1"],
+                  source_url: "https://github.com/pilipilisbot/github-agent-bridge/issues/73#issuecomment-1",
+                  source_job_id: 510,
+                  source_table: "job",
+                  github_context: { urls: ["https://github.com/pilipilisbot/github-agent-bridge/issues/73#issuecomment-1"] },
+                  comment: "Prefer tabs for knowledge.",
+                  context: { issue: 73 },
+                  classification: "style_preference",
+                  confidence: 0.84,
+                  memorable: true,
+                },
+              ],
             },
           ],
           events: [
@@ -406,6 +428,9 @@ describe("knowledge proposals", () => {
     expect(screen.getByText("Keep rule rows compact.")).toBeInTheDocument();
     expect(screen.queryByText("Keep knowledge moderation auditable.")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Proposal status")).not.toBeInTheDocument();
+    expect(screen.getByText("@ecarreras")).toBeInTheDocument();
+    expect(screen.getByText("Job #510")).toBeInTheDocument();
+    expect(screen.getByText("pilipilisbot/github-agent-bridge/issues/73#issuecomment-1")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /events \(1\)/i }));
     expect(screen.getByText("Prefer tabs for knowledge.")).toBeInTheDocument();

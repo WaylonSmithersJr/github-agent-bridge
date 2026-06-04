@@ -714,7 +714,21 @@ def list_rules(db_path: str | Path, scope: str = "", min_confidence: float | Non
                 "created_at": row["created_at"],
                 "last_seen": row["last_seen"],
                 "source_events": json.loads(row["source_events_json"] or "[]"),
+                "source_event_details": _source_event_details(con, json.loads(row["source_events_json"] or "[]")),
                 "observations": row["observations"],
             }
             for row in con.execute(sql, args)
         ]
+
+
+def _source_event_details(con: sqlite3.Connection, source_events: list[str]) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event_id in source_events:
+        if not event_id or event_id in seen:
+            continue
+        seen.add(event_id)
+        row = con.execute("SELECT * FROM feedback_events WHERE id=?", (event_id,)).fetchone()
+        if row:
+            details.append(_enrich_event(con, _event_dict(row)))
+    return details

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.25.0 (2026-06-04)
+
+### Features
+
+- Focus knowledge dashboard records
+  ([`7b751d1`](https://github.com/pilipilisbot/github-agent-bridge/commit/7b751d1e97aa76cf87f9787426dbb3a610c1bfab))
+
+
 ## v0.24.1 (2026-06-04)
 
 ### Bug Fixes

@@ -118,6 +118,17 @@ def inspect_db_read_only(db: str | Path) -> dict[str, Any]:
         if table_exists(con, "state"):
             state = {r["key"]: r["value"] for r in con.execute("SELECT key,value FROM state")}
             out["last_uid"] = state.get("last_uid")
+        if table_exists(con, "feedback_rule_proposals"):
+            knowledge_counts = {
+                r["status"]: int(r["count"])
+                for r in con.execute("SELECT status, count(*) count FROM feedback_rule_proposals GROUP BY status")
+            }
+            out["knowledge"] = {
+                "proposed": knowledge_counts.get("proposed", 0),
+                "approved": knowledge_counts.get("approved", 0),
+                "rejected": knowledge_counts.get("rejected", 0),
+                "errors": knowledge_counts.get("error", 0),
+            }
         if table_exists(con, "worklog"):
             last_log = con.execute("SELECT ts, phase, summary FROM worklog ORDER BY id DESC LIMIT 1").fetchone()
             if last_log:

@@ -37,6 +37,21 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)
     q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    event = feedback.pending_events(db)[0]
+    feedback.store_proposal(
+        db,
+        {
+            "event_id": event["id"],
+            "is_feedback": True,
+            "scope": event["scope"],
+            "type": "operating_rule",
+            "rule": "Keep knowledge moderation visible.",
+            "confidence": 0.72,
+            "reason": "The rule needs human moderation.",
+        },
+        auto_approve_confidence=0.95,
+        model="gpt-test",
+    )
     app = create_app(DashboardConfig(db=db, require_auth=False))
 
     client = TestClient(app)
@@ -53,6 +68,7 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
         "delete_knowledge_rule",
     ]
     assert response.json()["metrics"]["pending"] == 1
+    assert response.json()["metrics"]["knowledge"]["proposed"] == 1
     assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"
     assert jobs.json()["jobs"][0]["trigger_actor"] is None
     assert jobs.json()["jobs"][0]["trigger_actor_avatar_url"] is None

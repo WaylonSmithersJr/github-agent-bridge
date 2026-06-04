@@ -46,6 +46,19 @@ type About = {
   repository_url: string;
 };
 
+type DashboardStatus = {
+  service: string;
+  read_only: boolean;
+  metrics?: {
+    knowledge?: {
+      proposed?: number;
+      approved?: number;
+      rejected?: number;
+      errors?: number;
+    };
+  };
+};
+
 type Job = {
   id: number;
   work_key: string;
@@ -597,6 +610,7 @@ function App() {
   const isDashboardRoute = !isJobDetailRoute && !isKnowledgeRoute;
   const selectedJobId = jobRouteId;
   const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: isDashboardRoute });
+  const dashboardStatus = useQuery({ queryKey: ["dashboard-status"], queryFn: () => api<DashboardStatus>("/api/status") });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
   const about = useQuery({ queryKey: ["about"], queryFn: () => api<About>("/api/about") });
   const actorOptions = useQuery({ queryKey: ["job-actors"], queryFn: () => api<{ actors: JobActor[] }>("/api/jobs/actors"), enabled: isDashboardRoute });
@@ -643,6 +657,7 @@ function App() {
   const moderateKnowledgeProposal = React.useCallback(async (proposalId: string, action: "approve" | "reject") => {
     await api<{ proposal: KnowledgeProposal }>(`/api/knowledge/proposals/${encodeURIComponent(proposalId)}/${action}`, { method: "POST" });
     queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-status"] });
   }, [queryClient]);
   const deleteKnowledgeRule = React.useCallback(async (ruleId: string) => {
     await api<{ detail: string }>(`/api/knowledge/rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" });
@@ -715,7 +730,7 @@ function App() {
       </header>
 
       <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-3 py-4 sm:px-4 md:px-6 md:py-5">
-        <SectionNav isDashboardRoute={isDashboardRoute} isKnowledgeRoute={isKnowledgeRoute} />
+        <SectionNav isDashboardRoute={isDashboardRoute} isKnowledgeRoute={isKnowledgeRoute} knowledgeBadgeCount={dashboardStatus.data?.metrics?.knowledge?.proposed ?? 0} />
         {jobRouteId !== null ? (
           <JobDetailPage
             jobId={jobRouteId}
@@ -821,18 +836,31 @@ function ProductMeta({ about }: { about: About | undefined }) {
   );
 }
 
-function SectionNav({ isDashboardRoute, isKnowledgeRoute }: { isDashboardRoute: boolean; isKnowledgeRoute: boolean }) {
+function SectionNav({ isDashboardRoute, isKnowledgeRoute, knowledgeBadgeCount = 0 }: { isDashboardRoute: boolean; isKnowledgeRoute: boolean; knowledgeBadgeCount?: number }) {
   return (
     <nav className="flex min-w-0 rounded-lg border border-border bg-panel p-1 shadow-sm" aria-label="Dashboard sections">
       <SectionLink href="/" active={isDashboardRoute}>Jobs</SectionLink>
-      <SectionLink href="/knowledge" active={isKnowledgeRoute}>Knowledge</SectionLink>
+      <SectionLink href="/knowledge" active={isKnowledgeRoute}>
+        <span>Knowledge</span>
+        {knowledgeBadgeCount > 0 ? (
+          <span
+            className={cn(
+              "inline-flex h-5 min-w-5 items-center justify-center rounded-full border px-1 font-mono text-[11px] leading-none",
+              isKnowledgeRoute ? "border-white/40 bg-white/15 text-white" : "border-amber-200 bg-amber-100 text-amber-800",
+            )}
+            aria-label={`${knowledgeBadgeCount} proposed knowledge ${knowledgeBadgeCount === 1 ? "item" : "items"}`}
+          >
+            {knowledgeBadgeCount}
+          </span>
+        ) : null}
+      </SectionLink>
     </nav>
   );
 }
 
 function SectionLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
   return (
-    <a className={cn("inline-flex h-8 flex-1 items-center justify-center rounded-md px-3 text-sm font-semibold sm:flex-none", active ? "bg-primary text-white shadow-sm" : "text-muted hover:bg-slate-50 hover:text-foreground")} href={href}>
+    <a className={cn("inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md px-3 text-sm font-semibold sm:flex-none", active ? "bg-primary text-white shadow-sm" : "text-muted hover:bg-slate-50 hover:text-foreground")} href={href}>
       {children}
     </a>
   );
@@ -2261,6 +2289,7 @@ export {
   Filters,
   JobsList,
   ProductMeta,
+  SectionNav,
   StatusBadge,
   UserMenu,
   KnowledgePage,

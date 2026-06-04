@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
   ActorFilter,
+  Filters,
   JobsList,
   KnowledgePage,
   KnowledgeProposals,
@@ -320,6 +321,38 @@ describe("actor filter", () => {
 
     fireEvent.click(screen.getByLabelText("Clear actor filter"));
     expect(screen.getByPlaceholderText("@login")).toHaveValue("");
+  });
+});
+
+describe("job filters", () => {
+  it("clears all applied filter fields at once", async () => {
+    const user = userEvent.setup();
+    let filters = {
+      status: "pending",
+      repo: "pilipilisbot/github-agent-bridge",
+      thread: "82",
+      action: "open_issue",
+      intent: "work_allowed",
+      actor: "ecarreras",
+    };
+    const onChange = vi.fn((nextFilters: typeof filters) => {
+      filters = nextFilters;
+      rerender(<Filters filters={filters} actorOptions={[]} onChange={onChange} />);
+    });
+    const { rerender } = render(<Filters filters={filters} actorOptions={[]} onChange={onChange} />);
+
+    expect(screen.getByLabelText("Repository")).toHaveValue("pilipilisbot/github-agent-bridge");
+    expect(screen.getByLabelText("Thread")).toHaveValue("82");
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(onChange).toHaveBeenLastCalledWith({ status: "", repo: "", thread: "", action: "", intent: "", actor: "" });
+    expect(screen.getByLabelText("Status")).toHaveValue("");
+    expect(screen.getByLabelText("Repository")).toHaveValue("");
+    expect(screen.getByLabelText("Thread")).toHaveValue("");
+    expect(screen.getByLabelText("Action")).toHaveValue("");
+    expect(screen.getByPlaceholderText("@login")).toHaveValue("");
+    expect(screen.getByLabelText("Intent")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
   });
 });
 

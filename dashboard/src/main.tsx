@@ -223,6 +223,8 @@ type JobFilters = {
   actor: string;
 };
 
+const emptyJobFilters: JobFilters = { status: "", repo: "", thread: "", action: "", intent: "", actor: "" };
+
 type KnowledgeProposal = {
   id: string;
   event_id: string;
@@ -578,9 +580,13 @@ function repoFromScope(scope: string) {
   return scope.startsWith("repo:") ? scope.slice("repo:".length) : scope;
 }
 
+function hasActiveJobFilters(filters: JobFilters) {
+  return Object.values(filters).some((value) => value.trim() !== "");
+}
+
 function App() {
   const queryClient = useQueryClient();
-  const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "", actor: "" });
+  const [filters, setFilters] = React.useState<JobFilters>(emptyJobFilters);
   const [jobLimit, setJobLimit] = React.useState(initialJobLimit);
   const [knowledgeRepo, setKnowledgeRepo] = React.useState("");
   const [knowledgeStatus, setKnowledgeStatus] = React.useState("proposed");
@@ -1326,6 +1332,12 @@ function Metric({ title, value, icon }: { title: string; value: number; icon: Re
 function Filters({ filters, actorOptions, onChange }: { filters: JobFilters; actorOptions: JobActor[]; onChange: (filters: JobFilters) => void }) {
   const [draft, setDraft] = React.useState(filters);
   React.useEffect(() => setDraft(filters), [filters]);
+  const canClear = hasActiveJobFilters(filters) || hasActiveJobFilters(draft);
+  const clearFilters = () => {
+    setDraft(emptyJobFilters);
+    onChange(emptyJobFilters);
+  };
+
   return (
     <details className="my-3 rounded-md border border-border bg-slate-50/70">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-semibold marker:hidden">
@@ -1336,7 +1348,7 @@ function Filters({ filters, actorOptions, onChange }: { filters: JobFilters; act
         <ChevronDown className="h-4 w-4 text-muted" aria-hidden />
       </summary>
       <form
-        className="grid gap-3 border-t border-border bg-white p-3 md:grid-cols-3 xl:grid-cols-8"
+        className="grid gap-3 border-t border-border bg-white p-3 md:grid-cols-3 xl:grid-cols-9"
         onSubmit={(event) => {
           event.preventDefault();
           onChange(draft);
@@ -1372,10 +1384,16 @@ function Filters({ filters, actorOptions, onChange }: { filters: JobFilters; act
             <option value="work_allowed">work_allowed</option>
           </select>
         </Field>
-        <button className="inline-flex h-9 items-center justify-center gap-2 self-end rounded-md bg-primary px-3 text-sm font-semibold text-white" type="submit">
-          <Search className="h-4 w-4" aria-hidden />
-          Apply
-        </button>
+        <div className="grid grid-cols-2 gap-2 self-end xl:col-span-2">
+          <button className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white" type="button" disabled={!canClear} onClick={clearFilters}>
+            <RotateCcw className="h-4 w-4" aria-hidden />
+            Clear
+          </button>
+          <button className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-white" type="submit">
+            <Search className="h-4 w-4" aria-hidden />
+            Apply
+          </button>
+        </div>
       </form>
     </details>
   );
@@ -2240,6 +2258,7 @@ function RefreshButton({ onClick, compactOnMobile = false }: { onClick: () => vo
 
 export {
   ActorFilter,
+  Filters,
   JobsList,
   ProductMeta,
   StatusBadge,

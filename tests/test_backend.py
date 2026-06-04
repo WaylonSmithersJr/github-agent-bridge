@@ -558,9 +558,11 @@ def test_dashboard_knowledge_lists_and_admin_moderates_feedback(tmp_path):
 
     assert listing["repositories"] == ["gisce/erp"]
     assert listing["proposals"][0]["status"] == "proposed"
+    assert listing["rules"] == []
     assert forbidden.status_code == 403
     assert approved.status_code == 200
     assert approved.json()["proposal"]["status"] == "approved"
+    assert rules[0]["source_event_details"][0]["source_url"] == "https://github.com/gisce/erp/pull/1#issuecomment-10"
     assert deleted.status_code == 200
     assert client.get("/api/knowledge", params={"repo": "gisce/erp"}).json()["rules"] == []
 

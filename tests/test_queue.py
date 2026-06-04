@@ -205,8 +205,8 @@ def test_enqueue_does_not_coalesce_into_running_job(tmp_path):
 def test_enqueue_captures_feedback_for_actionable_jobs(tmp_path, monkeypatch):
     captured = []
 
-    def fake_capture(db_path, n, ctx, action, decision, work_intent):
-        captured.append((db_path.name, n.message_id, ctx.work_key, action, decision, work_intent))
+    def fake_capture(db_path, n, ctx, action, decision, work_intent, **kwargs):
+        captured.append((db_path.name, n.message_id, ctx.work_key, action, decision, work_intent, kwargs))
         return True
 
     monkeypatch.setattr("github_agent_bridge.feedback.capture_feedback", fake_capture)
@@ -214,7 +214,17 @@ def test_enqueue_captures_feedback_for_actionable_jobs(tmp_path, monkeypatch):
     q = JobQueue(tmp_path / "q.sqlite3")
     q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
 
-    assert captured == [("q.sqlite3", "<1@github.com>", "gisce/erp#1", "reply_comment", "auto_trusted", "review_only")]
+    assert captured == [
+        (
+            "q.sqlite3",
+            "<1@github.com>",
+            "gisce/erp#1",
+            "reply_comment",
+            "auto_trusted",
+            "review_only",
+            {"trigger_actor": "Edu", "trigger_actor_avatar_url": "https://github.com/Edu.png?size=80"},
+        )
+    ]
 
 
 def test_enqueue_workflow_run_failed_notification(tmp_path):
@@ -234,7 +244,7 @@ def test_enqueue_workflow_run_failed_notification(tmp_path):
 
 def test_duplicate_enqueue_does_not_recapture_feedback(tmp_path, monkeypatch):
     captured = []
-    monkeypatch.setattr("github_agent_bridge.feedback.capture_feedback", lambda *args: captured.append(args) or True)
+    monkeypatch.setattr("github_agent_bridge.feedback.capture_feedback", lambda *args, **kwargs: captured.append((args, kwargs)) or True)
 
     q = JobQueue(tmp_path / "q.sqlite3")
     q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
@@ -245,7 +255,7 @@ def test_duplicate_enqueue_does_not_recapture_feedback(tmp_path, monkeypatch):
 
 def test_enqueue_skips_feedback_when_policy_disables_it(tmp_path, monkeypatch):
     captured = []
-    monkeypatch.setattr("github_agent_bridge.feedback.capture_feedback", lambda *args: captured.append(args) or True)
+    monkeypatch.setattr("github_agent_bridge.feedback.capture_feedback", lambda *args, **kwargs: captured.append((args, kwargs)) or True)
 
     q = JobQueue(tmp_path / "q.sqlite3")
     q.enqueue(notif(1, "<1@github.com>", BODY1), Policy(trusted_orgs={"gisce"}, feedback_learning=FeedbackLearning(enabled=False)))

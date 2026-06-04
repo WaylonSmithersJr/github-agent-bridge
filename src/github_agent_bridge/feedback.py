@@ -59,7 +59,16 @@ def _connect(db_path: str | Path) -> sqlite3.Connection:
     return con
 
 
-def capture_feedback(db_path: str | Path, n: Notification, ctx: GitHubContext, action: str, decision: str, work_intent: str) -> bool:
+def capture_feedback(
+    db_path: str | Path,
+    n: Notification,
+    ctx: GitHubContext,
+    action: str,
+    decision: str,
+    work_intent: str,
+    trigger_actor: str | None = None,
+    trigger_actor_avatar_url: str | None = None,
+) -> bool:
     """Capture feedback candidates into bridge-owned storage.
 
     This deliberately does not synthesize rules. The bridge records auditable
@@ -70,6 +79,8 @@ def capture_feedback(db_path: str | Path, n: Notification, ctx: GitHubContext, a
 
     repo = ctx.repo or "unknown/repo"
     scope = f"repo:{repo}" if repo != "unknown/repo" else "github"
+    github_context = json.loads(ctx.to_json())
+    github_urls = github_context.get("urls") if isinstance(github_context.get("urls"), list) else []
     context = {
         "subject": n.subject,
         "bridge_action": action,
@@ -78,6 +89,11 @@ def capture_feedback(db_path: str | Path, n: Notification, ctx: GitHubContext, a
         "work_key": ctx.work_key,
         "message_id": n.message_id,
         "uid": n.uid,
+        "trigger_actor": trigger_actor,
+        "trigger_actor_avatar_url": trigger_actor_avatar_url,
+        "github_context": github_context,
+        "github_urls": github_urls,
+        "source_url": github_urls[0] if github_urls else None,
     }
 
     try:
@@ -93,7 +109,7 @@ def capture_feedback(db_path: str | Path, n: Notification, ctx: GitHubContext, a
                     utc_now(),
                     "github-agent-bridge",
                     scope,
-                    "github",
+                    trigger_actor or "github",
                     compact(f"{n.subject}\n\n{n.body}"),
                     json.dumps(context, ensure_ascii=False, sort_keys=True),
                     "unreviewed",
@@ -115,7 +131,7 @@ def pending_events(db_path: str | Path, scope: str = "", limit: int = 10) -> lis
     sql = "SELECT * FROM feedback_events WHERE " + " AND ".join(clauses) + " ORDER BY occurred_at ASC, id ASC LIMIT ?"
     args.append(limit)
     with _connect(db_path) as con:
-        return [_event_dict(row) for row in con.execute(sql, args)]
+        return [_enrich_event(con, _event_dict(row)) for row in con.execute(sql, args)]
 
 
 def add_rule(
@@ -522,7 +538,7 @@ def list_events(db_path: str | Path, scope: str = "", limit: int = 20) -> list[d
     sql += " ORDER BY occurred_at DESC, id DESC LIMIT ?"
     args.append(limit)
     with _connect(db_path) as con:
-        return [_event_dict(row) for row in con.execute(sql, args)]
+        return [_enrich_event(con, _event_dict(row)) for row in con.execute(sql, args)]
 
 
 def list_repositories(db_path: str | Path) -> list[str]:
@@ -560,6 +576,120 @@ def _event_dict(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def _safe_json_object(raw: str | None) -> dict[str, Any]:
+    try:
+        data = json.loads(raw or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _github_urls_from_context(context: dict[str, Any]) -> list[str]:
+    urls = context.get("github_urls")
+    if isinstance(urls, list):
+        return [str(url) for url in urls if isinstance(url, str) and url.strip()]
+    github_context = context.get("github_context")
+    if isinstance(github_context, dict):
+        nested_urls = github_context.get("urls")
+        if isinstance(nested_urls, list):
+            return [str(url) for url in nested_urls if isinstance(url, str) and url.strip()]
+    return []
+
+
+def _source_from_stored_context(context: dict[str, Any]) -> dict[str, Any]:
+    github_context = context.get("github_context") if isinstance(context.get("github_context"), dict) else {}
+    urls = _github_urls_from_context(context)
+    return {
+        "trigger_actor": context.get("trigger_actor"),
+        "trigger_actor_avatar_url": context.get("trigger_actor_avatar_url"),
+        "github_urls": urls,
+        "source_url": context.get("source_url") or (urls[0] if urls else None),
+        "github_context": github_context,
+        "source_job_id": context.get("source_job_id"),
+        "source_table": context.get("source_table"),
+    }
+
+
+def _source_from_row(row: sqlite3.Row, table: str) -> dict[str, Any]:
+    github_context = _safe_json_object(row["context_json"])
+    urls = github_context.get("urls") if isinstance(github_context.get("urls"), list) else []
+    clean_urls = [str(url) for url in urls if isinstance(url, str) and url.strip()]
+    return {
+        "trigger_actor": row["trigger_actor"],
+        "trigger_actor_avatar_url": row["trigger_actor_avatar_url"],
+        "github_urls": clean_urls,
+        "source_url": clean_urls[0] if clean_urls else None,
+        "github_context": github_context,
+        "source_job_id": row["id"] if table == "jobs" else row["job_id"],
+        "source_table": "job" if table == "jobs" else "coalesced_notification",
+    }
+
+
+def _source_for_message_id(con: sqlite3.Connection, message_id: str | None) -> dict[str, Any]:
+    if not message_id:
+        return {}
+    job = con.execute(
+        "SELECT id, trigger_actor, trigger_actor_avatar_url, context_json FROM jobs WHERE message_id=? ORDER BY id DESC LIMIT 1",
+        (message_id,),
+    ).fetchone()
+    if job:
+        return _source_from_row(job, "jobs")
+    coalesced = con.execute(
+        "SELECT id, job_id, trigger_actor, trigger_actor_avatar_url, context_json FROM coalesced_notifications WHERE message_id=? ORDER BY id DESC LIMIT 1",
+        (message_id,),
+    ).fetchone()
+    if coalesced:
+        return _source_from_row(coalesced, "coalesced_notifications")
+    return {}
+
+
+def _fallback_source_from_comment(comment: str) -> dict[str, Any]:
+    ctx = extract_github_context(comment)
+    github_context = _safe_json_object(ctx.to_json())
+    urls = github_context.get("urls") if isinstance(github_context.get("urls"), list) else []
+    clean_urls = [str(url) for url in urls if isinstance(url, str) and url.strip()]
+    return {
+        "github_urls": clean_urls,
+        "source_url": clean_urls[0] if clean_urls else None,
+        "github_context": github_context,
+        "source_table": "feedback_comment" if clean_urls else None,
+    }
+
+
+def _first_value(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, "", []):
+            return value
+    return None
+
+
+def _enrich_event(con: sqlite3.Connection, event: dict[str, Any]) -> dict[str, Any]:
+    context = event.get("context") if isinstance(event.get("context"), dict) else {}
+    stored = _source_from_stored_context(context)
+    joined = _source_for_message_id(con, str(context.get("message_id") or "") or None)
+    fallback = _fallback_source_from_comment(str(event.get("comment") or ""))
+
+    github_urls = _first_value(stored.get("github_urls"), joined.get("github_urls"), fallback.get("github_urls")) or []
+    source_url = _first_value(stored.get("source_url"), joined.get("source_url"), fallback.get("source_url"))
+    github_context = _first_value(stored.get("github_context"), joined.get("github_context"), fallback.get("github_context")) or {}
+    trigger_actor = _first_value(stored.get("trigger_actor"), joined.get("trigger_actor"), event.get("actor") if event.get("actor") != "github" else None)
+    trigger_actor_avatar_url = _first_value(stored.get("trigger_actor_avatar_url"), joined.get("trigger_actor_avatar_url"))
+
+    enriched = {
+        **event,
+        "trigger_actor": trigger_actor,
+        "trigger_actor_avatar_url": trigger_actor_avatar_url,
+        "github_urls": github_urls,
+        "source_url": source_url,
+        "github_context": github_context,
+        "source_job_id": _first_value(stored.get("source_job_id"), joined.get("source_job_id")),
+        "source_table": _first_value(stored.get("source_table"), joined.get("source_table"), fallback.get("source_table")),
+    }
+    if trigger_actor and enriched.get("actor") == "github":
+        enriched["actor"] = trigger_actor
+    return enriched
+
+
 def list_rules(db_path: str | Path, scope: str = "", min_confidence: float | None = None) -> list[dict[str, Any]]:
     clauses = []
     args: list[Any] = []
@@ -584,7 +714,21 @@ def list_rules(db_path: str | Path, scope: str = "", min_confidence: float | Non
                 "created_at": row["created_at"],
                 "last_seen": row["last_seen"],
                 "source_events": json.loads(row["source_events_json"] or "[]"),
+                "source_event_details": _source_event_details(con, json.loads(row["source_events_json"] or "[]")),
                 "observations": row["observations"],
             }
             for row in con.execute(sql, args)
         ]
+
+
+def _source_event_details(con: sqlite3.Connection, source_events: list[str]) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event_id in source_events:
+        if not event_id or event_id in seen:
+            continue
+        seen.add(event_id)
+        row = con.execute("SELECT * FROM feedback_events WHERE id=?", (event_id,)).fetchone()
+        if row:
+            details.append(_enrich_event(con, _event_dict(row)))
+    return details

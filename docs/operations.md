@@ -96,6 +96,15 @@ The alert wrapper uses the same composite stalled-job alert before automatic
 unlock or child termination. It does not unlock every old running job; it passes
 only the job ids that the monitor flagged as stalled.
 
+Set `GITHUB_AGENT_BRIDGE_KILL_STALE_CHILDREN=1` in the private systemd env file
+to let `github-agent-bridge-monitor-alert` terminate stale executor child
+process groups before retrying stalled jobs. The wrapper samples every direct
+executor child and its descendants, then only terminates children when the whole
+sample has been idle for `GITHUB_AGENT_BRIDGE_PROC_IDLE_SECONDS` seconds. It
+sends `SIGTERM`, waits `GITHUB_AGENT_BRIDGE_TERMINATE_GRACE_SECONDS`, and then
+uses `SIGKILL` if the child process group is still present. Keep this disabled
+unless the bridge host is allowed to clean up stuck OpenClaw runs automatically.
+
 ## Dashboard API service
 
 `github-agent-bridge-dashboard` is a separate FastAPI service for local

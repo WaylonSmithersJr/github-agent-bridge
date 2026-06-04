@@ -179,10 +179,28 @@ def proc_io_bytes(pid: int) -> int:
 def sample_process_tree(root_pid: int, now: int | None = None) -> dict[str, object]:
     now = int(time.time() if now is None else now)
     pids = [root_pid, *descendant_pids(root_pid)]
-    live = [pid for pid in pids if process_exists(pid)]
+    live = sorted(pid for pid in pids if process_exists(pid))
     return {
         "ts": now,
         "root_pid": root_pid,
+        "pids": live,
+        "cmds": {str(pid): proc_cmd(pid) for pid in live},
+        "cpu_ticks": sum(proc_cpu_ticks(pid) for pid in live),
+        "io_bytes": sum(proc_io_bytes(pid) for pid in live),
+    }
+
+
+def sample_process_forest(root_pids: list[int], now: int | None = None) -> dict[str, object]:
+    now = int(time.time() if now is None else now)
+    roots = sorted(dict.fromkeys(root_pids))
+    pids: set[int] = set()
+    for root_pid in roots:
+        pids.add(root_pid)
+        pids.update(descendant_pids(root_pid))
+    live = sorted(pid for pid in pids if process_exists(pid))
+    return {
+        "ts": now,
+        "root_pids": [pid for pid in roots if pid in live],
         "pids": live,
         "cmds": {str(pid): proc_cmd(pid) for pid in live},
         "cpu_ticks": sum(proc_cpu_ticks(pid) for pid in live),
@@ -207,7 +225,13 @@ def save_proc_state(path: Path, state: dict[str, object]) -> None:
 def process_sample_active(previous: dict[str, object] | None, current: dict[str, object]) -> bool:
     if not previous:
         return True
-    if previous.get("root_pid") != current.get("root_pid"):
+    previous_roots = previous.get("root_pids")
+    if previous_roots is None and previous.get("root_pid") is not None:
+        previous_roots = [previous.get("root_pid")]
+    current_roots = current.get("root_pids")
+    if current_roots is None and current.get("root_pid") is not None:
+        current_roots = [current.get("root_pid")]
+    if previous_roots != current_roots:
         return True
     if previous.get("pids") != current.get("pids"):
         return True
@@ -224,14 +248,15 @@ def sample_executor_activity(config: AlertConfig, main_pid: str | None = None, n
     children = child_pids(main_pid)
     if not children:
         return ""
-    current = sample_process_tree(children[0], now=now)
+    current = sample_process_forest(children, now=now)
     previous = load_proc_state(config.proc_state_file)
     active = process_sample_active(previous, current)
     current["active_since_last_sample"] = active
     if not active and previous.get("ts"):
         current["idle_seconds"] = int(current["ts"]) - int(previous["ts"])
     save_proc_state(config.proc_state_file, current)
-    return f"proc sample: root_pid={current['root_pid']} active={active} cpu_ticks={current['cpu_ticks']} io_bytes={current['io_bytes']}\n"
+    roots = ",".join(str(pid) for pid in current["root_pids"]) or "-"
+    return f"proc sample: root_pids={roots} active={active} cpu_ticks={current['cpu_ticks']} io_bytes={current['io_bytes']}\n"
 
 
 def terminate_process_group(pid: int, grace_seconds: int) -> str:

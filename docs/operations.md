@@ -87,6 +87,62 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 Use `--no-persist-observability` for ad hoc monitor runs that should not write
 observability records.
 
+## Safe update planning
+
+Use `gab update` to inspect a published release and decide which reloads are
+safe before touching services:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  update --repo-dir /path/to/github-agent-bridge --json
+```
+
+The command reads the latest GitHub release, compares it with the installed
+package version tag, classifies changed files, and checks active queue statuses
+(`pending`, `running`, and `waiting_approval`). Add `--record` to persist the
+decision in the bridge `state` table so `/api/status` can show an outstanding
+executor reload or migration blocker:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  update --repo-dir /path/to/github-agent-bridge --record --json
+```
+
+The planner is deliberately conservative. Dashboard-only changes can be staged
+while executor jobs are active, executor/shared changes set a pending reload
+when the queue is busy, and SQLite schema changes are deferred while active jobs
+exist. This first workflow records the safe action and blocker state; package
+installation and systemd restarts remain operator-controlled.
+
+The JSON output also includes a `service_plan` for user-level systemd. It names
+the executor, dashboard, reader, monitor, and feedback units, shows whether a
+`systemctl --user daemon-reload` is needed because `systemd/` files changed,
+and splits service actions into `immediate` and `deferred` lists:
+
+- dashboard-only release: restart only the dashboard service;
+- executor/shared release with active jobs: refresh the dashboard now and defer
+  the executor restart until the active queue drains;
+- migration release with active jobs: defer all reload work until the migration
+  window;
+- quiet queue: restart the dashboard and executor after package installation.
+
+Override non-standard unit names with CLI flags or environment variables:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  update --repo-dir /path/to/github-agent-bridge --record --json \
+  --executor-unit custom-bridge.service \
+  --dashboard-unit custom-bridge-dashboard.service
+```
+
+The private env file can also set `GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO`,
+`GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO_DIR`,
+`GITHUB_AGENT_BRIDGE_EXECUTOR_UNIT`,
+`GITHUB_AGENT_BRIDGE_DASHBOARD_UNIT`,
+`GITHUB_AGENT_BRIDGE_READER_TIMER_UNIT`,
+`GITHUB_AGENT_BRIDGE_MONITOR_TIMER_UNIT`, and
+`GITHUB_AGENT_BRIDGE_FEEDBACK_TIMER_UNIT`.
+
 Running-job age is not treated as a failure signal by itself. The monitor uses
 the latest semantic heartbeat, visible OpenClaw output, and persisted
 CPU/I/O/PID-tree activity to decide whether an old running job looks stalled.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -66,12 +67,32 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
         "approve_knowledge_proposal",
         "reject_knowledge_proposal",
         "delete_knowledge_rule",
+        "view_autoupdate_plan",
     ]
+    assert response.json()["autoupdate"] == {}
     assert response.json()["metrics"]["pending"] == 1
     assert response.json()["metrics"]["knowledge"]["proposed"] == 1
     assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"
     assert jobs.json()["jobs"][0]["trigger_actor"] is None
     assert jobs.json()["jobs"][0]["trigger_actor_avatar_url"] is None
+
+
+def test_dashboard_autoupdate_state_requires_admin_profile(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.set_state("autoupdate", json.dumps({"decision": "stage_full_reload", "target": {"tag_name": "v0.28.0"}}))
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"admin"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+
+    reader = client.get("/api/status").json()
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Admin"}, is_admin=True)))
+    admin = client.get("/api/status").json()
+
+    assert reader["autoupdate"] == {}
+    assert "view_autoupdate_plan" not in reader["admin_actions"]
+    assert admin["autoupdate"]["target"]["tag_name"] == "v0.28.0"
+    assert "view_autoupdate_plan" in admin["admin_actions"]
 
 
 def test_dashboard_about_exposes_package_version_and_repository(tmp_path):

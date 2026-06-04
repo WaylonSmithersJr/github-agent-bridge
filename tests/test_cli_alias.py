@@ -1,4 +1,5 @@
 from github_agent_bridge import cli
+from github_agent_bridge.autoupdate import load_update_state
 from github_agent_bridge.queue import JobQueue
 
 
@@ -15,6 +16,32 @@ def test_feedback_rules_cli_lists_rules(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert '"rules": []' in captured.out
+
+
+def test_update_cli_can_record_pending_reload_state(tmp_path, capsys, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+
+    def fake_plan(*args, **kwargs):
+        return {
+            "installed_version": "1.2.3",
+            "installed_tag": "v1.2.3",
+            "target": {"tag_name": "v1.2.4", "source": "github_release"},
+            "decision": "stage_full_reload",
+            "executor_reload_pending": False,
+            "blocked_reason": "",
+            "queue": {"active_counts": {"pending": 0, "running": 0, "waiting_approval": 0}, "active_total": 0},
+            "classification": {"risk": "executor_or_queue", "migration_files": [], "risky_files": ["src/github_agent_bridge/executor.py"]},
+            "warnings": [],
+        }
+
+    monkeypatch.setattr("github_agent_bridge.cli.plan_update", fake_plan)
+
+    cli.main(["--db", str(db), "update", "--record", "--json"])
+
+    captured = capsys.readouterr()
+    assert '"decision": "stage_full_reload"' in captured.out
+    assert load_update_state(JobQueue(db))["target"]["tag_name"] == "v1.2.4"
 
 
 def test_feedback_rule_add_cli_creates_rule(tmp_path, capsys):

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
   ActorFilter,
+  AutoupdateNotice,
   Filters,
   JobsList,
   KnowledgePage,
@@ -13,6 +14,7 @@ import {
   UserMenu,
   buildJobQuery,
   buildKnowledgeQuery,
+  changelogPreview,
   formatRuntimeUsageSeconds,
   groupSessionEvents,
   groupTranscriptEntries,
@@ -295,6 +297,42 @@ describe("product metadata", () => {
     expect(screen.getByText("Operational dashboard")).toBeInTheDocument();
     expect(screen.getByText("v0.18.7")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /github/i })).toHaveAttribute("href", "https://github.com/pilipilisbot/github-agent-bridge");
+  });
+});
+
+describe("autoupdate notice", () => {
+  const updateState = {
+    updated_at: "2026-06-04T16:30:00Z",
+    installed_tag: "v0.27.0",
+    target: {
+      tag_name: "v0.28.0",
+      url: "https://github.com/pilipilisbot/github-agent-bridge/releases/tag/v0.28.0",
+      body: "## Changes\n- Add safe autoupdate planning\n- Improve dashboard release visibility",
+    },
+    decision: "stage_defer_executor_reload",
+    executor_reload_pending: true,
+    blocked_reason: "active_jobs_block_executor_reload",
+    queue: { active_counts: { pending: 1 }, active_total: 1 },
+    classification: { risk: "executor_or_queue", migration_files: [], risky_files: ["src/github_agent_bridge/queue.py"] },
+    warnings: [],
+  };
+
+  it("shows release impact only to admins", () => {
+    const { rerender } = render(<AutoupdateNotice state={updateState} isAdmin={false} />);
+    expect(screen.queryByLabelText("Update available")).not.toBeInTheDocument();
+
+    rerender(<AutoupdateNotice state={updateState} isAdmin={true} />);
+
+    expect(screen.getByLabelText("Update available")).toBeInTheDocument();
+    expect(screen.getByText("v0.28.0")).toBeInTheDocument();
+    expect(screen.getByText("Dashboard reload can be staged; executor reload waits for the queue")).toBeInTheDocument();
+    expect(screen.getByText("executor or queue")).toBeInTheDocument();
+    expect(screen.getByText("Add safe autoupdate planning")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /release/i })).toHaveAttribute("href", "https://github.com/pilipilisbot/github-agent-bridge/releases/tag/v0.28.0");
+  });
+
+  it("extracts compact changelog bullets", () => {
+    expect(changelogPreview("# v1\n\n- First\n* Second\nplain\n- Fourth\n- Fifth")).toEqual(["First", "Second", "plain", "Fourth"]);
   });
 });
 

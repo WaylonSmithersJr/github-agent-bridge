@@ -361,14 +361,17 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         return dashboard_index()
 
     @app.get("/api/status")
-    def api_status(_: str = Depends(current_user)) -> dict[str, Any]:
+    def api_status(profile: dict[str, Any] = Depends(current_profile)) -> dict[str, Any]:
         queue = JobQueue(config.db)
+        admin_actions = ["retry_job", "dismiss_job", "approve_knowledge_proposal", "reject_knowledge_proposal", "delete_knowledge_rule"]
+        if profile.get("is_admin"):
+            admin_actions.append("view_autoupdate_plan")
         return {
             "service": "github-agent-bridge-dashboard",
             "read_only": False,
-            "admin_actions": ["retry_job", "dismiss_job", "approve_knowledge_proposal", "reject_knowledge_proposal", "delete_knowledge_rule"],
+            "admin_actions": admin_actions,
             "metrics": inspect_db_read_only(config.db),
-            "autoupdate": load_update_state(queue),
+            "autoupdate": load_update_state(queue) if profile.get("is_admin") else {},
         }
 
     @app.get("/api/about")

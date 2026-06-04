@@ -49,6 +49,8 @@ type About = {
 type DashboardStatus = {
   service: string;
   read_only: boolean;
+  admin_actions: string[];
+  autoupdate: AutoupdateState;
   metrics?: {
     knowledge?: {
       proposed?: number;
@@ -57,6 +59,33 @@ type DashboardStatus = {
       errors?: number;
     };
   };
+};
+
+type AutoupdateState = {
+  updated_at?: string;
+  installed_version?: string;
+  installed_tag?: string;
+  target?: {
+    tag_name?: string;
+    name?: string;
+    url?: string;
+    body?: string;
+    published_at?: string;
+    source?: string;
+  };
+  decision?: string;
+  executor_reload_pending?: boolean;
+  blocked_reason?: string;
+  queue?: {
+    active_counts?: Record<string, number>;
+    active_total?: number;
+  };
+  classification?: {
+    risk?: string;
+    migration_files?: string[];
+    risky_files?: string[];
+  };
+  warnings?: string[];
 };
 
 type Job = {
@@ -765,6 +794,8 @@ function App() {
         ) : (
           <>
             {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
+            {dashboardStatus.error ? <Banner tone="error" text={dashboardStatus.error.message} /> : null}
+            <AutoupdateNotice state={dashboardStatus.data?.autoupdate} isAdmin={Boolean(me.data?.user?.is_admin)} />
             <section className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Summary metrics">
               <Metric title="Pending" value={counts.pending ?? 0} icon={<Clock3 className="h-5 w-5" />} />
               <Metric title="Running" value={counts.running ?? 0} icon={<Activity className="h-5 w-5" />} />
@@ -834,6 +865,102 @@ function ProductMeta({ about }: { about: About | undefined }) {
       ) : null}
     </p>
   );
+}
+
+function AutoupdateNotice({ state, isAdmin }: { state: AutoupdateState | undefined; isAdmin: boolean }) {
+  if (!state) return null;
+  const targetTag = state?.target?.tag_name?.trim();
+  if (!isAdmin || !targetTag || state?.decision === "noop") return null;
+  const decision = autoupdateDecisionLabel(state.decision);
+  const activeTotal = state.queue?.active_total ?? 0;
+  const risk = autoupdateRiskLabel(state.classification?.risk);
+  const bullets = changelogPreview(state.target?.body);
+  const migrationCount = state.classification?.migration_files?.length ?? 0;
+  const riskyCount = state.classification?.risky_files?.length ?? 0;
+
+  return (
+    <section className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 shadow-sm" aria-label="Update available">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-700" aria-hidden />
+            <h2 className="text-sm font-semibold">Update available</h2>
+            <span className="rounded-sm border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-[11px] text-amber-800">{targetTag}</span>
+            {state.target?.url ? (
+              <a className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 hover:underline" href={safeExternalUrl(state.target.url)} rel="noreferrer" target="_blank">
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                Release
+              </a>
+            ) : null}
+          </div>
+          <p className="mt-1 text-sm text-amber-900">
+            {decision}
+            {state.installed_tag ? <span className="font-mono"> from {state.installed_tag}</span> : null}
+          </p>
+        </div>
+        <div className="grid gap-2 text-xs sm:grid-cols-3 lg:min-w-[420px]">
+          <AutoupdateStat label="Impact" value={risk} />
+          <AutoupdateStat label="Active jobs" value={String(activeTotal)} />
+          <AutoupdateStat label="Admin only" value="autoupdate" />
+        </div>
+      </div>
+      {state.blocked_reason || state.executor_reload_pending || migrationCount > 0 || riskyCount > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          {state.executor_reload_pending ? <span className="rounded-sm border border-amber-300 bg-white px-2 py-1 font-semibold">executor reload pending</span> : null}
+          {state.blocked_reason ? <span className="rounded-sm border border-amber-300 bg-white px-2 py-1 font-mono">{state.blocked_reason}</span> : null}
+          {migrationCount > 0 ? <span className="rounded-sm border border-amber-300 bg-white px-2 py-1">{migrationCount} migration file{migrationCount === 1 ? "" : "s"}</span> : null}
+          {riskyCount > 0 ? <span className="rounded-sm border border-amber-300 bg-white px-2 py-1">{riskyCount} executor/shared file{riskyCount === 1 ? "" : "s"}</span> : null}
+        </div>
+      ) : null}
+      {bullets.length > 0 ? (
+        <div className="mt-3 rounded-md border border-amber-200 bg-white/70 p-2.5">
+          <div className="text-[11px] font-semibold uppercase text-amber-800">Changelog preview</div>
+          <ul className="mt-1 grid gap-1 text-sm text-amber-950">
+            {bullets.map((item) => (
+              <li className="break-words [overflow-wrap:anywhere]" key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {state.warnings?.length ? <div className="mt-2 font-mono text-xs text-amber-800">{state.warnings[0]}</div> : null}
+    </section>
+  );
+}
+
+function AutoupdateStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md border border-amber-200 bg-white/80 px-2 py-1.5">
+      <div className="text-[11px] font-semibold uppercase text-amber-700">{label}</div>
+      <div className="mt-0.5 truncate font-mono text-xs text-amber-950">{value}</div>
+    </div>
+  );
+}
+
+function autoupdateDecisionLabel(decision: string | undefined) {
+  return ({
+    stage_dashboard_reload: "Dashboard reload can be staged now",
+    stage_defer_executor_reload: "Dashboard reload can be staged; executor reload waits for the queue",
+    stage_full_reload: "Full reload can be staged now",
+    defer_migration: "Migration release is waiting for a quiet queue",
+  }[decision ?? ""] ?? "Update plan recorded");
+}
+
+function autoupdateRiskLabel(risk: string | undefined) {
+  return ({
+    dashboard_only: "dashboard only",
+    executor_or_queue: "executor or queue",
+    executor_or_shared: "executor or shared",
+    migration_required: "migration",
+    none: "none",
+  }[risk ?? ""] ?? "unknown");
+}
+
+function changelogPreview(body: string | undefined) {
+  return (body ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^[-*]\s+/, ""))
+    .filter((line) => line && !line.startsWith("#"))
+    .slice(0, 4);
 }
 
 function SectionNav({ isDashboardRoute, isKnowledgeRoute, knowledgeBadgeCount = 0 }: { isDashboardRoute: boolean; isKnowledgeRoute: boolean; knowledgeBadgeCount?: number }) {
@@ -2286,6 +2413,7 @@ function RefreshButton({ onClick, compactOnMobile = false }: { onClick: () => vo
 
 export {
   ActorFilter,
+  AutoupdateNotice,
   Filters,
   JobsList,
   ProductMeta,
@@ -2296,6 +2424,7 @@ export {
   KnowledgeProposals,
   buildJobQuery,
   buildKnowledgeQuery,
+  changelogPreview,
   isKnowledgePath,
   isRetryableStatus,
   groupSessionEvents,

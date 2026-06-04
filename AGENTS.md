@@ -73,6 +73,7 @@ Important invariants:
 - `reader.py`: IMAP polling and mailbox mutation.
 - `monitor.py`: operational health checks.
 - `cli.py`: operational entrypoints and developer tooling.
+- `autoupdate.py`: safe release update planning. When changing runtime structure, reload boundaries, schema layout, dashboard packaging, queue semantics, or process/service topology, update the autoupdate classification and tests so the planner still knows whether a release can reload the dashboard, must defer executor work, or needs a migration window.
 
 ## Prompt resource contract
 

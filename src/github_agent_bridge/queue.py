@@ -163,13 +163,14 @@ class JobQueue:
         with self.connect() as con:
             return [j for j in (self._row_to_job(r) for r in con.execute(sql, args)) if j]
 
-    def retry(self, job_id: int) -> bool:
+    def retry(self, job_id: int, *, actor: str | None = None) -> bool:
         now = utc_now()
+        summary = f"job requeued by @{actor}" if actor else "job requeued"
         with self.connect() as con:
             cur = con.execute("UPDATE jobs SET status='pending', locked_by=NULL, last_error=NULL, updated_at=? WHERE id=? AND status IN ('blocked','denied','waiting_approval')", (now, job_id))
             if cur.rowcount:
                 row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
-                self._log(con, job_id, row["work_key"] if row else None, "retry", "job requeued", None)
+                self._log(con, job_id, row["work_key"] if row else None, "retry", summary, None)
             return bool(cur.rowcount)
 
     def dismiss(self, job_id: int, reason: str) -> bool:

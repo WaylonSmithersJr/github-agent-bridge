@@ -1,15 +1,17 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ActorFilter,
   JobsList,
   ProductMeta,
   StatusBadge,
+  UserMenu,
   buildJobQuery,
   formatRuntimeUsageSeconds,
   groupSessionEvents,
   groupTranscriptEntries,
+  isRetryableStatus,
   metricsSummaryPath,
   runtimeBucketLabel,
   selectedJobIdFromPath,
@@ -46,6 +48,15 @@ describe("dashboard routing and API query helpers", () => {
     expect(shouldRefreshJobForSessionEvent("done")).toBe(true);
     expect(shouldRefreshJobForSessionEvent("openclaw_stdout")).toBe(false);
     expect(shouldRefreshJobForSessionEvent("openclaw_stderr")).toBe(false);
+  });
+
+  it("limits retry actions to manually recoverable job states", () => {
+    expect(isRetryableStatus("blocked")).toBe(true);
+    expect(isRetryableStatus("denied")).toBe(true);
+    expect(isRetryableStatus("waiting_approval")).toBe(true);
+    expect(isRetryableStatus("pending")).toBe(false);
+    expect(isRetryableStatus("running")).toBe(false);
+    expect(isRetryableStatus("done")).toBe(false);
   });
 
   it("requests metrics using the browser timezone and labels runtime buckets", () => {
@@ -111,14 +122,115 @@ describe("status badges", () => {
 
     expect(screen.getByRole("columnheader", { name: "Status" }).parentElement).toHaveClass("sticky", "top-0", "z-10");
   });
+
+  it("lets admins retry recoverable jobs from the jobs list without opening the detail page", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn().mockResolvedValue(undefined);
+    const onViewJob = vi.fn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <JobsList
+        jobs={[
+          {
+            id: 58,
+            work_key: "pilipilisbot/github-agent-bridge#58",
+            repo: "pilipilisbot/github-agent-bridge",
+            thread: 58,
+            status: "blocked",
+            action: "reply_comment",
+            decision: "allowed",
+            intent: "work_allowed",
+            subject: "Needs a guarded retry from the list",
+            trigger_actor: "ecarreras",
+            trigger_actor_avatar_url: null,
+            attempts: 1,
+            coalesced_count: 1,
+            last_error: null,
+            locked_by: null,
+            created_at: "2026-05-31T19:11:06Z",
+            updated_at: "2026-05-31T19:11:06Z",
+            started_at: null,
+            finished_at: null,
+            queue_wait_seconds: null,
+            runtime_seconds: null,
+            github_urls: [],
+          },
+        ]}
+        loading={false}
+        now={Date.parse("2026-05-31T19:12:00Z")}
+        onViewJob={onViewJob}
+        onRetry={onRetry}
+        user={{ login: "admin", avatar_url: "", html_url: "https://github.com/admin", is_admin: true }}
+      />,
+    );
+
+    await user.click(screen.getAllByRole("button", { name: "Retry job #58" })[0]);
+
+    expect(confirm).toHaveBeenCalledWith("Retry job #58?");
+    expect(onRetry).toHaveBeenCalledWith(58);
+    expect(onViewJob).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
+  it("hides list retry actions from read-only users and non-retryable jobs", () => {
+    render(
+      <JobsList
+        jobs={[
+          {
+            id: 58,
+            work_key: "pilipilisbot/github-agent-bridge#58",
+            repo: "pilipilisbot/github-agent-bridge",
+            thread: 58,
+            status: "pending",
+            action: "reply_comment",
+            decision: "allowed",
+            intent: "work_allowed",
+            subject: "Pending jobs are not manually retried",
+            trigger_actor: "ecarreras",
+            trigger_actor_avatar_url: null,
+            attempts: 1,
+            coalesced_count: 1,
+            last_error: null,
+            locked_by: null,
+            created_at: "2026-05-31T19:11:06Z",
+            updated_at: "2026-05-31T19:11:06Z",
+            started_at: null,
+            finished_at: null,
+            queue_wait_seconds: null,
+            runtime_seconds: null,
+            github_urls: [],
+          },
+        ]}
+        loading={false}
+        now={Date.parse("2026-05-31T19:12:00Z")}
+        onViewJob={() => undefined}
+        onRetry={vi.fn()}
+        user={{ login: "reader", avatar_url: "", html_url: "https://github.com/reader", is_admin: false }}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Retry job #58" })).not.toBeInTheDocument();
+  });
 });
 
 describe("product metadata", () => {
   it("shows the bridge version and upstream repository link", () => {
     render(<ProductMeta about={{ service: "github-agent-bridge-dashboard", version: "0.18.7", repository_url: "https://github.com/pilipilisbot/github-agent-bridge" }} />);
 
+    expect(screen.getByText("Operational dashboard")).toBeInTheDocument();
     expect(screen.getByText("v0.18.7")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /github/i })).toHaveAttribute("href", "https://github.com/pilipilisbot/github-agent-bridge");
+  });
+});
+
+describe("user menu", () => {
+  it("shows admin and read-only modes beside the signed-in user", () => {
+    const { rerender } = render(<UserMenu user={{ login: "alice", avatar_url: "", html_url: "https://github.com/alice", is_admin: true }} loading={false} />);
+    expect(screen.getByText("Signed in · admin")).toBeInTheDocument();
+
+    rerender(<UserMenu user={{ login: "bob", avatar_url: "", html_url: "https://github.com/bob", is_admin: false }} loading={false} />);
+    expect(screen.getByText("Signed in · read-only")).toBeInTheDocument();
   });
 });
 

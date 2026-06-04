@@ -45,9 +45,8 @@ loopback-only unless it is behind HTTPS and an authenticated reverse proxy.
 7. Generate a **Client secret** and copy it into the private environment file.
 
 The dashboard requests `read:user` by default. It also requests `read:org` when
-access is granted by `GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS` or
-`GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS`, especially for private
-organization and team membership.
+access or admin mode is granted by GitHub organization or team membership,
+especially for private organization and team membership.
 
 ## Configure the Dashboard Environment
 
@@ -61,6 +60,8 @@ GITHUB_OAUTH_CLIENT_SECRET=replace-with-github-oauth-client-secret
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS=your-github-login
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS=
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS=
+GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS=your-github-login
+GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS=
 EOF
 chmod 600 ~/.config/github-agent-bridge/env
 ```
@@ -81,9 +82,17 @@ Use at least one authorization allowlist:
   organizations whose members may access the dashboard.
 - `GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS`: comma-separated GitHub teams in
   `org/team-slug` form whose members may access the dashboard.
+- `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS`: comma-separated GitHub logins
+  allowed to run guarded dashboard actions such as retrying a job.
+- `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS`: comma-separated GitHub teams in
+  `org/team-slug` form whose members may run guarded dashboard actions.
 
 If all allowlists are empty, any authenticated GitHub user is accepted. That is
 only appropriate for isolated local development.
+
+Admin allowlists do not grant dashboard read access by themselves. Add the same
+user, organization, or team to an `ALLOWED_*` variable when they should be able
+to sign in.
 
 Per-repository dashboard scopes are part of the issue #4 architecture but are
 not implemented in the current dashboard backend.

@@ -90,9 +90,10 @@ Use at least one authorization allowlist:
 If all allowlists are empty, any authenticated GitHub user is accepted. That is
 only appropriate for isolated local development.
 
-Admin allowlists do not grant dashboard read access by themselves. Add the same
-user, organization, or team to an `ALLOWED_*` variable when they should be able
-to sign in.
+Admin allowlists also grant dashboard read access. A user or team listed in
+`GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS` or
+`GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS` can sign in even when it is not
+listed in an `ALLOWED_*` variable.
 
 Per-repository dashboard scopes are part of the issue #4 architecture but are
 not implemented in the current dashboard backend.

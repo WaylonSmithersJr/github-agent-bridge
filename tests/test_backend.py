@@ -633,6 +633,26 @@ def test_dashboard_session_authorization_allows_configured_team(monkeypatch):
     assert _is_allowed(config, "alice", None) is False
 
 
+def test_dashboard_session_authorization_allows_admin_user_without_allowed_user():
+    config = DashboardConfig(secret_key="secret", admin_users={"alice"})
+
+    assert _is_allowed(config, "alice", None) is True
+    assert _is_allowed(config, "bob", None) is False
+
+
+def test_dashboard_session_authorization_allows_admin_team_without_allowed_team(monkeypatch):
+    def fake_github_json(url, token):
+        assert token == "token"
+        assert url.endswith("/user/teams")
+        return [{"slug": "platform", "organization": {"login": "Example"}}]
+
+    monkeypatch.setattr("github_agent_bridge.backend._github_json", fake_github_json)
+    config = DashboardConfig(secret_key="secret", admin_teams={"example/platform"})
+
+    assert _is_allowed(config, "bob", "token") is True
+    assert _is_allowed(config, "bob", None) is False
+
+
 def test_dashboard_admin_authorization_allows_configured_user_or_team(monkeypatch):
     def fake_github_json(url, token):
         assert token == "token"

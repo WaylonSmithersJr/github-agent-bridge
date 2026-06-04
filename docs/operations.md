@@ -373,9 +373,9 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 retry <job-id>
 ```
 
 Dashboard users listed in `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS` or
-`GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS` can also retry blocked, denied, or
-waiting-approval jobs from the job detail page. The dashboard records the admin
-login in the job worklog.
+`GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS` can also sign in and retry blocked,
+denied, or waiting-approval jobs from the job detail page. The dashboard records
+the admin login in the job worklog.
 
 For `reply_comment` jobs, the executor checks GitHub before dispatching. If the
 authenticated bot has already commented after the triggering issue comment, the

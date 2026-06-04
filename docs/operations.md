@@ -128,6 +128,8 @@ GITHUB_OAUTH_CLIENT_SECRET=replace-with-github-oauth-client-secret
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS=alice,bob
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS=example-org
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS=example-org/platform
+GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS=alice
+GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS=example-org/bridge-admins
 ```
 
 See [`dashboard-github-oauth.md`](dashboard-github-oauth.md) for the GitHub
@@ -369,6 +371,11 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 ```bash
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 retry <job-id>
 ```
+
+Dashboard users listed in `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS` or
+`GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS` can also retry blocked, denied, or
+waiting-approval jobs from the job detail page. The dashboard records the admin
+login in the job worklog.
 
 For `reply_comment` jobs, the executor checks GitHub before dispatching. If the
 authenticated bot has already commented after the triggering issue comment, the

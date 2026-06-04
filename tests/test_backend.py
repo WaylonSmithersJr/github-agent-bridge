@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from github_agent_bridge import __version__
-from github_agent_bridge.backend import DashboardConfig, _encode_session, _is_allowed, _session_stream_events, _sign, create_app
+from github_agent_bridge.backend import DashboardConfig, _encode_session, _is_admin, _is_allowed, _session_stream_events, _sign, create_app
 from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_job_actors, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import Notification
@@ -43,7 +43,8 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
     jobs = client.get("/api/jobs")
 
     assert response.status_code == 200
-    assert response.json()["read_only"] is True
+    assert response.json()["read_only"] is False
+    assert response.json()["admin_actions"] == ["retry_job"]
     assert response.json()["metrics"]["pending"] == 1
     assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"
     assert jobs.json()["jobs"][0]["trigger_actor"] is None
@@ -453,6 +454,7 @@ def test_dashboard_me_backfills_legacy_session_avatar(tmp_path):
         "login": "alice",
         "avatar_url": "https://github.com/alice.png?size=80",
         "html_url": "https://github.com/alice",
+        "is_admin": False,
     }
 
 
@@ -476,7 +478,59 @@ def test_dashboard_me_exposes_safe_oauth_profile(tmp_path):
         "login": "alice",
         "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
         "html_url": "https://github.com/alice",
+        "is_admin": False,
     }
+
+
+def test_dashboard_me_exposes_admin_mode_from_signed_session(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set(
+        "gab_dashboard_session",
+        _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)),
+    )
+
+    response = client.get("/api/me")
+
+    assert response.status_code == 200
+    assert response.json()["user"]["is_admin"] is True
+
+
+def test_dashboard_retry_requires_admin_and_requeues_retryable_job(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    q.finish(job.id, "blocked", "failed", "boom")
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+
+    forbidden = client.post(f"/api/jobs/{job.id}/retry")
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+    response = client.post(f"/api/jobs/{job.id}/retry")
+    retried = client.get(f"/api/jobs/{job.id}").json()["job"]
+
+    assert forbidden.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["job"]["status"] == "pending"
+    assert retried["worklog"][-1]["phase"] == "retry"
+    assert retried["worklog"][-1]["summary"] == "job requeued by @alice"
+
+
+def test_dashboard_retry_rejects_non_retryable_jobs(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+
+    response = client.post(f"/api/jobs/{job.id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "job_not_retryable"
 
 
 def test_dashboard_oauth_login_uses_minimal_scope_for_user_allowlist(tmp_path):
@@ -539,6 +593,27 @@ def test_dashboard_oauth_login_requests_org_scope_for_team_allowlist(tmp_path):
     assert query["scope"] == ["read:user read:org"]
 
 
+def test_dashboard_oauth_login_requests_org_scope_for_admin_team(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(
+        DashboardConfig(
+            db=db,
+            secret_key="secret",
+            oauth_client_id="client-id",
+            oauth_client_secret="client-secret",
+            allowed_users={"alice"},
+            admin_teams={"example/platform"},
+        )
+    )
+
+    response = TestClient(app, follow_redirects=False).get("/auth/login")
+
+    assert response.status_code == 302
+    query = parse_qs(urlparse(response.headers["location"]).query)
+    assert query["scope"] == ["read:user read:org"]
+
+
 def test_dashboard_session_authorization_allows_configured_team(monkeypatch):
     def fake_github_json(url, token):
         assert token == "token"
@@ -556,6 +631,20 @@ def test_dashboard_session_authorization_allows_configured_team(monkeypatch):
 
     assert _is_allowed(config, "alice", "token") is True
     assert _is_allowed(config, "alice", None) is False
+
+
+def test_dashboard_admin_authorization_allows_configured_user_or_team(monkeypatch):
+    def fake_github_json(url, token):
+        assert token == "token"
+        assert url.endswith("/user/teams")
+        return [{"slug": "platform", "organization": {"login": "Example"}}]
+
+    monkeypatch.setattr("github_agent_bridge.backend._github_json", fake_github_json)
+    config = DashboardConfig(secret_key="secret", admin_users={"alice"}, admin_teams={"example/platform"})
+
+    assert _is_admin(config, "alice", None) is True
+    assert _is_admin(config, "bob", "token") is True
+    assert _is_admin(config, "bob", None) is False
 
 
 def test_dashboard_processes_exposes_live_executor_snapshot(tmp_path, monkeypatch):

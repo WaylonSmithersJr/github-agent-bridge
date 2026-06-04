@@ -6,10 +6,12 @@ import {
   JobsList,
   ProductMeta,
   StatusBadge,
+  UserMenu,
   buildJobQuery,
   formatRuntimeUsageSeconds,
   groupSessionEvents,
   groupTranscriptEntries,
+  isRetryableStatus,
   metricsSummaryPath,
   runtimeBucketLabel,
   selectedJobIdFromPath,
@@ -46,6 +48,15 @@ describe("dashboard routing and API query helpers", () => {
     expect(shouldRefreshJobForSessionEvent("done")).toBe(true);
     expect(shouldRefreshJobForSessionEvent("openclaw_stdout")).toBe(false);
     expect(shouldRefreshJobForSessionEvent("openclaw_stderr")).toBe(false);
+  });
+
+  it("limits retry actions to manually recoverable job states", () => {
+    expect(isRetryableStatus("blocked")).toBe(true);
+    expect(isRetryableStatus("denied")).toBe(true);
+    expect(isRetryableStatus("waiting_approval")).toBe(true);
+    expect(isRetryableStatus("pending")).toBe(false);
+    expect(isRetryableStatus("running")).toBe(false);
+    expect(isRetryableStatus("done")).toBe(false);
   });
 
   it("requests metrics using the browser timezone and labels runtime buckets", () => {
@@ -117,8 +128,19 @@ describe("product metadata", () => {
   it("shows the bridge version and upstream repository link", () => {
     render(<ProductMeta about={{ service: "github-agent-bridge-dashboard", version: "0.18.7", repository_url: "https://github.com/pilipilisbot/github-agent-bridge" }} />);
 
+    expect(screen.getByText("Operational dashboard")).toBeInTheDocument();
     expect(screen.getByText("v0.18.7")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /github/i })).toHaveAttribute("href", "https://github.com/pilipilisbot/github-agent-bridge");
+  });
+});
+
+describe("user menu", () => {
+  it("shows admin and read-only modes beside the signed-in user", () => {
+    const { rerender } = render(<UserMenu user={{ login: "alice", avatar_url: "", html_url: "https://github.com/alice", is_admin: true }} loading={false} />);
+    expect(screen.getByText("Signed in · admin")).toBeInTheDocument();
+
+    rerender(<UserMenu user={{ login: "bob", avatar_url: "", html_url: "https://github.com/bob", is_admin: false }} loading={false} />);
+    expect(screen.getByText("Signed in · read-only")).toBeInTheDocument();
   });
 });
 

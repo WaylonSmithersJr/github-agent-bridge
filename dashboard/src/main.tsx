@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, Search, ShieldCheck, TerminalSquare, TimerReset, UserCircle2, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, RotateCcw, Search, ShieldCheck, TerminalSquare, TimerReset, UserCircle2, X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -204,6 +204,7 @@ type UserProfile = {
   login: string;
   avatar_url: string;
   html_url: string;
+  is_admin: boolean;
 };
 
 type JobActor = {
@@ -240,8 +241,10 @@ function cn(...values: Array<string | false | null | undefined>) {
   return twMerge(clsx(values));
 }
 
-async function api<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { Accept: "application/json" } });
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(path, { ...init, headers });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
   }
@@ -491,6 +494,10 @@ function shouldRefreshJobForSessionEvent(eventType: string) {
   return ["claimed", "dispatch_started", "dispatch_finished", "done", "blocked", "denied", "waiting_approval"].includes(eventType);
 }
 
+function isRetryableStatus(status: string) {
+  return ["blocked", "denied", "waiting_approval"].includes(status);
+}
+
 function selectedJobIdFromPath(pathname = window.location.pathname) {
   const match = pathname.match(/^\/jobs\/(\d+)\/?$/);
   return match ? Number(match[1]) : null;
@@ -531,6 +538,12 @@ function App() {
     queryFn: () => api<{ entries: TranscriptEntry[] }>(`/api/jobs/${selectedJobId}/session/transcript`),
     enabled: selectedJobId !== null,
   });
+  const retryJob = React.useCallback(async (jobId: number) => {
+    const payload = await api<{ job: Job }>(`/api/jobs/${jobId}/retry`, { method: "POST" });
+    queryClient.setQueryData<{ job: Job }>(["job", jobId], { job: payload.job });
+    queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["metrics"] });
+  }, [queryClient]);
 
   React.useEffect(() => {
     if (selectedJobId === null) return;
@@ -602,6 +615,9 @@ function App() {
           <JobDetailPage
             jobId={jobRouteId}
             detail={detailStatus}
+            selectedJob={selectedJob}
+            user={me.data?.user}
+            onRetry={retryJob}
             onRefresh={() => {
               detail.refetch();
               session.refetch();
@@ -671,7 +687,7 @@ function ProductMeta({ about }: { about: About | undefined }) {
   const version = about?.version ? `v${about.version}` : "version loading";
   return (
     <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-300">
-      <span>Read-only operational dashboard</span>
+      <span>Operational dashboard</span>
       <span className="font-mono text-xs text-slate-400">{version}</span>
       {about?.repository_url ? (
         <a className="inline-flex items-center gap-1 text-xs font-semibold text-slate-200 hover:underline" href={safeExternalUrl(about.repository_url)} rel="noreferrer" target="_blank">
@@ -683,7 +699,24 @@ function ProductMeta({ about }: { about: About | undefined }) {
   );
 }
 
-function JobDetailPage({ jobId, detail, onRefresh }: { jobId: number; detail: React.ReactNode; onRefresh: () => void }) {
+function JobDetailPage({
+  jobId,
+  detail,
+  selectedJob,
+  user,
+  onRetry,
+  onRefresh,
+}: {
+  jobId: number;
+  detail: React.ReactNode;
+  selectedJob: Job | null;
+  user: UserProfile | undefined;
+  onRetry: (jobId: number) => Promise<void>;
+  onRefresh: () => void;
+}) {
+  const [retrying, setRetrying] = React.useState(false);
+  const canRetry = Boolean(user?.is_admin && selectedJob && isRetryableStatus(selectedJob.status));
+  const retryLabel = retrying ? "Retrying..." : "Retry";
   return (
     <div className="grid min-w-0 gap-3 sm:gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -691,7 +724,28 @@ function JobDetailPage({ jobId, detail, onRefresh }: { jobId: number; detail: Re
           <ArrowLeft className="h-4 w-4" aria-hidden />
           Dashboard
         </a>
-        <RefreshButton onClick={onRefresh} />
+        <div className="flex items-center gap-2">
+          {canRetry ? (
+            <button
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              disabled={retrying}
+              onClick={async () => {
+                if (!window.confirm(`Retry job #${jobId}?`)) return;
+                setRetrying(true);
+                try {
+                  await onRetry(jobId);
+                } finally {
+                  setRetrying(false);
+                }
+              }}
+            >
+              <RotateCcw className="h-4 w-4" aria-hidden />
+              {retryLabel}
+            </button>
+          ) : null}
+          <RefreshButton onClick={onRefresh} />
+        </div>
       </div>
       <Panel title={`Job #${jobId}`} className="p-3 sm:p-4">
         {detail}
@@ -727,6 +781,7 @@ function JobDetailStatus({
 
 function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: boolean }) {
   const login = user?.login ? `@${user.login}` : loading ? "Loading profile..." : "GitHub OAuth";
+  const mode = user?.is_admin ? "admin" : "read-only";
   const avatar = user?.avatar_url ? (
     <img className="h-10 w-10 rounded-full border border-slate-700 bg-slate-800" src={user.avatar_url} alt={user.login ? `${user.login} avatar` : ""} referrerPolicy="no-referrer" />
   ) : (
@@ -746,7 +801,7 @@ function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: b
       <ShieldCheck className="hidden h-4 w-4 shrink-0 sm:block" aria-hidden />
       <div className="hidden min-w-0 text-right sm:block">
         {identity}
-        <div className="text-xs text-slate-400">Signed in · read-only</div>
+        <div className="text-xs text-slate-400">Signed in · {mode}</div>
       </div>
       {avatar}
     </div>
@@ -1572,7 +1627,9 @@ export {
   JobsList,
   ProductMeta,
   StatusBadge,
+  UserMenu,
   buildJobQuery,
+  isRetryableStatus,
   groupSessionEvents,
   groupTranscriptEntries,
   formatRuntimeUsageSeconds,

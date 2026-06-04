@@ -35,6 +35,7 @@ from .dashboard_data import (
 )
 from .monitor import monitor
 from .observability import list_alerts, recent_process_samples
+from .queue import JobQueue
 
 
 DEFAULT_HOST = os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_HOST", "127.0.0.1")
@@ -60,6 +61,8 @@ class DashboardConfig:
         allowed_users: set[str] | None = None,
         allowed_orgs: set[str] | None = None,
         allowed_teams: set[str] | None = None,
+        admin_users: set[str] | None = None,
+        admin_teams: set[str] | None = None,
         require_auth: bool = True,
         static_dir: str | Path | None = None,
     ) -> None:
@@ -70,6 +73,8 @@ class DashboardConfig:
         self.allowed_users = allowed_users if allowed_users is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS")
         self.allowed_orgs = allowed_orgs if allowed_orgs is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS")
         self.allowed_teams = allowed_teams if allowed_teams is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS")
+        self.admin_users = admin_users if admin_users is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS")
+        self.admin_teams = admin_teams if admin_teams is not None else _csv_env("GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS")
         self.require_auth = require_auth
         self.static_dir = Path(static_dir or os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_STATIC_DIR", Path(__file__).with_name("dashboard_static"))).expanduser()
 
@@ -80,6 +85,10 @@ class DashboardConfig:
     @property
     def has_authorization_policy(self) -> bool:
         return bool(self.allowed_users or self.allowed_orgs or self.allowed_teams)
+
+    @property
+    def has_admin_policy(self) -> bool:
+        return bool(self.admin_users or self.admin_teams)
 
 
 def _csv_env(name: str) -> set[str]:
@@ -157,12 +166,13 @@ def _unsign(config: DashboardConfig, value: str) -> str | None:
     return raw if hmac.compare_digest(digest, expected) else None
 
 
-def _encode_session(user: dict[str, Any]) -> str:
+def _encode_session(user: dict[str, Any], *, is_admin: bool = False) -> str:
     payload = {
         "v": SESSION_VERSION,
         "login": str(user.get("login", "")).lower(),
         "avatar_url": str(user.get("avatar_url", "")),
         "html_url": str(user.get("html_url", "")),
+        "is_admin": bool(is_admin),
     }
     data = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
@@ -182,17 +192,19 @@ def _decode_session(value: str) -> dict[str, Any] | None:
         "login": login,
         "avatar_url": str(payload.get("avatar_url") or fallback["avatar_url"]),
         "html_url": str(payload.get("html_url") or fallback["html_url"]),
+        "is_admin": bool(payload.get("is_admin", False)),
     }
 
 
-def _profile_from_login(login: str) -> dict[str, str]:
+def _profile_from_login(login: str) -> dict[str, Any]:
     user = str(login).lower()
     if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?", user):
-        return {"login": user, "avatar_url": "", "html_url": ""}
+        return {"login": user, "avatar_url": "", "html_url": "", "is_admin": False}
     return {
         "login": user,
         "avatar_url": f"https://github.com/{user}.png?size=80",
         "html_url": f"https://github.com/{user}",
+        "is_admin": False,
     }
 
 
@@ -248,6 +260,19 @@ def _is_allowed(config: DashboardConfig, login: str, token: str | None = None) -
     return not config.has_authorization_policy
 
 
+def _is_admin(config: DashboardConfig, login: str, token: str | None = None) -> bool:
+    user = login.lower()
+    if config.admin_users and user in config.admin_users:
+        return True
+    if config.admin_teams and token:
+        try:
+            teams = _github_json(GITHUB_TEAMS_URL, token)
+        except (urllib.error.URLError, TimeoutError):
+            return False
+        return any(key in config.admin_teams for key in (_team_key(team) for team in teams if isinstance(team, dict)) if key)
+    return False
+
+
 def create_app(config: DashboardConfig | None = None) -> FastAPI:
     config = config or DashboardConfig()
     app = FastAPI(title="GitHub Agent Bridge Dashboard API")
@@ -260,10 +285,16 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         profile = await current_profile(request)
         return str(profile["login"])
 
+    async def current_admin_profile(request: Request) -> dict[str, Any]:
+        profile = await current_profile(request)
+        if not profile.get("is_admin"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin_required")
+        return profile
+
     async def current_profile(request: Request) -> dict[str, Any]:
         cfg: DashboardConfig = request.app.state.dashboard_config
         if not cfg.require_auth:
-            return {"login": "test", "avatar_url": "", "html_url": ""}
+            return {"login": "test", "avatar_url": "", "html_url": "", "is_admin": True}
         signed = request.cookies.get(SESSION_COOKIE)
         if not signed or not cfg.secret_key:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not_authenticated")
@@ -295,7 +326,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "db_exists": bool(metrics.get("db_exists")),
             "schema_ok": bool(metrics.get("schema_ok", True)),
             "oauth_configured": config.oauth_ready,
-            "read_only": True,
+            "read_only": False,
         }
 
     def dashboard_index() -> FileResponse:
@@ -320,7 +351,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
 
     @app.get("/api/status")
     def api_status(_: str = Depends(current_user)) -> dict[str, Any]:
-        return {"service": "github-agent-bridge-dashboard", "read_only": True, "metrics": inspect_db_read_only(config.db)}
+        return {"service": "github-agent-bridge-dashboard", "read_only": False, "admin_actions": ["retry_job"], "metrics": inspect_db_read_only(config.db)}
 
     @app.get("/api/about")
     def api_about(_: str = Depends(current_user)) -> dict[str, Any]:
@@ -376,6 +407,15 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     @app.get("/api/jobs/{job_id}/logs")
     def api_job_logs(job_id: int, limit: int = 100, _: str = Depends(current_user)) -> dict[str, Any]:
         return {"logs": job_logs(config.db, job_id, limit=limit)}
+
+    @app.post("/api/jobs/{job_id}/retry")
+    def api_job_retry(job_id: int, profile: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
+        if get_job_detail(config.db, job_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+        if not JobQueue(config.db).retry(job_id, actor=str(profile["login"])):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="job_not_retryable")
+        job = get_job_detail(config.db, job_id)
+        return {"job": job, "detail": "job_requeued"}
 
     @app.get("/api/jobs/{job_id}/session")
     def api_job_session(job_id: int, _: str = Depends(current_user)) -> dict[str, Any]:
@@ -456,7 +496,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="oauth_not_configured")
         state = secrets.token_urlsafe(24)
         scopes = ["read:user"]
-        if config.allowed_orgs or config.allowed_teams:
+        if config.allowed_orgs or config.allowed_teams or config.admin_teams:
             scopes.append("read:org")
         params = urllib.parse.urlencode({"client_id": config.oauth_client_id, "scope": " ".join(scopes), "state": state})
         response = RedirectResponse(f"{GITHUB_AUTHORIZE_URL}?{params}", status_code=status.HTTP_302_FOUND)
@@ -475,8 +515,9 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         login = str(user.get("login", ""))
         if not login or not _is_allowed(config, login, token):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_authorized")
+        is_admin = _is_admin(config, login, token)
         response = RedirectResponse("/", status_code=status.HTTP_302_FOUND)
-        response.set_cookie(SESSION_COOKIE, _sign(config, _encode_session(user)), httponly=True, secure=True, samesite="lax")
+        response.set_cookie(SESSION_COOKIE, _sign(config, _encode_session(user, is_admin=is_admin)), httponly=True, secure=True, samesite="lax")
         response.delete_cookie(OAUTH_STATE_COOKIE)
         return response
 

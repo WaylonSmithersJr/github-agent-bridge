@@ -620,6 +620,12 @@ function App() {
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
     queryClient.invalidateQueries({ queryKey: ["metrics"] });
   }, [queryClient]);
+  const dismissJob = React.useCallback(async (jobId: number) => {
+    const payload = await api<{ job: Job }>(`/api/jobs/${jobId}/dismiss`, { method: "POST" });
+    queryClient.setQueryData<{ job: Job }>(["job", jobId], { job: payload.job });
+    queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["metrics"] });
+  }, [queryClient]);
   const moderateKnowledgeProposal = React.useCallback(async (proposalId: string, action: "approve" | "reject") => {
     await api<{ proposal: KnowledgeProposal }>(`/api/knowledge/proposals/${encodeURIComponent(proposalId)}/${action}`, { method: "POST" });
     queryClient.invalidateQueries({ queryKey: ["knowledge"] });
@@ -703,6 +709,7 @@ function App() {
             selectedJob={selectedJob}
             user={me.data?.user}
             onRetry={retryJob}
+            onDismiss={dismissJob}
             onRefresh={() => {
               detail.refetch();
               session.refetch();
@@ -741,7 +748,7 @@ function App() {
               <Panel title="Recent jobs" flushHeader>
                 <Filters filters={filters} actorOptions={actorOptions.data?.actors ?? []} onChange={applyFilters} />
                 {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-                <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} now={now} user={me.data?.user} onRetry={retryJob} />
+                <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} now={now} user={me.data?.user} onRetry={retryJob} onDismiss={dismissJob} />
                 {jobRows.length >= jobLimit ? (
                   <div className="mt-3 flex justify-center">
                     <button className="inline-flex h-9 items-center justify-center rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" type="button" onClick={() => setJobLimit((current) => current + jobLimitStep)}>
@@ -823,6 +830,7 @@ function JobDetailPage({
   selectedJob,
   user,
   onRetry,
+  onDismiss,
   onRefresh,
 }: {
   jobId: number;
@@ -830,11 +838,14 @@ function JobDetailPage({
   selectedJob: Job | null;
   user: UserProfile | undefined;
   onRetry: (jobId: number) => Promise<void>;
+  onDismiss: (jobId: number) => Promise<void>;
   onRefresh: () => void;
 }) {
   const [retrying, setRetrying] = React.useState(false);
+  const [dismissing, setDismissing] = React.useState(false);
   const canRetry = Boolean(user?.is_admin && selectedJob && isRetryableStatus(selectedJob.status));
   const retryLabel = retrying ? "Retrying..." : "Retry";
+  const dismissLabel = dismissing ? "Dismissing..." : "Dismiss";
   return (
     <div className="grid min-w-0 gap-3 sm:gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -860,6 +871,25 @@ function JobDetailPage({
             >
               <RotateCcw className="h-4 w-4" aria-hidden />
               {retryLabel}
+            </button>
+          ) : null}
+          {canRetry ? (
+            <button
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-semibold text-foreground hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              disabled={dismissing}
+              onClick={async () => {
+                if (!window.confirm(`Dismiss job #${jobId}?`)) return;
+                setDismissing(true);
+                try {
+                  await onDismiss(jobId);
+                } finally {
+                  setDismissing(false);
+                }
+              }}
+            >
+              <CheckCircle2 className="h-4 w-4" aria-hidden />
+              {dismissLabel}
             </button>
           ) : null}
           <RefreshButton onClick={onRefresh} />
@@ -1357,6 +1387,7 @@ function JobsList({
   now,
   user,
   onRetry,
+  onDismiss,
 }: {
   jobs: Job[];
   loading: boolean;
@@ -1364,9 +1395,12 @@ function JobsList({
   now: number;
   user?: UserProfile;
   onRetry?: (jobId: number) => Promise<void>;
+  onDismiss?: (jobId: number) => Promise<void>;
 }) {
   const [retryingJobId, setRetryingJobId] = React.useState<number | null>(null);
+  const [dismissingJobId, setDismissingJobId] = React.useState<number | null>(null);
   const canRetryFromList = Boolean(user?.is_admin && onRetry);
+  const canDismissFromList = Boolean(user?.is_admin && onDismiss);
   const retryJobFromList = React.useCallback(async (jobId: number) => {
     if (!onRetry) return;
     setRetryingJobId(jobId);
@@ -1376,6 +1410,15 @@ function JobsList({
       setRetryingJobId(null);
     }
   }, [onRetry]);
+  const dismissJobFromList = React.useCallback(async (jobId: number) => {
+    if (!onDismiss) return;
+    setDismissingJobId(jobId);
+    try {
+      await onDismiss(jobId);
+    } finally {
+      setDismissingJobId(null);
+    }
+  }, [onDismiss]);
 
   if (loading && jobs.length === 0) return <EmptyState text="Loading jobs..." />;
   if (jobs.length === 0) return <EmptyState text="No jobs match the current filters." />;
@@ -1383,7 +1426,18 @@ function JobsList({
     <>
       <div className="grid gap-2 md:hidden">
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} onViewJob={onViewJob} now={now} canRetry={canRetryFromList && isRetryableStatus(job.status)} retrying={retryingJobId === job.id} onRetry={retryJobFromList} />
+          <JobCard
+            key={job.id}
+            job={job}
+            onViewJob={onViewJob}
+            now={now}
+            canRetry={canRetryFromList && isRetryableStatus(job.status)}
+            retrying={retryingJobId === job.id}
+            onRetry={retryJobFromList}
+            canDismiss={canDismissFromList && isRetryableStatus(job.status)}
+            dismissing={dismissingJobId === job.id}
+            onDismiss={dismissJobFromList}
+          />
         ))}
       </div>
       <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
@@ -1429,7 +1483,10 @@ function JobsList({
                 <td className="px-2 py-3">{formatSeconds(jobRuntimeSeconds(job, now))}</td>
                 <td className="px-2 py-3 font-mono text-xs"><TimeText value={job.updated_at} compact relative now={now} /></td>
                 <td className="px-2 py-3 text-right">
-                  <RetryJobButton jobId={job.id} canRetry={canRetryFromList && isRetryableStatus(job.status)} retrying={retryingJobId === job.id} onRetry={retryJobFromList} compact />
+                  <div className="inline-flex items-center gap-1">
+                    <RetryJobButton jobId={job.id} canRetry={canRetryFromList && isRetryableStatus(job.status)} retrying={retryingJobId === job.id} onRetry={retryJobFromList} compact />
+                    <DismissJobButton jobId={job.id} canDismiss={canDismissFromList && isRetryableStatus(job.status)} dismissing={dismissingJobId === job.id} onDismiss={dismissJobFromList} compact />
+                  </div>
                 </td>
               </tr>
             ))}
@@ -1447,6 +1504,9 @@ function JobCard({
   canRetry,
   retrying,
   onRetry,
+  canDismiss,
+  dismissing,
+  onDismiss,
 }: {
   job: Job;
   onViewJob: (id: number) => void;
@@ -1454,6 +1514,9 @@ function JobCard({
   canRetry: boolean;
   retrying: boolean;
   onRetry: (jobId: number) => Promise<void>;
+  canDismiss: boolean;
+  dismissing: boolean;
+  onDismiss: (jobId: number) => Promise<void>;
 }) {
   return (
     <article className="rounded-md border border-border bg-white shadow-[0_1px_0_rgba(15,23,42,0.03)]">
@@ -1478,9 +1541,10 @@ function JobCard({
           <MiniStat label="Updated" value={<TimeText value={job.updated_at} compact relative now={now} />} />
         </div>
       </button>
-      {canRetry ? (
-        <div className="border-t border-border px-3 py-2">
+      {canRetry || canDismiss ? (
+        <div className="flex flex-wrap gap-2 border-t border-border px-3 py-2">
           <RetryJobButton jobId={job.id} canRetry={canRetry} retrying={retrying} onRetry={onRetry} />
+          <DismissJobButton jobId={job.id} canDismiss={canDismiss} dismissing={dismissing} onDismiss={onDismiss} />
         </div>
       ) : null}
     </article>
@@ -1519,6 +1583,43 @@ function RetryJobButton({
       }}
     >
       <RotateCcw className="h-4 w-4" aria-hidden />
+      <span className={cn(compact && "sr-only")}>{label}</span>
+    </button>
+  );
+}
+
+function DismissJobButton({
+  jobId,
+  canDismiss,
+  dismissing,
+  onDismiss,
+  compact = false,
+}: {
+  jobId: number;
+  canDismiss: boolean;
+  dismissing: boolean;
+  onDismiss: (jobId: number) => Promise<void>;
+  compact?: boolean;
+}) {
+  if (!canDismiss) return null;
+  const label = dismissing ? "Dismissing..." : "Dismiss";
+  return (
+    <button
+      className={cn(
+        "inline-flex h-8 items-center justify-center gap-2 rounded-md border border-border text-sm font-semibold text-foreground hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60",
+        compact ? "w-8 px-0" : "px-3",
+      )}
+      type="button"
+      disabled={dismissing}
+      aria-label={`Dismiss job #${jobId}`}
+      title={`Dismiss job #${jobId}`}
+      onClick={async (event) => {
+        event.stopPropagation();
+        if (!window.confirm(`Dismiss job #${jobId}?`)) return;
+        await onDismiss(jobId);
+      }}
+    >
+      <CheckCircle2 className="h-4 w-4" aria-hidden />
       <span className={cn(compact && "sr-only")}>{label}</span>
     </button>
   );

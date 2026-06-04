@@ -47,6 +47,7 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
     assert response.json()["read_only"] is False
     assert response.json()["admin_actions"] == [
         "retry_job",
+        "dismiss_job",
         "approve_knowledge_proposal",
         "reject_knowledge_proposal",
         "delete_knowledge_rule",
@@ -597,6 +598,42 @@ def test_dashboard_retry_rejects_non_retryable_jobs(tmp_path):
 
     assert response.status_code == 409
     assert response.json()["detail"] == "job_not_retryable"
+
+
+def test_dashboard_dismiss_requires_admin_and_marks_recoverable_job_done(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    q.finish(job.id, "blocked", "failed", "boom")
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+
+    forbidden = client.post(f"/api/jobs/{job.id}/dismiss")
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+    response = client.post(f"/api/jobs/{job.id}/dismiss")
+    dismissed = client.get(f"/api/jobs/{job.id}").json()["job"]
+
+    assert forbidden.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["job"]["status"] == "done"
+    assert dismissed["last_error"] is None
+    assert dismissed["worklog"][-1]["phase"] == "dismissed"
+    assert dismissed["worklog"][-1]["detail"] == "dismissed by @alice"
+
+
+def test_dashboard_dismiss_rejects_non_recoverable_jobs(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+
+    response = client.post(f"/api/jobs/{job.id}/dismiss")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "job_not_dismissable"
 
 
 def test_dashboard_oauth_login_uses_minimal_scope_for_user_allowlist(tmp_path):

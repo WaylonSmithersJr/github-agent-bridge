@@ -7,10 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from github_agent_bridge import __version__
+from github_agent_bridge import feedback
 from github_agent_bridge.backend import DashboardConfig, _encode_session, _is_admin, _is_allowed, _session_stream_events, _sign, create_app
 from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_job_actors, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
-from github_agent_bridge.models import Notification
+from github_agent_bridge.models import GitHubContext, Notification
 from github_agent_bridge.observability import record_monitor_observation
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
@@ -44,7 +45,12 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["read_only"] is False
-    assert response.json()["admin_actions"] == ["retry_job"]
+    assert response.json()["admin_actions"] == [
+        "retry_job",
+        "approve_knowledge_proposal",
+        "reject_knowledge_proposal",
+        "delete_knowledge_rule",
+    ]
     assert response.json()["metrics"]["pending"] == 1
     assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"
     assert jobs.json()["jobs"][0]["trigger_actor"] is None
@@ -91,6 +97,21 @@ def test_dashboard_serves_dedicated_job_frontend_route(tmp_path):
     app = create_app(DashboardConfig(db=db, static_dir=static_dir, require_auth=False))
 
     response = TestClient(app).get("/jobs/1")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "root" in response.text
+
+
+def test_dashboard_serves_dedicated_knowledge_frontend_route(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, static_dir=static_dir, require_auth=False))
+
+    response = TestClient(app).get("/knowledge")
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -496,6 +517,51 @@ def test_dashboard_me_exposes_admin_mode_from_signed_session(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["user"]["is_admin"] is True
+
+
+def test_dashboard_knowledge_lists_and_admin_moderates_feedback(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(
+        db,
+        notif(),
+        GitHubContext(["https://github.com/gisce/erp/pull/1#issuecomment-10"], "gisce/erp", 1, comment_id=10),
+        "reply_comment",
+        "auto_trusted",
+        "review_only",
+    )
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+    proposal = feedback.store_proposal(
+        db,
+        {
+            "event_id": event["id"],
+            "is_feedback": True,
+            "scope": "repo:gisce/erp",
+            "type": "operating_rule",
+            "rule": "Keep knowledge management auditable.",
+            "confidence": 0.7,
+            "reason": "Human correction should be reused.",
+        },
+        auto_approve_confidence=0.9,
+    )
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+
+    listing = client.get("/api/knowledge", params={"repo": "gisce/erp"}).json()
+    forbidden = client.post(f"/api/knowledge/proposals/{proposal['id']}/approve")
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+    approved = client.post(f"/api/knowledge/proposals/{proposal['id']}/approve")
+    rules = client.get("/api/knowledge", params={"repo": "gisce/erp"}).json()["rules"]
+    deleted = client.delete(f"/api/knowledge/rules/{rules[0]['id']}")
+
+    assert listing["repositories"] == ["gisce/erp"]
+    assert listing["proposals"][0]["status"] == "proposed"
+    assert forbidden.status_code == 403
+    assert approved.status_code == 200
+    assert approved.json()["proposal"]["status"] == "approved"
+    assert deleted.status_code == 200
+    assert client.get("/api/knowledge", params={"repo": "gisce/erp"}).json()["rules"] == []
 
 
 def test_dashboard_retry_requires_admin_and_requeues_retryable_job(tmp_path):

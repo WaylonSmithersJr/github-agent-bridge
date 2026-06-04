@@ -87,6 +87,40 @@ def test_add_rule_rejects_invalid_confidence(tmp_path):
         feedback.add_rule(db, "repo:gisce/erp", "style_preference", "Rule", 1.7)
 
 
+def test_knowledge_moderation_approves_rejects_and_deletes_rules(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+    proposed = feedback.store_proposal(
+        db,
+        {
+            "event_id": event["id"],
+            "is_feedback": True,
+            "scope": "repo:gisce/erp",
+            "type": "style_preference",
+            "rule": "Prefer compact feedback in GitHub follow-ups.",
+            "confidence": 0.7,
+            "reason": "Useful recurring style correction.",
+        },
+        auto_approve_confidence=0.9,
+    )
+
+    rejected = feedback.reject_proposal(db, proposed["id"])
+    approved = feedback.approve_proposal(db, proposed["id"])
+    rules = feedback.list_rules(db, "repo:gisce/erp", min_confidence=0)
+
+    assert rejected is not None
+    assert rejected["status"] == "rejected"
+    assert approved is not None
+    assert approved["status"] == "approved"
+    assert len(rules) == 1
+    assert feedback.list_repositories(db) == ["gisce/erp"]
+    assert feedback.delete_rule(db, rules[0]["id"]) is True
+    assert feedback.list_rules(db, "repo:gisce/erp", min_confidence=0) == []
+    assert feedback.delete_rule(db, rules[0]["id"]) is False
+
+
 def test_openclaw_json_payload_text_is_extracted():
     raw = '{"result":{"payloads":[{"text":"{\\\"is_feedback\\\":false,\\\"scope\\\":\\\"global\\\",\\\"type\\\":\\\"domain_context\\\",\\\"rule\\\":\\\"\\\",\\\"confidence\\\":0,\\\"reason\\\":\\\"shape test\\\"}"}]}}'
 

@@ -4,13 +4,16 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ActorFilter,
   JobsList,
+  KnowledgeProposals,
   ProductMeta,
   StatusBadge,
   UserMenu,
   buildJobQuery,
+  buildKnowledgeQuery,
   formatRuntimeUsageSeconds,
   groupSessionEvents,
   groupTranscriptEntries,
+  isKnowledgePath,
   isRetryableStatus,
   metricsSummaryPath,
   runtimeBucketLabel,
@@ -33,6 +36,13 @@ describe("dashboard routing and API query helpers", () => {
         24,
       ),
     ).toBe("/api/jobs?status=pending&repo=pilipilisbot%2Fgithub-agent-bridge&action=open_issue&intent=work_allowed&actor=ecarreras&limit=24");
+  });
+
+  it("builds knowledge queries and recognizes the knowledge route", () => {
+    expect(buildKnowledgeQuery(" pilipilisbot/github-agent-bridge ", " proposed ", 25)).toBe("/api/knowledge?repo=pilipilisbot%2Fgithub-agent-bridge&status=proposed&limit=25");
+    expect(isKnowledgePath("/knowledge")).toBe(true);
+    expect(isKnowledgePath("/knowledge/")).toBe(true);
+    expect(isKnowledgePath("/knowledge/extra")).toBe(false);
   });
 
   it("recognizes only canonical job detail routes", () => {
@@ -257,6 +267,39 @@ describe("actor filter", () => {
 
     fireEvent.click(screen.getByLabelText("Clear actor filter"));
     expect(screen.getByPlaceholderText("@login")).toHaveValue("");
+  });
+});
+
+describe("knowledge proposals", () => {
+  it("shows moderation actions only to admins for proposed rules", async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn().mockResolvedValue(undefined);
+    const onReject = vi.fn().mockResolvedValue(undefined);
+    const proposals = [
+      {
+        id: "feedback-proposal-1",
+        event_id: "event-1",
+        created_at: "2026-06-04T10:00:00Z",
+        updated_at: "2026-06-04T10:01:00Z",
+        status: "proposed",
+        scope: "repo:pilipilisbot/github-agent-bridge",
+        type: "operating_rule",
+        confidence: 0.72,
+        rule: "Keep knowledge moderation auditable.",
+        reason: "A reusable process correction.",
+        model: "gpt-test",
+        error: null,
+      },
+    ];
+
+    const { rerender } = render(<KnowledgeProposals proposals={proposals} loading={false} isAdmin={false} now={Date.parse("2026-06-04T10:02:00Z")} onApprove={onApprove} onReject={onReject} />);
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+
+    rerender(<KnowledgeProposals proposals={proposals} loading={false} isAdmin={true} now={Date.parse("2026-06-04T10:02:00Z")} onApprove={onApprove} onReject={onReject} />);
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(onApprove).toHaveBeenCalledWith("feedback-proposal-1");
+    expect(onReject).not.toHaveBeenCalled();
   });
 });
 

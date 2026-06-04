@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, RotateCcw, Search, ShieldCheck, TerminalSquare, TimerReset, UserCircle2, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Brain, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, RotateCcw, Search, ShieldCheck, TerminalSquare, TimerReset, Trash2, UserCircle2, X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -221,6 +221,55 @@ type JobFilters = {
   action: string;
   intent: string;
   actor: string;
+};
+
+type KnowledgeProposal = {
+  id: string;
+  event_id: string;
+  created_at: string;
+  updated_at: string;
+  status: string;
+  scope: string;
+  type: string;
+  confidence: number;
+  rule: string;
+  reason: string;
+  model: string;
+  error: string | null;
+};
+
+type KnowledgeRule = {
+  id: string;
+  scope: string;
+  type: string;
+  confidence: number;
+  rule: string;
+  created_at: string;
+  last_seen: string;
+  source_events: string[];
+  observations: number;
+};
+
+type KnowledgeEvent = {
+  id: string;
+  occurred_at: string;
+  captured_at: string;
+  source: string;
+  scope: string;
+  actor: string;
+  comment: string;
+  context: Record<string, unknown>;
+  classification: string;
+  confidence: number;
+  memorable: boolean;
+};
+
+type KnowledgeResponse = {
+  repositories: string[];
+  events: KnowledgeEvent[];
+  proposals: KnowledgeProposal[];
+  rules: KnowledgeRule[];
+  summary: Record<string, number>;
 };
 
 const queryClient = new QueryClient({
@@ -450,6 +499,14 @@ function buildJobQuery(filters: JobFilters, limit: number) {
   return `/api/jobs?${params.toString()}`;
 }
 
+function buildKnowledgeQuery(repo: string, status: string, limit = 50) {
+  const params = new URLSearchParams();
+  if (repo.trim()) params.set("repo", repo.trim());
+  if (status.trim()) params.set("status", status.trim());
+  params.set("limit", String(limit));
+  return `/api/knowledge?${params.toString()}`;
+}
+
 function metricsSummaryPath(timezone = dashboardTimeZone) {
   return `/api/metrics/summary?timezone=${encodeURIComponent(timezone)}`;
 }
@@ -503,21 +560,38 @@ function selectedJobIdFromPath(pathname = window.location.pathname) {
   return match ? Number(match[1]) : null;
 }
 
+function isKnowledgePath(pathname = window.location.pathname) {
+  return /^\/knowledge\/?$/.test(pathname);
+}
+
+function repoFromScope(scope: string) {
+  return scope.startsWith("repo:") ? scope.slice("repo:".length) : scope;
+}
+
 function App() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = React.useState<JobFilters>({ status: "", repo: "", thread: "", action: "", intent: "", actor: "" });
   const [jobLimit, setJobLimit] = React.useState(initialJobLimit);
+  const [knowledgeRepo, setKnowledgeRepo] = React.useState("");
+  const [knowledgeStatus, setKnowledgeStatus] = React.useState("proposed");
   const [pathname, setPathname] = React.useState(() => window.location.pathname);
   const jobRouteId = selectedJobIdFromPath(pathname);
   const isJobDetailRoute = jobRouteId !== null;
+  const isKnowledgeRoute = isKnowledgePath(pathname);
+  const isDashboardRoute = !isJobDetailRoute && !isKnowledgeRoute;
   const selectedJobId = jobRouteId;
-  const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: !isJobDetailRoute });
+  const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: isDashboardRoute });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
   const about = useQuery({ queryKey: ["about"], queryFn: () => api<About>("/api/about") });
-  const actorOptions = useQuery({ queryKey: ["job-actors"], queryFn: () => api<{ actors: JobActor[] }>("/api/jobs/actors"), enabled: !isJobDetailRoute });
-  const jobs = useQuery({ queryKey: ["jobs", filters, jobLimit], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters, jobLimit)), enabled: !isJobDetailRoute });
-  const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: !isJobDetailRoute });
-  const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => api<{ alerts: AlertRecord[] }>("/api/alerts"), enabled: !isJobDetailRoute });
+  const actorOptions = useQuery({ queryKey: ["job-actors"], queryFn: () => api<{ actors: JobActor[] }>("/api/jobs/actors"), enabled: isDashboardRoute });
+  const jobs = useQuery({ queryKey: ["jobs", filters, jobLimit], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters, jobLimit)), enabled: isDashboardRoute });
+  const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: isDashboardRoute });
+  const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => api<{ alerts: AlertRecord[] }>("/api/alerts"), enabled: isDashboardRoute });
+  const knowledge = useQuery({
+    queryKey: ["knowledge", knowledgeRepo, knowledgeStatus],
+    queryFn: () => api<KnowledgeResponse>(buildKnowledgeQuery(knowledgeRepo, knowledgeStatus)),
+    enabled: isKnowledgeRoute,
+  });
   const detail = useQuery({
     queryKey: ["job", selectedJobId],
     queryFn: () => api<{ job: Job }>(`/api/jobs/${selectedJobId}`),
@@ -543,6 +617,14 @@ function App() {
     queryClient.setQueryData<{ job: Job }>(["job", jobId], { job: payload.job });
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
     queryClient.invalidateQueries({ queryKey: ["metrics"] });
+  }, [queryClient]);
+  const moderateKnowledgeProposal = React.useCallback(async (proposalId: string, action: "approve" | "reject") => {
+    await api<{ proposal: KnowledgeProposal }>(`/api/knowledge/proposals/${encodeURIComponent(proposalId)}/${action}`, { method: "POST" });
+    queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+  }, [queryClient]);
+  const deleteKnowledgeRule = React.useCallback(async (ruleId: string) => {
+    await api<{ detail: string }>(`/api/knowledge/rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" });
+    queryClient.invalidateQueries({ queryKey: ["knowledge"] });
   }, [queryClient]);
 
   React.useEffect(() => {
@@ -606,7 +688,13 @@ function App() {
             <h1 className="truncate text-xl font-semibold">GitHub Agent Bridge</h1>
             <ProductMeta about={about.data} />
           </div>
-          <UserMenu user={me.data?.user} loading={me.isLoading} />
+          <div className="flex min-w-0 items-center gap-3">
+            <nav className="hidden items-center gap-1 rounded-md border border-slate-800 bg-slate-900 p-1 md:flex" aria-label="Dashboard sections">
+              <HeaderLink href="/" active={isDashboardRoute}>Jobs</HeaderLink>
+              <HeaderLink href="/knowledge" active={isKnowledgeRoute}>Knowledge</HeaderLink>
+            </nav>
+            <UserMenu user={me.data?.user} loading={me.isLoading} />
+          </div>
         </div>
       </header>
 
@@ -624,6 +712,22 @@ function App() {
               sessionEvents.refetch();
               transcript.refetch();
             }}
+          />
+        ) : isKnowledgeRoute ? (
+          <KnowledgePage
+            data={knowledge.data}
+            loading={knowledge.isLoading}
+            error={knowledge.error}
+            repo={knowledgeRepo}
+            status={knowledgeStatus}
+            user={me.data?.user}
+            now={now}
+            onRepoChange={setKnowledgeRepo}
+            onStatusChange={setKnowledgeStatus}
+            onApprove={(proposalId) => moderateKnowledgeProposal(proposalId, "approve")}
+            onReject={(proposalId) => moderateKnowledgeProposal(proposalId, "reject")}
+            onDeleteRule={deleteKnowledgeRule}
+            onRefresh={() => knowledge.refetch()}
           />
         ) : (
           <>
@@ -696,6 +800,14 @@ function ProductMeta({ about }: { about: About | undefined }) {
         </a>
       ) : null}
     </p>
+  );
+}
+
+function HeaderLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+  return (
+    <a className={cn("rounded px-2.5 py-1.5 text-xs font-semibold", active ? "bg-white text-slate-950" : "text-slate-300 hover:bg-slate-800 hover:text-white")} href={href}>
+      {children}
+    </a>
   );
 }
 
@@ -777,6 +889,242 @@ function JobDetailStatus({
   if (selectedJobId !== null && loading) return <EmptyState text="Loading selected job..." />;
   if (selectedJobId !== null && error) return <Banner tone="error" text={`Job #${selectedJobId}: ${error.message}`} />;
   return <EmptyState text="Select a job to inspect its timeline, worklog and GitHub links." />;
+}
+
+function KnowledgePage({
+  data,
+  loading,
+  error,
+  repo,
+  status,
+  user,
+  now,
+  onRepoChange,
+  onStatusChange,
+  onApprove,
+  onReject,
+  onDeleteRule,
+  onRefresh,
+}: {
+  data: KnowledgeResponse | undefined;
+  loading: boolean;
+  error: Error | null;
+  repo: string;
+  status: string;
+  user: UserProfile | undefined;
+  now: number;
+  onRepoChange: (repo: string) => void;
+  onStatusChange: (status: string) => void;
+  onApprove: (proposalId: string) => Promise<void>;
+  onReject: (proposalId: string) => Promise<void>;
+  onDeleteRule: (ruleId: string) => Promise<void>;
+  onRefresh: () => void;
+}) {
+  const summary = data?.summary ?? {};
+  return (
+    <div className="grid min-w-0 gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <Brain className="h-5 w-5 text-muted" aria-hidden />
+            Acquired knowledge
+          </h2>
+          <p className="text-xs text-muted">Captured feedback, proposed rules and curated agent memory.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <a className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" href="/">
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+            Dashboard
+          </a>
+          <RefreshButton onClick={onRefresh} />
+        </div>
+      </div>
+
+      {error ? <Banner tone="error" text={error.message} /> : null}
+
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Knowledge metrics">
+        <Metric title="Proposed" value={summary.proposed ?? 0} icon={<Clock3 className="h-5 w-5" />} />
+        <Metric title="Approved" value={summary.approved ?? 0} icon={<CheckCircle2 className="h-5 w-5" />} />
+        <Metric title="Rules" value={summary.rules ?? 0} icon={<ShieldCheck className="h-5 w-5" />} />
+        <Metric title="Events" value={summary.events ?? 0} icon={<Activity className="h-5 w-5" />} />
+      </section>
+
+      <Panel title="Filters" className="p-3">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+          <Field label="Repository">
+            <select className="control" value={repo} onChange={(event) => onRepoChange(event.target.value)}>
+              <option value="">All repositories</option>
+              {(data?.repositories ?? []).map((item) => (
+                <option value={item} key={item}>{item}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Proposal status">
+            <select className="control" value={status} onChange={(event) => onStatusChange(event.target.value)}>
+              <option value="">All statuses</option>
+              <option value="proposed">proposed</option>
+              <option value="approved">approved</option>
+              <option value="rejected">rejected</option>
+              <option value="error">error</option>
+            </select>
+          </Field>
+        </div>
+      </Panel>
+
+      <Panel title="Rule proposals">
+        <KnowledgeProposals proposals={data?.proposals ?? []} loading={loading} isAdmin={Boolean(user?.is_admin)} now={now} onApprove={onApprove} onReject={onReject} />
+      </Panel>
+
+      <Panel title="Curated rules">
+        <KnowledgeRules rules={data?.rules ?? []} loading={loading} isAdmin={Boolean(user?.is_admin)} now={now} onDeleteRule={onDeleteRule} />
+      </Panel>
+
+      <Panel title="Captured events">
+        <KnowledgeEvents events={data?.events ?? []} loading={loading} now={now} />
+      </Panel>
+    </div>
+  );
+}
+
+function KnowledgeProposals({
+  proposals,
+  loading,
+  isAdmin,
+  now,
+  onApprove,
+  onReject,
+}: {
+  proposals: KnowledgeProposal[];
+  loading: boolean;
+  isAdmin: boolean;
+  now: number;
+  onApprove: (proposalId: string) => Promise<void>;
+  onReject: (proposalId: string) => Promise<void>;
+}) {
+  const [busyId, setBusyId] = React.useState<string | null>(null);
+  if (loading && proposals.length === 0) return <EmptyState text="Loading proposals..." />;
+  if (proposals.length === 0) return <EmptyState text="No proposals match the current filters." />;
+  return (
+    <div className="grid gap-2">
+      {proposals.map((proposal) => (
+        <article key={proposal.id} className="grid min-w-0 gap-2 rounded-md border border-border bg-white p-3">
+          <KnowledgeRowHeader scope={proposal.scope} type={proposal.type} confidence={proposal.confidence} status={proposal.status} timestamp={proposal.updated_at} now={now} />
+          <p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">{proposal.rule || proposal.reason || "No reusable rule proposed."}</p>
+          {proposal.reason ? <p className="min-w-0 break-words text-xs text-muted [overflow-wrap:anywhere]">{proposal.reason}</p> : null}
+          {proposal.error ? <Banner tone="error" text={proposal.error} /> : null}
+          {isAdmin && proposal.status === "proposed" ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-white disabled:opacity-60"
+                type="button"
+                disabled={busyId === proposal.id}
+                onClick={async () => {
+                  setBusyId(proposal.id);
+                  try {
+                    await onApprove(proposal.id);
+                  } finally {
+                    setBusyId(null);
+                  }
+                }}
+              >
+                <CheckCircle2 className="h-4 w-4" aria-hidden />
+                Approve
+              </button>
+              <button
+                className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50 disabled:opacity-60"
+                type="button"
+                disabled={busyId === proposal.id}
+                onClick={async () => {
+                  setBusyId(proposal.id);
+                  try {
+                    await onReject(proposal.id);
+                  } finally {
+                    setBusyId(null);
+                  }
+                }}
+              >
+                <X className="h-4 w-4" aria-hidden />
+                Reject
+              </button>
+            </div>
+          ) : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function KnowledgeRules({ rules, loading, isAdmin, now, onDeleteRule }: { rules: KnowledgeRule[]; loading: boolean; isAdmin: boolean; now: number; onDeleteRule: (ruleId: string) => Promise<void> }) {
+  const [busyId, setBusyId] = React.useState<string | null>(null);
+  if (loading && rules.length === 0) return <EmptyState text="Loading curated rules..." />;
+  if (rules.length === 0) return <EmptyState text="No curated rules match the current filters." />;
+  return (
+    <div className="grid gap-2">
+      {rules.map((rule) => (
+        <article key={rule.id} className="grid min-w-0 gap-2 rounded-md border border-border bg-white p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <KnowledgeRowHeader scope={rule.scope} type={rule.type} confidence={rule.confidence} status={`${rule.observations} observation${rule.observations === 1 ? "" : "s"}`} timestamp={rule.last_seen} now={now} />
+            {isAdmin ? (
+              <button
+                className="inline-flex h-8 items-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
+                type="button"
+                disabled={busyId === rule.id}
+                onClick={async () => {
+                  if (!window.confirm("Delete this curated rule?")) return;
+                  setBusyId(rule.id);
+                  try {
+                    await onDeleteRule(rule.id);
+                  } finally {
+                    setBusyId(null);
+                  }
+                }}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+                Delete
+              </button>
+            ) : null}
+          </div>
+          <p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">{rule.rule}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function KnowledgeEvents({ events, loading, now }: { events: KnowledgeEvent[]; loading: boolean; now: number }) {
+  if (loading && events.length === 0) return <EmptyState text="Loading captured events..." />;
+  if (events.length === 0) return <EmptyState text="No captured feedback events match the current filters." />;
+  return (
+    <div className="grid gap-2">
+      {events.map((event) => (
+        <details key={event.id} className="group rounded-md border border-border bg-white">
+          <summary className="grid cursor-pointer list-none gap-1 px-3 py-2 marker:hidden hover:bg-slate-50">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <span className="inline-flex min-w-0 items-center gap-2 font-mono text-xs font-semibold text-muted">
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" aria-hidden />
+                <span className="truncate">{repoFromScope(event.scope)}</span>
+              </span>
+              <span className="shrink-0 font-mono text-xs text-muted"><TimeText value={event.occurred_at} relative now={now} /></span>
+            </div>
+            <p className="line-clamp-2 break-words text-sm [overflow-wrap:anywhere]">{event.comment}</p>
+          </summary>
+          <pre className="max-h-72 overflow-auto border-t border-border bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-100">{JSON.stringify(event.context, null, 2)}</pre>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function KnowledgeRowHeader({ scope, type, confidence, status, timestamp, now }: { scope: string; type: string; confidence: number; status: string; timestamp: string; now: number }) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted">
+      <span className="truncate font-mono font-semibold text-foreground">{repoFromScope(scope)}</span>
+      <span className="rounded-sm border border-border px-1.5 py-0.5 font-mono">{type}</span>
+      <span className="rounded-sm border border-border px-1.5 py-0.5 font-mono">{Math.round(confidence * 100)}%</span>
+      <span className="rounded-sm border border-border px-1.5 py-0.5 font-mono">{status}</span>
+      <span className="font-mono"><TimeText value={timestamp} relative now={now} /></span>
+    </div>
+  );
 }
 
 function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: boolean }) {
@@ -1696,7 +2044,10 @@ export {
   ProductMeta,
   StatusBadge,
   UserMenu,
+  KnowledgeProposals,
   buildJobQuery,
+  buildKnowledgeQuery,
+  isKnowledgePath,
   isRetryableStatus,
   groupSessionEvents,
   groupTranscriptEntries,

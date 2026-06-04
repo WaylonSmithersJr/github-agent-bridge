@@ -100,6 +100,57 @@ def test_maybe_unlock_stale_kills_children_and_retries_jobs_when_enabled(tmp_pat
     assert '{"job_id":7,"requeued":true}' in output
 
 
+def test_sample_executor_activity_tracks_all_executor_children(tmp_path, monkeypatch):
+    config = make_config(tmp_path)
+    monkeypatch.setattr(monitor_alert, "has_child_processes", lambda pid: True)
+    monkeypatch.setattr(monitor_alert, "child_pids", lambda pid: [456, 789] if str(pid) == "123" else [])
+    monkeypatch.setattr(monitor_alert, "process_exists", lambda pid: True)
+    monkeypatch.setattr(monitor_alert, "proc_cmd", lambda pid: f"cmd {pid}")
+    monkeypatch.setattr(monitor_alert, "proc_cpu_ticks", lambda pid: {456: 10, 789: 20}[pid])
+    monkeypatch.setattr(monitor_alert, "proc_io_bytes", lambda pid: {456: 100, 789: 200}[pid])
+
+    output = monitor_alert.sample_executor_activity(config, main_pid="123", now=1000)
+
+    state = monitor_alert.load_proc_state(config.proc_state_file)
+    assert output == "proc sample: root_pids=456,789 active=True cpu_ticks=30 io_bytes=300\n"
+    assert state["root_pids"] == [456, 789]
+    assert state["pids"] == [456, 789]
+
+
+def test_process_sample_active_detects_second_child_activity():
+    previous = {
+        "root_pids": [456, 789],
+        "pids": [456, 789],
+        "cpu_ticks": 30,
+        "io_bytes": 300,
+    }
+    current = {
+        "root_pids": [456, 789],
+        "pids": [456, 789],
+        "cpu_ticks": 31,
+        "io_bytes": 300,
+    }
+
+    assert monitor_alert.process_sample_active(previous, current) is True
+
+
+def test_process_sample_active_accepts_legacy_single_root_state():
+    previous = {
+        "root_pid": 456,
+        "pids": [456],
+        "cpu_ticks": 30,
+        "io_bytes": 300,
+    }
+    current = {
+        "root_pids": [456],
+        "pids": [456],
+        "cpu_ticks": 30,
+        "io_bytes": 300,
+    }
+
+    assert monitor_alert.process_sample_active(previous, current) is False
+
+
 def test_maybe_unlock_stale_does_not_kill_active_child(tmp_path, monkeypatch):
     base = make_config(tmp_path)
     config = monitor_alert.AlertConfig(

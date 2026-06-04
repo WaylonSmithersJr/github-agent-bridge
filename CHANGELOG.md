@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.28.0 (2026-06-04)
+
+### Bug Fixes
+
+- Sample all stale executor children
+  ([`0d035e3`](https://github.com/pilipilisbot/github-agent-bridge/commit/0d035e30324a1dd1d66dc355bc7bf54222500448))
+
+### Features
+
+- Add clear button for job filters
+  ([`bcdb77c`](https://github.com/pilipilisbot/github-agent-bridge/commit/bcdb77ce32042a177d5e61be713c4054277dd2b7))
+
+
 ## v0.27.0 (2026-06-04)
 
 ### Features

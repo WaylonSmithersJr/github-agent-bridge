@@ -272,6 +272,8 @@ type KnowledgeResponse = {
   summary: Record<string, number>;
 };
 
+type KnowledgeTab = "proposals" | "rules" | "events";
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -688,17 +690,12 @@ function App() {
             <h1 className="truncate text-xl font-semibold">GitHub Agent Bridge</h1>
             <ProductMeta about={about.data} />
           </div>
-          <div className="flex min-w-0 items-center gap-3">
-            <nav className="hidden items-center gap-1 rounded-md border border-slate-800 bg-slate-900 p-1 md:flex" aria-label="Dashboard sections">
-              <HeaderLink href="/" active={isDashboardRoute}>Jobs</HeaderLink>
-              <HeaderLink href="/knowledge" active={isKnowledgeRoute}>Knowledge</HeaderLink>
-            </nav>
-            <UserMenu user={me.data?.user} loading={me.isLoading} />
-          </div>
+          <UserMenu user={me.data?.user} loading={me.isLoading} />
         </div>
       </header>
 
       <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-3 py-4 sm:px-4 md:px-6 md:py-5">
+        <SectionNav isDashboardRoute={isDashboardRoute} isKnowledgeRoute={isKnowledgeRoute} />
         {jobRouteId !== null ? (
           <JobDetailPage
             jobId={jobRouteId}
@@ -803,9 +800,18 @@ function ProductMeta({ about }: { about: About | undefined }) {
   );
 }
 
-function HeaderLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+function SectionNav({ isDashboardRoute, isKnowledgeRoute }: { isDashboardRoute: boolean; isKnowledgeRoute: boolean }) {
   return (
-    <a className={cn("rounded px-2.5 py-1.5 text-xs font-semibold", active ? "bg-white text-slate-950" : "text-slate-300 hover:bg-slate-800 hover:text-white")} href={href}>
+    <nav className="flex min-w-0 rounded-lg border border-border bg-panel p-1 shadow-sm" aria-label="Dashboard sections">
+      <SectionLink href="/" active={isDashboardRoute}>Jobs</SectionLink>
+      <SectionLink href="/knowledge" active={isKnowledgeRoute}>Knowledge</SectionLink>
+    </nav>
+  );
+}
+
+function SectionLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+  return (
+    <a className={cn("inline-flex h-8 flex-1 items-center justify-center rounded-md px-3 text-sm font-semibold sm:flex-none", active ? "bg-primary text-white shadow-sm" : "text-muted hover:bg-slate-50 hover:text-foreground")} href={href}>
       {children}
     </a>
   );
@@ -921,6 +927,12 @@ function KnowledgePage({
   onRefresh: () => void;
 }) {
   const summary = data?.summary ?? {};
+  const [activeTab, setActiveTab] = React.useState<KnowledgeTab>("proposals");
+  const tabs: Array<{ id: KnowledgeTab; label: string; count: number }> = [
+    { id: "proposals", label: "Proposals", count: data?.proposals.length ?? 0 },
+    { id: "rules", label: "Rules", count: data?.rules.length ?? 0 },
+    { id: "events", label: "Events", count: data?.events.length ?? 0 },
+  ];
   return (
     <div className="grid min-w-0 gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -950,7 +962,7 @@ function KnowledgePage({
       </section>
 
       <Panel title="Filters" className="p-3">
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+        <div className={cn("grid gap-3", activeTab === "proposals" ? "md:grid-cols-[minmax(0,1fr)_220px]" : "md:grid-cols-[minmax(0,1fr)]")}>
           <Field label="Repository">
             <select className="control" value={repo} onChange={(event) => onRepoChange(event.target.value)}>
               <option value="">All repositories</option>
@@ -959,28 +971,44 @@ function KnowledgePage({
               ))}
             </select>
           </Field>
-          <Field label="Proposal status">
-            <select className="control" value={status} onChange={(event) => onStatusChange(event.target.value)}>
-              <option value="">All statuses</option>
-              <option value="proposed">proposed</option>
-              <option value="approved">approved</option>
-              <option value="rejected">rejected</option>
-              <option value="error">error</option>
-            </select>
-          </Field>
+          {activeTab === "proposals" ? (
+            <Field label="Proposal status">
+              <select className="control" value={status} onChange={(event) => onStatusChange(event.target.value)}>
+                <option value="">All statuses</option>
+                <option value="proposed">proposed</option>
+                <option value="approved">approved</option>
+                <option value="rejected">rejected</option>
+                <option value="error">error</option>
+              </select>
+            </Field>
+          ) : null}
         </div>
       </Panel>
 
-      <Panel title="Rule proposals">
-        <KnowledgeProposals proposals={data?.proposals ?? []} loading={loading} isAdmin={Boolean(user?.is_admin)} now={now} onApprove={onApprove} onReject={onReject} />
-      </Panel>
-
-      <Panel title="Curated rules">
-        <KnowledgeRules rules={data?.rules ?? []} loading={loading} isAdmin={Boolean(user?.is_admin)} now={now} onDeleteRule={onDeleteRule} />
-      </Panel>
-
-      <Panel title="Captured events">
-        <KnowledgeEvents events={data?.events ?? []} loading={loading} now={now} />
+      <Panel
+        title="Knowledge records"
+        action={
+          <div className="flex max-w-full flex-wrap rounded-md border border-border bg-white p-0.5" role="tablist" aria-label="Knowledge record type">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={cn("inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-xs font-semibold", activeTab === tab.id ? "bg-primary text-white" : "text-muted hover:bg-slate-50 hover:text-foreground")}
+                type="button"
+                role="tab"
+                aria-label={`${tab.label} (${tab.count})`}
+                aria-selected={activeTab === tab.id}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                <span>{tab.label}</span>
+                <span className={cn("rounded-sm border px-1 font-mono text-[10px]", activeTab === tab.id ? "border-white/40 text-white" : "border-border text-muted")}>{tab.count}</span>
+              </button>
+            ))}
+          </div>
+        }
+      >
+        {activeTab === "proposals" ? <KnowledgeProposals proposals={data?.proposals ?? []} loading={loading} isAdmin={Boolean(user?.is_admin)} now={now} onApprove={onApprove} onReject={onReject} /> : null}
+        {activeTab === "rules" ? <KnowledgeRules rules={data?.rules ?? []} loading={loading} isAdmin={Boolean(user?.is_admin)} now={now} onDeleteRule={onDeleteRule} /> : null}
+        {activeTab === "events" ? <KnowledgeEvents events={data?.events ?? []} loading={loading} now={now} /> : null}
       </Panel>
     </div>
   );
@@ -1173,7 +1201,7 @@ function JobsHeader({ count, limit, loading, onRefresh }: { count: number; limit
 function Panel({ title, action, children, className, flushHeader = false }: { title: string; action?: React.ReactNode; children: React.ReactNode; className?: string; flushHeader?: boolean }) {
   return (
     <section className={cn("min-w-0 rounded-lg border border-border bg-panel p-4 shadow-sm", className)}>
-      <div className={cn("flex items-center justify-between gap-3", !flushHeader && "mb-4")}>
+      <div className={cn("flex flex-wrap items-center justify-between gap-3", !flushHeader && "mb-4")}>
         <h2 className="text-sm font-semibold">{title}</h2>
         {action}
       </div>
@@ -2044,6 +2072,7 @@ export {
   ProductMeta,
   StatusBadge,
   UserMenu,
+  KnowledgePage,
   KnowledgeProposals,
   buildJobQuery,
   buildKnowledgeQuery,

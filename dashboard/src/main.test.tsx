@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ActorFilter,
   JobsList,
+  KnowledgePage,
   KnowledgeProposals,
   ProductMeta,
   StatusBadge,
@@ -271,6 +272,85 @@ describe("actor filter", () => {
 });
 
 describe("knowledge proposals", () => {
+  it("keeps knowledge records separated behind tabs", async () => {
+    const user = userEvent.setup();
+    render(
+      <KnowledgePage
+        data={{
+          repositories: ["pilipilisbot/github-agent-bridge"],
+          summary: { proposed: 1, approved: 0, rules: 1, events: 1 },
+          proposals: [
+            {
+              id: "feedback-proposal-1",
+              event_id: "event-1",
+              created_at: "2026-06-04T10:00:00Z",
+              updated_at: "2026-06-04T10:01:00Z",
+              status: "proposed",
+              scope: "repo:pilipilisbot/github-agent-bridge",
+              type: "operating_rule",
+              confidence: 0.72,
+              rule: "Keep knowledge moderation auditable.",
+              reason: "A reusable process correction.",
+              model: "gpt-test",
+              error: null,
+            },
+          ],
+          rules: [
+            {
+              id: "rule-1",
+              scope: "repo:pilipilisbot/github-agent-bridge",
+              type: "style_preference",
+              rule: "Keep rule rows compact.",
+              confidence: 0.82,
+              observations: 2,
+              source_events: ["event-1"],
+              created_at: "2026-06-04T10:00:00Z",
+              last_seen: "2026-06-04T10:01:00Z",
+            },
+          ],
+          events: [
+            {
+              id: "event-1",
+              occurred_at: "2026-06-04T10:00:00Z",
+              captured_at: "2026-06-04T10:01:00Z",
+              source: "github",
+              scope: "repo:pilipilisbot/github-agent-bridge",
+              actor: "ecarreras",
+              comment: "Prefer tabs for knowledge.",
+              context: { issue: 73 },
+              classification: "style_preference",
+              confidence: 0.84,
+              memorable: true,
+            },
+          ],
+        }}
+        loading={false}
+        error={null}
+        repo=""
+        status="proposed"
+        user={{ login: "admin", avatar_url: "", html_url: "https://github.com/admin", is_admin: true }}
+        now={Date.parse("2026-06-04T10:02:00Z")}
+        onRepoChange={vi.fn()}
+        onStatusChange={vi.fn()}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+        onDeleteRule={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Keep knowledge moderation auditable.")).toBeInTheDocument();
+    expect(screen.queryByText("Keep rule rows compact.")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /rules \(1\)/i }));
+    expect(screen.getByText("Keep rule rows compact.")).toBeInTheDocument();
+    expect(screen.queryByText("Keep knowledge moderation auditable.")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Proposal status")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /events \(1\)/i }));
+    expect(screen.getByText("Prefer tabs for knowledge.")).toBeInTheDocument();
+  });
+
   it("shows moderation actions only to admins for proposed rules", async () => {
     const user = userEvent.setup();
     const onApprove = vi.fn().mockResolvedValue(undefined);

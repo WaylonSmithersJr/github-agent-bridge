@@ -702,7 +702,7 @@ def list_rules(db_path: str | Path, scope: str = "", min_confidence: float | Non
     sql = "SELECT * FROM feedback_rules"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY scope, type, rule"
+    sql += " ORDER BY last_seen DESC, created_at DESC, scope ASC, type ASC, rule ASC"
     with _connect(db_path) as con:
         return [
             {

@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.24.1 (2026-06-04)
+
+### Bug Fixes
+
+- Let dashboard admins sign in
+  ([`6d0890f`](https://github.com/pilipilisbot/github-agent-bridge/commit/6d0890f9ea0e8fe594b0c2d79ec76885e891c24a))
+
+
 ## v0.24.0 (2026-06-04)
 
 ### Features

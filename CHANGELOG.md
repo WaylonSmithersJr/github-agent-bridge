@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.26.1 (2026-06-04)
+
+### Bug Fixes
+
+- Remove duplicate knowledge dashboard link
+  ([`55544e8`](https://github.com/pilipilisbot/github-agent-bridge/commit/55544e8eec3fed0cba39852c2e15b5f244be8d58))
+
+
 ## v0.26.0 (2026-06-04)
 
 ### Documentation

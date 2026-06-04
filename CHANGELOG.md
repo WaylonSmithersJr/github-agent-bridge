@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.29.0 (2026-06-04)
+
+### Bug Fixes
+
+- Sort feedback rules newest first
+  ([`2720ceb`](https://github.com/pilipilisbot/github-agent-bridge/commit/2720ceb2e6d64f2b0980f5aa87d61bfc0b0f3828))
+
+### Features
+
+- Show pending knowledge badge
+  ([`872da5b`](https://github.com/pilipilisbot/github-agent-bridge/commit/872da5bc6b29dec4cc04844a542575596eb9f769))
+
+
 ## v0.28.0 (2026-06-04)
 
 ### Bug Fixes

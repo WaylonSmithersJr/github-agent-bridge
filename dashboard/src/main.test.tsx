@@ -14,7 +14,7 @@ import {
   UserMenu,
   buildJobQuery,
   buildKnowledgeQuery,
-  changelogPreview,
+  changelogMarkdown,
   formatRuntimeUsageSeconds,
   groupSessionEvents,
   groupTranscriptEntries,
@@ -319,7 +319,7 @@ describe("autoupdate notice", () => {
     target: {
       tag_name: "v0.28.0",
       url: "https://github.com/pilipilisbot/github-agent-bridge/releases/tag/v0.28.0",
-      body: "## Changes\n- Add safe autoupdate planning\n- Improve dashboard release visibility",
+      body: "## Changes\n- Add **safe** autoupdate planning\n- Improve [dashboard release visibility](https://github.com/pilipilisbot/github-agent-bridge/releases/tag/v0.28.0)",
     },
     decision: "stage_defer_executor_reload",
     executor_reload_pending: true,
@@ -339,12 +339,14 @@ describe("autoupdate notice", () => {
     expect(screen.getByText("v0.28.0")).toBeInTheDocument();
     expect(screen.getByText("Dashboard reload can be staged; executor reload waits for the queue")).toBeInTheDocument();
     expect(screen.getByText("executor or queue")).toBeInTheDocument();
-    expect(screen.getByText("Add safe autoupdate planning")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /release/i })).toHaveAttribute("href", "https://github.com/pilipilisbot/github-agent-bridge/releases/tag/v0.28.0");
+    expect(screen.getByRole("heading", { name: "Changes" })).toBeInTheDocument();
+    expect(screen.getByText("safe")).toHaveClass("font-semibold");
+    expect(screen.getByRole("link", { name: "dashboard release visibility" })).toHaveAttribute("href", "https://github.com/pilipilisbot/github-agent-bridge/releases/tag/v0.28.0");
+    expect(screen.getByRole("link", { name: /^release$/i })).toHaveAttribute("href", "https://github.com/pilipilisbot/github-agent-bridge/releases/tag/v0.28.0");
   });
 
-  it("extracts compact changelog bullets", () => {
-    expect(changelogPreview("# v1\n\n- First\n* Second\nplain\n- Fourth\n- Fifth")).toEqual(["First", "Second", "plain", "Fourth"]);
+  it("keeps full changelog markdown for rendering", () => {
+    expect(changelogMarkdown("  # v1\n\n- First\n* Second\nplain\n- Fourth\n- Fifth  ")).toBe("# v1\n\n- First\n* Second\nplain\n- Fourth\n- Fifth");
   });
 });
 

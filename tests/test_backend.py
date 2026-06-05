@@ -331,8 +331,18 @@ def test_dashboard_metrics_groups_runtime_usage_by_requested_timezone(tmp_path):
     q = JobQueue(db)
     first, _ = q.enqueue(notif(uid=1, mid="<1@github.com>"), Policy(trusted_orgs=["gisce"]))
     second, _ = q.enqueue(notif(uid=2, mid="<2@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/2#issuecomment-20"), Policy(trusted_orgs=["gisce"]))
+    missing_finish, _ = q.enqueue(
+        notif(uid=3, mid="<3@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/3#issuecomment-30"),
+        Policy(trusted_orgs=["gisce"]),
+    )
+    invalid_finish, _ = q.enqueue(
+        notif(uid=4, mid="<4@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/4#issuecomment-40"),
+        Policy(trusted_orgs=["gisce"]),
+    )
     q.finish(first.id, "done", "completed")
     q.finish(second.id, "done", "completed")
+    q.finish(missing_finish.id, "done", "completed")
+    q.finish(invalid_finish.id, "done", "completed")
     with q.connect() as con:
         con.execute(
             "UPDATE jobs SET started_at=?, finished_at=? WHERE id=?",
@@ -341,6 +351,14 @@ def test_dashboard_metrics_groups_runtime_usage_by_requested_timezone(tmp_path):
         con.execute(
             "UPDATE jobs SET started_at=?, finished_at=? WHERE id=?",
             ("2026-06-02T10:00:00Z", "2026-06-02T10:30:00Z", second.id),
+        )
+        con.execute(
+            "UPDATE jobs SET started_at=?, finished_at=NULL WHERE id=?",
+            ("2026-06-02T11:00:00Z", missing_finish.id),
+        )
+        con.execute(
+            "UPDATE jobs SET started_at=?, finished_at=? WHERE id=?",
+            ("2026-06-02T12:00:00Z", "n/a", invalid_finish.id),
         )
 
     metrics = metrics_summary(db, timezone_name="America/New_York")
@@ -354,6 +372,7 @@ def test_dashboard_metrics_groups_runtime_usage_by_requested_timezone(tmp_path):
     assert metrics["runtime_usage"]["month"] == [
         {"bucket": "2026-06", "seconds": 5400, "minutes": 90.0, "jobs": 2},
     ]
+    assert metrics["runtime_seconds"] == {"median": 1800, "p90": 3600, "p99": 3600}
     assert payload["runtime_usage"] == metrics["runtime_usage"]
 
 

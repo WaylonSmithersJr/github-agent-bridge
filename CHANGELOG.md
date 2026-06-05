@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.32.0 (2026-06-05)
+
+### Features
+
+- Isolate OpenClaw sessions per work key
+  ([`6199188`](https://github.com/pilipilisbot/github-agent-bridge/commit/61991884c7e4f2dfb74f5c4aacc74232af348560))
+
+
 ## v0.31.0 (2026-06-05)
 
 ### Features

@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.31.0 (2026-06-05)
+
+### Features
+
+- **dashboard**: Add icons to section tabs
+  ([`b607680`](https://github.com/pilipilisbot/github-agent-bridge/commit/b607680bee5a647671d513f09fde42938489128c))
+
+- **dashboard**: Add system tab
+  ([`686b377`](https://github.com/pilipilisbot/github-agent-bridge/commit/686b3779a5c7a046e3144e2ed209886357a616b7))
+
+
 ## v0.30.1 (2026-06-05)
 
 ### Bug Fixes

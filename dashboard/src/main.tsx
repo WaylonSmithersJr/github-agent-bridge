@@ -983,12 +983,16 @@ function SectionNav({
 }) {
   return (
     <nav className="flex min-w-0 rounded-lg border border-border bg-panel p-1 shadow-sm" aria-label="Dashboard sections">
-      <SectionLink href="/" active={isDashboardRoute}>Jobs</SectionLink>
+      <SectionLink href="/" active={isDashboardRoute}>
+        <TerminalSquare className="h-4 w-4" aria-hidden />
+        <span>Jobs</span>
+      </SectionLink>
       <SectionLink href="/system" active={isSystemRoute}>
         <Gauge className="h-4 w-4" aria-hidden />
         <span>System</span>
       </SectionLink>
       <SectionLink href="/knowledge" active={isKnowledgeRoute}>
+        <Brain className="h-4 w-4" aria-hidden />
         <span>Knowledge</span>
         {knowledgeBadgeCount > 0 ? (
           <span

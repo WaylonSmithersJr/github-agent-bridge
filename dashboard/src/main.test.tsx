@@ -20,6 +20,7 @@ import {
   groupTranscriptEntries,
   isKnowledgePath,
   isRetryableStatus,
+  isSystemPath,
   metricsSummaryPath,
   runtimeBucketLabel,
   selectedJobIdFromPath,
@@ -50,6 +51,12 @@ describe("dashboard routing and API query helpers", () => {
     expect(isKnowledgePath("/knowledge/extra")).toBe(false);
   });
 
+  it("recognizes the dedicated system route", () => {
+    expect(isSystemPath("/system")).toBe(true);
+    expect(isSystemPath("/system/")).toBe(true);
+    expect(isSystemPath("/system/processes")).toBe(false);
+  });
+
   it("recognizes only canonical job detail routes", () => {
     expect(selectedJobIdFromPath("/jobs/45")).toBe(45);
     expect(selectedJobIdFromPath("/jobs/45/")).toBe(45);
@@ -58,11 +65,16 @@ describe("dashboard routing and API query helpers", () => {
   });
 
   it("shows a knowledge badge when proposed rules need moderation", () => {
-    const { rerender } = render(<SectionNav isDashboardRoute={true} isKnowledgeRoute={false} knowledgeBadgeCount={2} />);
+    const { rerender } = render(<SectionNav isDashboardRoute={true} isSystemRoute={false} isKnowledgeRoute={false} knowledgeBadgeCount={2} />);
 
     expect(screen.getByRole("link", { name: /Knowledge/i })).toContainElement(screen.getByLabelText("2 proposed knowledge items"));
+    expect(screen.getByRole("link", { name: /Jobs/i })).toHaveClass("bg-primary");
+    expect(screen.getByRole("link", { name: /System/i })).not.toHaveClass("bg-primary");
 
-    rerender(<SectionNav isDashboardRoute={false} isKnowledgeRoute={true} knowledgeBadgeCount={0} />);
+    rerender(<SectionNav isDashboardRoute={false} isSystemRoute={true} isKnowledgeRoute={false} knowledgeBadgeCount={0} />);
+    expect(screen.getByRole("link", { name: /System/i })).toHaveClass("bg-primary");
+
+    rerender(<SectionNav isDashboardRoute={false} isSystemRoute={false} isKnowledgeRoute={true} knowledgeBadgeCount={0} />);
     expect(screen.queryByLabelText(/proposed knowledge/i)).not.toBeInTheDocument();
   });
 

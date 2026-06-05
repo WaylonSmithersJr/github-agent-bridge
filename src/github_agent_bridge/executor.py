@@ -11,6 +11,20 @@ from .queue import JobQueue
 from .session_events import redact_event_detail
 
 
+NO_FOLLOWUP_OK_MARKERS = (
+    "no github follow-up comment was appropriate",
+    "no github follow-up was appropriate",
+    "no new github follow-up was appropriate",
+)
+NO_FOLLOWUP_DUPLICATE_MARKERS = (
+    "duplicate",
+    "already contains",
+    "already has",
+    "already reported",
+    "no new information",
+)
+
+
 @dataclass(frozen=True)
 class ExecutorConfig:
     workers: int = 4
@@ -70,7 +84,8 @@ class ExecutorPool:
             )
             if result.ok:
                 followup_url = self.github.visible_followup_after_trigger(job.context)
-                if job.work_intent == "work_allowed" and job.action not in {"archive_notification", "workflow_run_failed"} and not followup_url:
+                missing_followup_ok = self._missing_followup_is_acceptable(job, result)
+                if job.work_intent == "work_allowed" and job.action not in {"archive_notification", "workflow_run_failed"} and not followup_url and not missing_followup_ok:
                     summary = "agent finished without visible GitHub follow-up"
                     detail = result.detail or "OpenClaw command succeeded, but no new bot comment was found in the GitHub thread."
                     if job.attempts <= self.config.missing_followup_retries:
@@ -87,6 +102,12 @@ class ExecutorPool:
         except Exception as exc:
             self.queue.finish(job.id, "blocked", f"executor exception: {type(exc).__name__}", str(exc))
         return True
+
+    def _missing_followup_is_acceptable(self, job, result) -> bool:
+        if job.action != "sync_after_merge":
+            return False
+        output = f"{result.stdout}\n{result.stderr}".lower()
+        return any(marker in output for marker in NO_FOLLOWUP_OK_MARKERS) and any(marker in output for marker in NO_FOLLOWUP_DUPLICATE_MARKERS)
 
     def react_eyes_for_job_contexts(self, job) -> bool:
         contexts = [job.context, *self.queue.coalesced_contexts(job.id)]

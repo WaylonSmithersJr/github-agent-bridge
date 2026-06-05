@@ -47,15 +47,17 @@ class FakeGitHub:
 
 
 class RecordingDispatcher:
-    def __init__(self):
+    def __init__(self, stdout: str = "ok", stderr: str = ""):
         self.jobs = []
+        self.stdout = stdout
+        self.stderr = stderr
 
     def dispatch(self, job, policy, reaction_ok=None, activity_callback=None):
         self.jobs.append(job)
         if activity_callback:
             activity_callback("openclaw_stdout", "OpenClaw CLI output", "thinking about the change")
             activity_callback("openclaw_stderr", "OpenClaw CLI error output", "token=secret ghp_abcdefghijklmnopqrstuvwxyz")
-        return DispatchResult(True, 0, "ok", "", False, reaction_ok, ["openclaw"])
+        return DispatchResult(True, 0, self.stdout, self.stderr, False, reaction_ok, ["openclaw"])
 
 
 def enqueue_pr_review(queue: JobQueue):
@@ -102,6 +104,21 @@ def enqueue_workflow_run_failed(queue: JobQueue):
     assert state == "enqueued"
     assert job is not None
     assert job.action == "workflow_run_failed"
+    return job
+
+
+def enqueue_sync_after_merge(queue: JobQueue):
+    notification = Notification(
+        uid=4,
+        message_id="<pilipilisbot/github-agent-bridge/pull/96/merged@github.com>",
+        subject="Re: [pilipilisbot/github-agent-bridge] feat: isolate OpenClaw sessions per work key (PR #96)",
+        from_addr="notifications@github.com",
+        body="Merged #96 into main. https://github.com/pilipilisbot/github-agent-bridge/pull/96",
+    )
+    job, state = queue.enqueue(notification, Policy(trusted_orgs={"pilipilisbot"}))
+    assert state == "enqueued"
+    assert job is not None
+    assert job.action == "sync_after_merge"
     return job
 
 
@@ -292,6 +309,29 @@ def test_workflow_run_failed_dispatch_does_not_require_thread_followup(tmp_path)
     stored = queue.get(job.id)
     assert stored is not None
     assert stored.status == "done"
+
+
+def test_sync_after_merge_noop_duplicate_followup_is_done(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_sync_after_merge(queue)
+    dispatcher = RecordingDispatcher(
+        stdout=(
+            "Post-merge cleanup rechecked for PR #96.\n"
+            "No GitHub follow-up comment was appropriate because the thread already contains "
+            "the same concrete cleanup/status. Adding another comment would be duplicate noise."
+        )
+    )
+    github = FakeGitHub(assigned=False, mentioned=False)
+    github.followup_url = None
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"pilipilisbot"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert dispatcher.jobs[0].id == job.id
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
+    assert stored.last_error is None
 
 
 def test_non_actionable_review_reacts_without_dispatch_even_when_assigned(tmp_path):

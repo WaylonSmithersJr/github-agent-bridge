@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.32.1 (2026-06-05)
+
+### Bug Fixes
+
+- **dashboard**: Render release changelog markdown
+  ([`fb9c7a2`](https://github.com/pilipilisbot/github-agent-bridge/commit/fb9c7a2211530420b5da05bd084d589cdf090cc5))
+
+
 ## v0.32.0 (2026-06-05)
 
 ### Features

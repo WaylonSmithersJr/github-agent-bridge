@@ -14,7 +14,7 @@ from typing import Callable
 from . import feedback
 from .models import GitHubContext, Job
 from .policy import DEFAULT_REPO_ROLE, Policy, Route
-from .session_correlation import normalize_session_id, session_id_for_job
+from .session_correlation import normalize_session_id, session_id_for_job, session_key_for_work
 
 PROMPT_RULES_PACKAGE = "github_agent_bridge.prompt_rules"
 
@@ -509,9 +509,12 @@ class OpenClawDispatcher:
             cmd += ["--agent", agent]
         agent_timeout = self.timeout_for(job)
         session_id = normalize_session_id(str(job.metadata.get("openclaw_session_id") or session_id_for_job(job.id)))
+        session_key = session_key_for_work(job.work_key)
         cmd += [
             "--session-id",
             session_id,
+            "--session-key",
+            session_key,
             "--verbose",
             "on",
             "--channel",

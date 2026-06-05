@@ -12,6 +12,20 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .session_events import redact_event_detail
 from .session_correlation import job_session_metadata
 
+JOB_LIST_ORDER_SQL = """
+    CASE status
+        WHEN 'running' THEN 0
+        WHEN 'pending' THEN 1
+        WHEN 'waiting_approval' THEN 2
+        WHEN 'blocked' THEN 3
+        WHEN 'denied' THEN 3
+        WHEN 'done' THEN 4
+        ELSE 5
+    END,
+    COALESCE(finished_at, started_at, updated_at, created_at) DESC,
+    id DESC
+"""
+
 
 def readonly_connect(db: str | Path) -> sqlite3.Connection:
     path = Path(db).expanduser()
@@ -193,7 +207,7 @@ def list_jobs(
             where += " AND created_at <= ?" if where else " WHERE created_at <= ?"
             args.append(until)
         args.append(coerce_limit(limit))
-        rows = con.execute(f"SELECT * FROM jobs{where} ORDER BY id DESC LIMIT ?", args).fetchall()
+        rows = con.execute(f"SELECT * FROM jobs{where} ORDER BY {JOB_LIST_ORDER_SQL} LIMIT ?", args).fetchall()
     return [job_summary(row) for row in rows]
 
 

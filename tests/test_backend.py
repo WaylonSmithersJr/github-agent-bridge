@@ -236,6 +236,63 @@ def test_dashboard_jobs_can_filter_by_status_repo_action_intent_and_actor(tmp_pa
     assert list_jobs(db, status_filter="pending", actor="ecarreras") == []
 
 
+def test_dashboard_jobs_orders_active_work_before_finished_jobs(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    policy = Policy(trusted_orgs=["gisce"])
+
+    done_old, _ = q.enqueue(notif(uid=1, mid="<done-old@github.com>", body="@pilipilisbot https://github.com/gisce/erp/issues/1"), policy)
+    done_new, _ = q.enqueue(notif(uid=2, mid="<done-new@github.com>", body="@pilipilisbot https://github.com/gisce/erp/issues/2"), policy)
+    pending_old, _ = q.enqueue(notif(uid=3, mid="<pending-old@github.com>", body="@pilipilisbot https://github.com/gisce/erp/issues/3"), policy)
+    pending_new, _ = q.enqueue(notif(uid=4, mid="<pending-new@github.com>", body="@pilipilisbot https://github.com/gisce/erp/issues/4"), policy)
+    running, _ = q.enqueue(notif(uid=5, mid="<running@github.com>", body="@pilipilisbot https://github.com/gisce/erp/issues/5"), policy)
+    waiting, _ = q.enqueue(notif(uid=6, mid="<waiting@github.com>", body="@pilipilisbot https://github.com/gisce/erp/issues/6"), Policy(trusted_orgs=[]))
+    blocked, _ = q.enqueue(notif(uid=7, mid="<blocked@github.com>", body="@pilipilisbot https://github.com/gisce/erp/issues/7"), policy)
+
+    with q.connect() as con:
+        con.execute(
+            "UPDATE jobs SET status='done', finished_at='2026-06-01T09:00:00Z', updated_at='2026-06-01T09:00:00Z' WHERE id=?",
+            (done_old.id,),
+        )
+        con.execute(
+            "UPDATE jobs SET status='done', finished_at='2026-06-04T09:00:00Z', updated_at='2026-06-04T09:00:00Z' WHERE id=?",
+            (done_new.id,),
+        )
+        con.execute(
+            "UPDATE jobs SET created_at='2026-06-01T08:00:00Z', updated_at='2026-06-01T08:00:00Z' WHERE id=?",
+            (pending_old.id,),
+        )
+        con.execute(
+            "UPDATE jobs SET created_at='2026-06-04T08:00:00Z', updated_at='2026-06-04T08:00:00Z' WHERE id=?",
+            (pending_new.id,),
+        )
+        con.execute(
+            "UPDATE jobs SET status='running', started_at='2026-06-03T12:00:00Z', updated_at='2026-06-03T12:00:00Z' WHERE id=?",
+            (running.id,),
+        )
+        con.execute(
+            "UPDATE jobs SET status='waiting_approval', created_at='2026-06-05T08:00:00Z', updated_at='2026-06-05T08:00:00Z' WHERE id=?",
+            (waiting.id,),
+        )
+        con.execute(
+            "UPDATE jobs SET status='blocked', finished_at='2026-06-05T09:00:00Z', updated_at='2026-06-05T09:00:00Z' WHERE id=?",
+            (blocked.id,),
+        )
+
+    rows = list_jobs(db, limit=10)
+
+    assert [row["id"] for row in rows] == [
+        running.id,
+        pending_new.id,
+        pending_old.id,
+        waiting.id,
+        blocked.id,
+        done_new.id,
+        done_old.id,
+    ]
+    assert [row["id"] for row in list_jobs(db, status_filter="done", limit=10)] == [done_new.id, done_old.id]
+
+
 def test_dashboard_exposes_job_detail_logs_and_metrics(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)

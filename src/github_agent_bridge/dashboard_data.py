@@ -60,6 +60,14 @@ def duration_seconds(start: str | None, end: str | None = None) -> int | None:
     return max(0, int((finished - started).total_seconds()))
 
 
+def completed_duration_seconds(start: str | None, end: str | None) -> int | None:
+    started = parse_utc(start)
+    finished = parse_utc(end)
+    if started is None or finished is None:
+        return None
+    return max(0, int((finished - started).total_seconds()))
+
+
 def row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
     return row[key] if key in row.keys() else default
 
@@ -585,7 +593,7 @@ def metrics_summary(db: str | Path, *, timezone_name: str = "UTC") -> dict[str, 
     by_intent = Counter(row["work_intent"] for row in rows)
     by_created_day = Counter(day for day in (created_day(row["created_at"], timezone) for row in rows) if day)
     runtimes = sorted(
-        seconds for seconds in (duration_seconds(row["started_at"], row["finished_at"]) for row in rows if row["finished_at"]) if seconds is not None
+        seconds for seconds in (completed_duration_seconds(row["started_at"], row["finished_at"]) for row in rows) if seconds is not None
     )
     waits = sorted(
         seconds for seconds in (duration_seconds(row["created_at"], row["started_at"]) for row in rows if row["started_at"]) if seconds is not None
@@ -625,12 +633,11 @@ def runtime_usage(rows: list[sqlite3.Row], timezone: ZoneInfo) -> dict[str, list
     monthly: dict[str, dict[str, int]] = {}
     for row in rows:
         started = parse_utc(row["started_at"])
-        if started is None:
+        finished = parse_utc(row["finished_at"])
+        seconds = completed_duration_seconds(row["started_at"], row["finished_at"])
+        if started is None or finished is None or seconds is None:
             continue
-        seconds = duration_seconds(row["started_at"], row["finished_at"])
-        if seconds is None:
-            continue
-        bucket_at = parse_utc(row["finished_at"]) or started
+        bucket_at = finished
         local = bucket_at.astimezone(timezone)
         day = local.date().isoformat()
         month = f"{local.year:04d}-{local.month:02d}"

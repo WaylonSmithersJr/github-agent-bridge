@@ -799,9 +799,6 @@ function App() {
           />
         ) : isSystemRoute ? (
           <SystemPage
-            metrics={metrics.data?.metrics}
-            metricsLoading={metrics.isLoading}
-            metricsError={metrics.error}
             processes={processes.data}
             processesLoading={processes.isLoading}
             processesError={processes.error}
@@ -809,7 +806,6 @@ function App() {
             alertsLoading={alerts.isLoading}
             alertsError={alerts.error}
             now={now}
-            onRefreshMetrics={() => metrics.refetch()}
             onRefreshProcesses={() => processes.refetch()}
             onRefreshAlerts={() => alerts.refetch()}
           />
@@ -838,6 +834,9 @@ function App() {
                     </button>
                   </div>
                 ) : null}
+              </Panel>
+              <Panel title="Runtime usage" action={<RefreshButton onClick={() => metrics.refetch()} />}>
+                <RuntimeUsageChart usage={metrics.data?.metrics.runtime_usage} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
               </Panel>
             </section>
 
@@ -1035,9 +1034,6 @@ function SectionNav({
 }
 
 function SystemPage({
-  metrics,
-  metricsLoading,
-  metricsError,
   processes,
   processesLoading,
   processesError,
@@ -1045,13 +1041,9 @@ function SystemPage({
   alertsLoading,
   alertsError,
   now,
-  onRefreshMetrics,
   onRefreshProcesses,
   onRefreshAlerts,
 }: {
-  metrics: MetricsSummary | undefined;
-  metricsLoading: boolean;
-  metricsError: Error | null;
   processes: ProcessesResponse | undefined;
   processesLoading: boolean;
   processesError: Error | null;
@@ -1059,14 +1051,11 @@ function SystemPage({
   alertsLoading: boolean;
   alertsError: Error | null;
   now: number;
-  onRefreshMetrics: () => void;
   onRefreshProcesses: () => void;
   onRefreshAlerts: () => void;
 }) {
-  const counts = metrics?.status_counts ?? {};
   return (
     <section className="grid gap-4" aria-label="Bridge system">
-      {metricsError ? <Banner tone="error" text={metricsError.message} /> : null}
       <Panel title="Process activity" action={<RefreshButton onClick={onRefreshProcesses} />}>
         {processesError ? <Banner tone="error" text={processesError.message} /> : null}
         <ProcessActivity data={processes} loading={processesLoading} />
@@ -1074,9 +1063,6 @@ function SystemPage({
       <Panel title="Monitor alerts" action={<RefreshButton onClick={onRefreshAlerts} />}>
         {alertsError ? <Banner tone="error" text={alertsError.message} /> : null}
         <AlertsPanel alerts={alerts} loading={alertsLoading} now={now} />
-      </Panel>
-      <Panel title="Runtime usage" action={<RefreshButton onClick={onRefreshMetrics} />}>
-        <RuntimeUsageChart usage={metrics?.runtime_usage} loading={metricsLoading} totalJobs={totalJobs(counts)} />
       </Panel>
     </section>
   );

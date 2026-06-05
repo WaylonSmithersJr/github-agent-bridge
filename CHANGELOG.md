@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.30.1 (2026-06-05)
+
+### Bug Fixes
+
+- Sort dashboard jobs by status priority
+  ([`c9479fa`](https://github.com/pilipilisbot/github-agent-bridge/commit/c9479fa020e5b4b6ef57a93c383e814d0288df64))
+
+
 ## v0.30.0 (2026-06-04)
 
 ### Chores

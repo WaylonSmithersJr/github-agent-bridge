@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, ArrowLeft, Brain, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Gauge, Link, RefreshCw, RotateCcw, Search, ShieldCheck, TerminalSquare, TimerReset, Trash2, UserCircle2, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -881,7 +882,7 @@ function AutoupdateNotice({ state, isAdmin }: { state: AutoupdateState | undefin
   const decision = autoupdateDecisionLabel(state.decision);
   const activeTotal = state.queue?.active_total ?? 0;
   const risk = autoupdateRiskLabel(state.classification?.risk);
-  const bullets = changelogPreview(state.target?.body);
+  const changelog = changelogMarkdown(state.target?.body);
   const migrationCount = state.classification?.migration_files?.length ?? 0;
   const riskyCount = state.classification?.risky_files?.length ?? 0;
 
@@ -919,14 +920,10 @@ function AutoupdateNotice({ state, isAdmin }: { state: AutoupdateState | undefin
           {riskyCount > 0 ? <span className="rounded-sm border border-amber-300 bg-white px-2 py-1">{riskyCount} executor/shared file{riskyCount === 1 ? "" : "s"}</span> : null}
         </div>
       ) : null}
-      {bullets.length > 0 ? (
+      {changelog ? (
         <div className="mt-3 rounded-md border border-amber-200 bg-white/70 p-2.5">
           <div className="text-[11px] font-semibold uppercase text-amber-800">Changelog preview</div>
-          <ul className="mt-1 grid gap-1 text-sm text-amber-950">
-            {bullets.map((item) => (
-              <li className="break-words [overflow-wrap:anywhere]" key={item}>{item}</li>
-            ))}
-          </ul>
+          <ReleaseChangelogMarkdown markdown={changelog} />
         </div>
       ) : null}
       {state.warnings?.length ? <div className="mt-2 font-mono text-xs text-amber-800">{state.warnings[0]}</div> : null}
@@ -962,12 +959,39 @@ function autoupdateRiskLabel(risk: string | undefined) {
   }[risk ?? ""] ?? "unknown");
 }
 
-function changelogPreview(body: string | undefined) {
-  return (body ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim().replace(/^[-*]\s+/, ""))
-    .filter((line) => line && !line.startsWith("#"))
-    .slice(0, 4);
+function changelogMarkdown(body: string | undefined) {
+  return (body ?? "").trim();
+}
+
+function ReleaseChangelogMarkdown({ markdown }: { markdown: string }) {
+  return (
+    <div className="mt-1 text-sm leading-relaxed text-amber-950">
+      <ReactMarkdown
+        allowedElements={["a", "blockquote", "code", "em", "h1", "h2", "h3", "h4", "li", "ol", "p", "strong", "ul"]}
+        components={{
+          a: ({ href, children }) => (
+            <a className="font-semibold text-amber-800 underline underline-offset-2" href={safeExternalUrl(href ?? "")} rel="noreferrer" target="_blank">
+              {children}
+            </a>
+          ),
+          blockquote: ({ children }) => <blockquote className="mt-2 border-l-2 border-amber-300 pl-2 text-amber-900">{children}</blockquote>,
+          code: ({ children }) => <code className="rounded-sm bg-amber-100 px-1 py-0.5 font-mono text-[0.85em] text-amber-950">{children}</code>,
+          h1: ({ children }) => <h3 className="mt-2 text-sm font-semibold text-amber-950 first:mt-0">{children}</h3>,
+          h2: ({ children }) => <h3 className="mt-2 text-sm font-semibold text-amber-950 first:mt-0">{children}</h3>,
+          h3: ({ children }) => <h3 className="mt-2 text-sm font-semibold text-amber-950 first:mt-0">{children}</h3>,
+          h4: ({ children }) => <h4 className="mt-2 text-xs font-semibold uppercase text-amber-800 first:mt-0">{children}</h4>,
+          li: ({ children }) => <li className="break-words pl-0.5 [overflow-wrap:anywhere]">{children}</li>,
+          ol: ({ children }) => <ol className="mt-1 list-decimal space-y-1 pl-5 first:mt-0">{children}</ol>,
+          p: ({ children }) => <p className="mt-1 break-words [overflow-wrap:anywhere] first:mt-0">{children}</p>,
+          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+          em: ({ children }) => <em className="italic">{children}</em>,
+          ul: ({ children }) => <ul className="mt-1 list-disc space-y-1 pl-5 first:mt-0">{children}</ul>,
+        }}
+      >
+        {markdown}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 function SectionNav({
@@ -2497,7 +2521,7 @@ export {
   KnowledgeProposals,
   buildJobQuery,
   buildKnowledgeQuery,
-  changelogPreview,
+  changelogMarkdown,
   isKnowledgePath,
   isSystemPath,
   isRetryableStatus,

@@ -86,6 +86,32 @@ def test_maybe_unlock_stale_runs_for_no_child_running_detail_ids(tmp_path, monke
     assert calls[0][-6:] == ["--older-than", "900", "--job-id", "568", "--job-id", "570"]
 
 
+def test_maybe_unlock_stale_uses_no_child_alert_code_for_detail_ids(tmp_path, monkeypatch):
+    config = make_config(tmp_path)
+    calls = []
+    monkeypatch.setattr(monitor_alert, "get_main_pid", lambda unit="github-agent-bridge.service": "123")
+    monkeypatch.setattr(monitor_alert, "has_child_processes", lambda pid: False)
+
+    def fake_run(args, check=False):
+        calls.append(args)
+        return type("Proc", (), {"stdout": '{"unlocked":1}\n'})()
+
+    monkeypatch.setattr(monitor_alert, "_run", fake_run)
+
+    output = monitor_alert.maybe_unlock_stale(
+        config,
+        "\n".join(
+            [
+                "- [monitor.running_no_executor_child] executor has no available worker child",
+                "- running detail: job=568 key=owner/repo#1 age=1200s",
+            ]
+        ),
+    )
+
+    assert output == '{"unlocked":1}\n'
+    assert calls[0][-4:] == ["--older-than", "900", "--job-id", "568"]
+
+
 def test_maybe_unlock_stale_kills_children_and_retries_jobs_when_enabled(tmp_path, monkeypatch):
     base = make_config(tmp_path)
     config = monitor_alert.AlertConfig(

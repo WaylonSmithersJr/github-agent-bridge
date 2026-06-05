@@ -148,7 +148,15 @@ def test_monitor_alerts_when_running_job_has_no_executor_child(tmp_path, monkeyp
     report = monitor(db)
 
     assert report.ok is False
+    assert report.metrics["alert_codes"] == ["monitor.running_no_executor_child"]
+    assert report.metrics["alert_details"] == [
+        {
+            "code": "monitor.running_no_executor_child",
+            "message": "running jobs exist but executor has no child process",
+        }
+    ]
     assert any("running jobs exist but executor has no child process" in a for a in report.alerts)
+    assert "[monitor.running_no_executor_child]" in report.text()
 
 
 def test_monitor_reports_executor_child_processes(tmp_path, monkeypatch):

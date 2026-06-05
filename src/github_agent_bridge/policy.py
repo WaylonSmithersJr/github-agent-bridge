@@ -7,6 +7,7 @@ from pathlib import Path
 from .models import GitHubContext, Notification
 
 ALLOWED_REPO_ROLES = {"owner", "maintainer", "contributor", "reviewer"}
+ALLOWED_THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max"}
 ALLOWED_PROMPT_INTENTS = {"review_only"}
 ALLOWED_PROMPT_RULES = {
     "comment_value",
@@ -29,6 +30,39 @@ class Route:
     agent: str | None = None
     channel: str | None = None
     to: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelRoute:
+    model: str | None = None
+    thinking: str | None = None
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.model or self.thinking)
+
+    def summary(self) -> str:
+        parts = []
+        if self.model:
+            parts.append(f"model={self.model}")
+        if self.thinking:
+            parts.append(f"thinking={self.thinking}")
+        return " ".join(parts) if parts else "OpenClaw default model route"
+
+
+@dataclass(frozen=True)
+class RepoModelRoutes:
+    default: ModelRoute | None = None
+    by_action: dict[str, ModelRoute] = field(default_factory=dict)
+    by_intent: dict[str, ModelRoute] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ModelRoutes:
+    default: ModelRoute | None = None
+    by_action: dict[str, ModelRoute] = field(default_factory=dict)
+    by_intent: dict[str, ModelRoute] = field(default_factory=dict)
+    by_repo: dict[str, RepoModelRoutes] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -75,6 +109,7 @@ class Policy:
     repo_roles: dict[str, str] = field(default_factory=dict)
     org_roles: dict[str, str] = field(default_factory=dict)
     bot_logins: set[str] = field(default_factory=lambda: set(DEFAULT_BOT_LOGINS))
+    model_routes: ModelRoutes = field(default_factory=ModelRoutes)
     prompt_overrides: PromptOverrides = field(default_factory=PromptOverrides)
     feedback_learning: FeedbackLearning = field(default_factory=FeedbackLearning)
 
@@ -93,6 +128,56 @@ class Policy:
             if unknown:
                 raise ValueError(f"unknown repo role(s): {unknown}; allowed roles: {sorted(ALLOWED_REPO_ROLES)}")
             return result
+
+        def model_route(raw: dict | None, path: str) -> ModelRoute | None:
+            if raw is None:
+                return None
+            if not isinstance(raw, dict):
+                raise ValueError(f"{path} must be an object")
+            model = raw.get("model")
+            thinking = raw.get("thinking")
+            if thinking is not None:
+                thinking = str(thinking).lower()
+                if thinking not in ALLOWED_THINKING_LEVELS:
+                    raise ValueError(f"{path}.thinking must be one of {sorted(ALLOWED_THINKING_LEVELS)}")
+            return ModelRoute(
+                model=str(model) if model else None,
+                thinking=thinking,
+            )
+
+        def model_route_map(raw: dict | None, path: str) -> dict[str, ModelRoute]:
+            if raw is not None and not isinstance(raw, dict):
+                raise ValueError(f"{path} must be an object")
+            routes: dict[str, ModelRoute] = {}
+            for key, value in (raw or {}).items():
+                route = model_route(value, f"{path}.{key}")
+                if route:
+                    routes[str(key).lower()] = route
+            return routes
+
+        def repo_model_routes(raw: dict | None, path: str) -> RepoModelRoutes:
+            raw = raw or {}
+            if not isinstance(raw, dict):
+                raise ValueError(f"{path} must be an object")
+            return RepoModelRoutes(
+                default=model_route(raw.get("default"), f"{path}.default"),
+                by_action=model_route_map(raw.get("byAction"), f"{path}.byAction"),
+                by_intent=model_route_map(raw.get("byIntent"), f"{path}.byIntent"),
+            )
+
+        def model_routes(raw: dict | None) -> ModelRoutes:
+            raw = raw or {}
+            if not isinstance(raw, dict):
+                raise ValueError("modelRoutes must be an object")
+            by_repo = raw.get("byRepo") or {}
+            if not isinstance(by_repo, dict):
+                raise ValueError("modelRoutes.byRepo must be an object")
+            return ModelRoutes(
+                default=model_route(raw.get("default"), "modelRoutes.default"),
+                by_action=model_route_map(raw.get("byAction"), "modelRoutes.byAction"),
+                by_intent=model_route_map(raw.get("byIntent"), "modelRoutes.byIntent"),
+                by_repo={str(repo).lower(): repo_model_routes(value, f"modelRoutes.byRepo.{repo}") for repo, value in by_repo.items()},
+            )
 
         def prompt_path(raw_path: str) -> Path:
             candidate = Path(raw_path).expanduser()
@@ -168,6 +253,7 @@ class Policy:
                 if "botLogins" in data
                 else set(DEFAULT_BOT_LOGINS)
             ),
+            model_routes=model_routes(data.get("modelRoutes", {})),
             prompt_overrides=prompt_overrides(data.get("promptOverrides", {})),
             feedback_learning=feedback_learning(data.get("feedbackLearning", {})),
         )
@@ -205,3 +291,23 @@ class Policy:
     def role_for(self, repo: str | None) -> str:
         repo = (repo or "").lower(); org = repo.split("/", 1)[0] if "/" in repo else ""
         return self.repo_roles.get(repo) or self.org_roles.get(org) or DEFAULT_REPO_ROLE
+
+    def model_route_for(self, repo: str | None, action: str, work_intent: str) -> ModelRoute:
+        repo_key = (repo or "").lower()
+        action_key = (action or "").lower()
+        intent_key = (work_intent or "").lower()
+        repo_routes = self.model_routes.by_repo.get(repo_key)
+        if repo_routes:
+            route = (
+                repo_routes.by_action.get(action_key)
+                or repo_routes.by_intent.get(intent_key)
+                or repo_routes.default
+            )
+            if route:
+                return route
+        return (
+            self.model_routes.by_action.get(action_key)
+            or self.model_routes.by_intent.get(intent_key)
+            or self.model_routes.default
+            or ModelRoute()
+        )

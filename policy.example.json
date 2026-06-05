@@ -58,6 +58,30 @@
   "orgRoles": {
     "your-org": "contributor"
   },
+  "modelRoutes": {
+    "default": {},
+    "byIntent": {
+      "review_only": {
+        "model": "gpt-5.4-mini",
+        "thinking": "medium"
+      }
+    },
+    "byAction": {
+      "sync_after_merge": {
+        "model": "gpt-5.4-mini",
+        "thinking": "low"
+      },
+      "workflow_run_failed": {
+        "model": "gpt-5.4-mini",
+        "thinking": "medium"
+      },
+      "archive_notification": {
+        "model": "gpt-5.4-mini",
+        "thinking": "minimal"
+      }
+    },
+    "byRepo": {}
+  },
   "feedbackLearning": {
     "enabled": true,
     "minConfidence": 0.5,

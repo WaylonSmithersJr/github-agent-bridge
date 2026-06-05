@@ -2,7 +2,7 @@ from github_agent_bridge.dashboard_data import job_session_events
 from github_agent_bridge.dispatch import DispatchResult
 from github_agent_bridge.executor import ExecutorConfig, ExecutorPool
 from github_agent_bridge.models import Notification
-from github_agent_bridge.policy import Policy
+from github_agent_bridge.policy import ModelRoute, ModelRoutes, Policy
 from github_agent_bridge.queue import JobQueue
 
 
@@ -149,6 +149,32 @@ def test_executor_records_session_activity_events(tmp_path):
     assert event_types == ["claimed", "dispatch_started", "openclaw_stdout", "openclaw_stderr", "dispatch_finished", "done"]
     stderr_event = job_session_events(db, dispatcher.jobs[0].id)[3]
     assert stderr_event["detail"] == "token=[redacted] [redacted]"
+
+
+def test_executor_records_selected_model_route_session_event(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    queue = JobQueue(db)
+    enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher()
+    policy = Policy(
+        trusted_orgs={"gisce"},
+        model_routes=ModelRoutes(
+            by_intent={
+                "review_only": ModelRoute(
+                    model="openai/gpt-5.4-mini",
+                    thinking="medium",
+                )
+            }
+        ),
+    )
+
+    pool = ExecutorPool(queue, policy, dispatcher, github=FakeGitHub(assigned=False, mentioned=True), config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    events = job_session_events(db, dispatcher.jobs[0].id)
+    route_event = next(event for event in events if event["event_type"] == "model_route_selected")
+    assert route_event["summary"] == "OpenClaw model route selected"
+    assert route_event["detail"] == "model=openai/gpt-5.4-mini thinking=medium"
 
 
 def test_unassigned_mentioned_pr_comment_stays_review_only(tmp_path):

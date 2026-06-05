@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.32.2 (2026-06-05)
+
+### Bug Fixes
+
+- Accept duplicate sync-after-merge no-op followups
+  ([`e9b18e5`](https://github.com/pilipilisbot/github-agent-bridge/commit/e9b18e5ea3891de619d436e2419986b221b51f82))
+
+- **dashboard**: Restore runtime usage to jobs page
+  ([`61b8580`](https://github.com/pilipilisbot/github-agent-bridge/commit/61b85802ca9c5c2726b2306402102e77895b0224))
+
+
 ## v0.32.1 (2026-06-05)
 
 ### Bug Fixes

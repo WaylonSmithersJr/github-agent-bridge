@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, Brain, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Link, RefreshCw, RotateCcw, Search, ShieldCheck, TerminalSquare, TimerReset, Trash2, UserCircle2, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Brain, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Gauge, Link, RefreshCw, RotateCcw, Search, ShieldCheck, TerminalSquare, TimerReset, Trash2, UserCircle2, X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -618,6 +618,10 @@ function isKnowledgePath(pathname = window.location.pathname) {
   return /^\/knowledge\/?$/.test(pathname);
 }
 
+function isSystemPath(pathname = window.location.pathname) {
+  return /^\/system\/?$/.test(pathname);
+}
+
 function repoFromScope(scope: string) {
   return scope.startsWith("repo:") ? scope.slice("repo:".length) : scope;
 }
@@ -636,16 +640,17 @@ function App() {
   const jobRouteId = selectedJobIdFromPath(pathname);
   const isJobDetailRoute = jobRouteId !== null;
   const isKnowledgeRoute = isKnowledgePath(pathname);
-  const isDashboardRoute = !isJobDetailRoute && !isKnowledgeRoute;
+  const isSystemRoute = isSystemPath(pathname);
+  const isDashboardRoute = !isJobDetailRoute && !isKnowledgeRoute && !isSystemRoute;
   const selectedJobId = jobRouteId;
-  const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: isDashboardRoute });
+  const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: isDashboardRoute || isSystemRoute });
   const dashboardStatus = useQuery({ queryKey: ["dashboard-status"], queryFn: () => api<DashboardStatus>("/api/status") });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
   const about = useQuery({ queryKey: ["about"], queryFn: () => api<About>("/api/about") });
   const actorOptions = useQuery({ queryKey: ["job-actors"], queryFn: () => api<{ actors: JobActor[] }>("/api/jobs/actors"), enabled: isDashboardRoute });
   const jobs = useQuery({ queryKey: ["jobs", filters, jobLimit], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters, jobLimit)), enabled: isDashboardRoute });
-  const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: isDashboardRoute });
-  const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => api<{ alerts: AlertRecord[] }>("/api/alerts"), enabled: isDashboardRoute });
+  const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: isSystemRoute });
+  const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => api<{ alerts: AlertRecord[] }>("/api/alerts"), enabled: isSystemRoute });
   const knowledge = useQuery({
     queryKey: ["knowledge", knowledgeRepo, knowledgeStatus],
     queryFn: () => api<KnowledgeResponse>(buildKnowledgeQuery(knowledgeRepo, knowledgeStatus)),
@@ -742,7 +747,7 @@ function App() {
     setJobLimit(initialJobLimit);
   }, []);
   const selectedJob = selectedJobId ? (detail.data?.job ?? null) : null;
-  const hasLiveJob = jobRows.some((job) => job.status === "running" || job.status === "pending") || selectedJob?.status === "running" || selectedJob?.status === "pending";
+  const hasLiveJob = jobRows.some((job) => job.status === "running" || job.status === "pending") || selectedJob?.status === "running" || selectedJob?.status === "pending" || Boolean(processes.data?.running_jobs.length);
   const now = useNow(hasLiveJob);
   const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} now={now} />;
 
@@ -759,7 +764,7 @@ function App() {
       </header>
 
       <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-3 py-4 sm:px-4 md:px-6 md:py-5">
-        <SectionNav isDashboardRoute={isDashboardRoute} isKnowledgeRoute={isKnowledgeRoute} knowledgeBadgeCount={dashboardStatus.data?.metrics?.knowledge?.proposed ?? 0} />
+        <SectionNav isDashboardRoute={isDashboardRoute} isSystemRoute={isSystemRoute} isKnowledgeRoute={isKnowledgeRoute} knowledgeBadgeCount={dashboardStatus.data?.metrics?.knowledge?.proposed ?? 0} />
         {jobRouteId !== null ? (
           <JobDetailPage
             jobId={jobRouteId}
@@ -791,6 +796,22 @@ function App() {
             onDeleteRule={deleteKnowledgeRule}
             onRefresh={() => knowledge.refetch()}
           />
+        ) : isSystemRoute ? (
+          <SystemPage
+            metrics={metrics.data?.metrics}
+            metricsLoading={metrics.isLoading}
+            metricsError={metrics.error}
+            processes={processes.data}
+            processesLoading={processes.isLoading}
+            processesError={processes.error}
+            alerts={alerts.data?.alerts}
+            alertsLoading={alerts.isLoading}
+            alertsError={alerts.error}
+            now={now}
+            onRefreshMetrics={() => metrics.refetch()}
+            onRefreshProcesses={() => processes.refetch()}
+            onRefreshAlerts={() => alerts.refetch()}
+          />
         ) : (
           <>
             {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
@@ -816,20 +837,6 @@ function App() {
                     </button>
                   </div>
                 ) : null}
-              </Panel>
-            </section>
-
-            <section className="grid gap-4">
-              <Panel title="Process activity" action={<RefreshButton onClick={() => processes.refetch()} />}>
-                {processes.error ? <Banner tone="error" text={processes.error.message} /> : null}
-                <ProcessActivity data={processes.data} loading={processes.isLoading} />
-              </Panel>
-              <Panel title="Monitor alerts" action={<RefreshButton onClick={() => alerts.refetch()} />}>
-                {alerts.error ? <Banner tone="error" text={alerts.error.message} /> : null}
-                <AlertsPanel alerts={alerts.data?.alerts} loading={alerts.isLoading} now={now} />
-              </Panel>
-              <Panel title="Runtime usage" action={<RefreshButton onClick={() => metrics.refetch()} />}>
-                <RuntimeUsageChart usage={metrics.data?.metrics.runtime_usage} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
               </Panel>
             </section>
 
@@ -963,10 +970,24 @@ function changelogPreview(body: string | undefined) {
     .slice(0, 4);
 }
 
-function SectionNav({ isDashboardRoute, isKnowledgeRoute, knowledgeBadgeCount = 0 }: { isDashboardRoute: boolean; isKnowledgeRoute: boolean; knowledgeBadgeCount?: number }) {
+function SectionNav({
+  isDashboardRoute,
+  isSystemRoute = false,
+  isKnowledgeRoute,
+  knowledgeBadgeCount = 0,
+}: {
+  isDashboardRoute: boolean;
+  isSystemRoute?: boolean;
+  isKnowledgeRoute: boolean;
+  knowledgeBadgeCount?: number;
+}) {
   return (
     <nav className="flex min-w-0 rounded-lg border border-border bg-panel p-1 shadow-sm" aria-label="Dashboard sections">
       <SectionLink href="/" active={isDashboardRoute}>Jobs</SectionLink>
+      <SectionLink href="/system" active={isSystemRoute}>
+        <Gauge className="h-4 w-4" aria-hidden />
+        <span>System</span>
+      </SectionLink>
       <SectionLink href="/knowledge" active={isKnowledgeRoute}>
         <span>Knowledge</span>
         {knowledgeBadgeCount > 0 ? (
@@ -982,6 +1003,54 @@ function SectionNav({ isDashboardRoute, isKnowledgeRoute, knowledgeBadgeCount = 
         ) : null}
       </SectionLink>
     </nav>
+  );
+}
+
+function SystemPage({
+  metrics,
+  metricsLoading,
+  metricsError,
+  processes,
+  processesLoading,
+  processesError,
+  alerts,
+  alertsLoading,
+  alertsError,
+  now,
+  onRefreshMetrics,
+  onRefreshProcesses,
+  onRefreshAlerts,
+}: {
+  metrics: MetricsSummary | undefined;
+  metricsLoading: boolean;
+  metricsError: Error | null;
+  processes: ProcessesResponse | undefined;
+  processesLoading: boolean;
+  processesError: Error | null;
+  alerts: AlertRecord[] | undefined;
+  alertsLoading: boolean;
+  alertsError: Error | null;
+  now: number;
+  onRefreshMetrics: () => void;
+  onRefreshProcesses: () => void;
+  onRefreshAlerts: () => void;
+}) {
+  const counts = metrics?.status_counts ?? {};
+  return (
+    <section className="grid gap-4" aria-label="Bridge system">
+      {metricsError ? <Banner tone="error" text={metricsError.message} /> : null}
+      <Panel title="Process activity" action={<RefreshButton onClick={onRefreshProcesses} />}>
+        {processesError ? <Banner tone="error" text={processesError.message} /> : null}
+        <ProcessActivity data={processes} loading={processesLoading} />
+      </Panel>
+      <Panel title="Monitor alerts" action={<RefreshButton onClick={onRefreshAlerts} />}>
+        {alertsError ? <Banner tone="error" text={alertsError.message} /> : null}
+        <AlertsPanel alerts={alerts} loading={alertsLoading} now={now} />
+      </Panel>
+      <Panel title="Runtime usage" action={<RefreshButton onClick={onRefreshMetrics} />}>
+        <RuntimeUsageChart usage={metrics?.runtime_usage} loading={metricsLoading} totalJobs={totalJobs(counts)} />
+      </Panel>
+    </section>
   );
 }
 
@@ -2426,6 +2495,7 @@ export {
   buildKnowledgeQuery,
   changelogPreview,
   isKnowledgePath,
+  isSystemPath,
   isRetryableStatus,
   groupSessionEvents,
   groupTranscriptEntries,

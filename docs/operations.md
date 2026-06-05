@@ -168,11 +168,12 @@ dashboards and operator tooling. It is intentionally not part of the executor
 path: it does not import the dispatcher, does not claim jobs, does not call
 OpenClaw, and opens the SQLite database read-only for job queries.
 
-The service also serves the built React dashboard at `/` and dedicated job
-views at `/jobs/{id}`. Operators can share a job URL to open the dashboard with
-that job's session, worklog, activity feed and GitHub links selected. The UI is
-a Vite + React + TypeScript app styled with Tailwind and operational components,
-using TanStack Query for API state and Recharts for percentile charts.
+The service also serves the built React dashboard at `/`, a dedicated system
+view at `/system`, and dedicated job views at `/jobs/{id}`. Operators can share
+a job URL to open the dashboard with that job's session, worklog, activity feed
+and GitHub links selected. The UI is a Vite + React + TypeScript app styled with
+Tailwind and operational components, using TanStack Query for API state and
+Recharts for percentile charts.
 The process activity API and dashboard distinguish live executor process state,
 persisted process activity, semantic job progress, and visible transcript/output
 progress so operators can tell whether a running job is merely alive or actually

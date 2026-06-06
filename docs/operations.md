@@ -265,6 +265,8 @@ GET /api/jobs/{id}/session/events
 GET /api/jobs/{id}/session/stream
 GET /api/metrics/summary
 GET /api/processes
+GET /api/systemd
+GET /api/systemd/journal/stream?unit=github-agent-bridge.service
 GET /api/alerts
 GET /api/events/stream
 ```
@@ -277,7 +279,10 @@ only this dashboard API; it does not restart or depend on
 Current scope covers the read-only API, OAuth/session guard, job detail, logs,
 summary metrics, an initial read-only React operations UI, a live `/proc`
 snapshot of executor child processes plus persisted monitor sample history
-through `GET /api/processes`, persistent monitor alert observations through
+through `GET /api/processes`, user-level systemd status for configured bridge
+services and timers through `GET /api/systemd`, live `journalctl --user -f`
+streams for those configured units through
+`GET /api/systemd/journal/stream`, persistent monitor alert observations through
 `GET /api/alerts`, the GitHub login that triggered a job when it can be derived
 from the notification or GitHub API, and safe
 OpenClaw session correlation through `GET /api/jobs/{id}/session`. New

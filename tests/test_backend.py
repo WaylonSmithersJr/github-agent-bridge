@@ -947,6 +947,47 @@ def test_dashboard_processes_exposes_live_executor_snapshot(tmp_path, monkeypatc
     assert payload["samples"] == []
 
 
+def test_dashboard_systemd_exposes_configured_bridge_units(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+
+    def fake_systemd_status():
+        return {
+            "available": True,
+            "units": [
+                {
+                    "role": "executor",
+                    "kind": "service",
+                    "unit": "github-agent-bridge.service",
+                    "active_state": "active",
+                    "sub_state": "running",
+                    "uptime_seconds": 60,
+                }
+            ],
+            "errors": [],
+        }
+
+    monkeypatch.setattr("github_agent_bridge.backend.systemd_status", fake_systemd_status)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+
+    response = client.get("/api/systemd")
+
+    assert response.status_code == 200
+    assert response.json()["units"][0]["unit"] == "github-agent-bridge.service"
+    assert response.json()["units"][0]["active_state"] == "active"
+
+
+def test_dashboard_systemd_journal_stream_rejects_unknown_units(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+
+    response = client.get("/api/systemd/journal/stream?unit=ssh.service")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "systemd_unit_not_allowed"
+
+
 def test_dashboard_exposes_persisted_process_samples_and_alerts(tmp_path, monkeypatch):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)

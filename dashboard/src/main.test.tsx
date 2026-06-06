@@ -11,6 +11,7 @@ import {
   ProductMeta,
   SectionNav,
   StatusBadge,
+  SystemdUnits,
   UserMenu,
   buildJobQuery,
   buildKnowledgeQuery,
@@ -299,6 +300,63 @@ describe("status badges", () => {
 
     expect(screen.queryByRole("button", { name: "Retry job #58" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Dismiss job #58" })).not.toBeInTheDocument();
+  });
+});
+
+describe("system page", () => {
+  it("renders systemd service and timer status cards", () => {
+    render(
+      <SystemdUnits
+        loading={false}
+        data={{
+          available: true,
+          errors: [],
+          units: [
+            {
+              role: "executor",
+              kind: "service",
+              unit: "github-agent-bridge.service",
+              load_state: "loaded",
+              active_state: "active",
+              sub_state: "running",
+              result: "success",
+              exec_main_status: "0",
+              main_pid: 123,
+              uptime_seconds: 90,
+              active_enter_timestamp: "Sat 2026-06-06 09:00:00 UTC",
+              inactive_enter_timestamp: "",
+              next_elapse: "",
+              last_trigger: "",
+              unit_file_state: "enabled",
+              ok: true,
+            },
+            {
+              role: "reader",
+              kind: "timer",
+              unit: "github-agent-bridge-reader.timer",
+              load_state: "loaded",
+              active_state: "active",
+              sub_state: "waiting",
+              result: "success",
+              exec_main_status: null,
+              main_pid: null,
+              uptime_seconds: null,
+              active_enter_timestamp: "",
+              inactive_enter_timestamp: "",
+              next_elapse: "Sat 2026-06-06 09:15:00 UTC",
+              last_trigger: "Sat 2026-06-06 09:10:00 UTC",
+              unit_file_state: "enabled",
+              ok: true,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("github-agent-bridge.service")).toBeInTheDocument();
+    expect(screen.getByText("github-agent-bridge-reader.timer")).toBeInTheDocument();
+    expect(screen.getByText("1m 30s")).toBeInTheDocument();
+    expect(screen.getByText(/next Sat 2026-06-06/)).toBeInTheDocument();
   });
 });
 

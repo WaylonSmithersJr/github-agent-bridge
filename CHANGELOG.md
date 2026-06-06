@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.35.0 (2026-06-06)
+
+### Features
+
+- Show systemd units in system dashboard
+  ([`bc7818e`](https://github.com/pilipilisbot/github-agent-bridge/commit/bc7818efc997747d7fd545690883ad95a1173451))
+
+### Refactoring
+
+- Compact systemd dashboard design
+  ([`47bcb3c`](https://github.com/pilipilisbot/github-agent-bridge/commit/47bcb3c7952b3acb47c8bc74007a72f207a4084f))
+
+
 ## v0.34.0 (2026-06-06)
 
 ### Documentation

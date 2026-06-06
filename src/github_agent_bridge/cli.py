@@ -6,13 +6,14 @@ import json
 import mailbox
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 from . import feedback
 from .actors import backfill_trigger_actors
-from .autoupdate import plan_update, record_update_plan
+from .autoupdate import apply_update_plan, plan_update, record_update_plan
 from .dashboard_data import inspect_db_read_only, list_jobs
 from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
 from .executor import ExecutorConfig, ExecutorPool
@@ -254,9 +255,22 @@ def cmd_update(args: argparse.Namespace) -> int:
         },
     )
     payload = {"plan": plan}
+    if args.apply:
+        install_command = shlex.split(args.install_command) if args.install_command else None
+        payload["execution"] = apply_update_plan(
+            plan,
+            repo=args.repo,
+            install_command=install_command,
+            systemctl_bin=args.systemctl_bin,
+            run_install=not args.skip_install,
+            run_systemd=not args.skip_systemd_actions,
+        )
     if args.record:
         payload["state"] = record_update_plan(args.db, plan)
     print(json.dumps(payload, ensure_ascii=False, indent=2 if args.json else None))
+    execution = payload.get("execution")
+    if isinstance(execution, dict) and (execution.get("blocked") or not execution.get("applied")):
+        return 2
     return 0
 
 
@@ -376,6 +390,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--monitor-timer-unit", default=os.getenv("GITHUB_AGENT_BRIDGE_MONITOR_TIMER_UNIT") or "github-agent-bridge-monitor.timer")
     s.add_argument("--feedback-timer-unit", default=os.getenv("GITHUB_AGENT_BRIDGE_FEEDBACK_TIMER_UNIT") or "github-agent-bridge-feedback.timer")
     s.add_argument("--record", action="store_true", help="persist the update decision in the bridge state table")
+    s.add_argument("--apply", action="store_true", help="install the target release and run the plan's immediate systemd actions")
+    s.add_argument("--install-command", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_INSTALL_COMMAND"), help="override the package install command used by --apply")
+    s.add_argument("--systemctl-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_SYSTEMCTL_BIN", "systemctl"))
+    s.add_argument("--skip-install", action="store_true", help="with --apply, run service actions without installing the target package")
+    s.add_argument("--skip-systemd-actions", action="store_true", help="with --apply, install the package without running systemd actions")
     s.add_argument("--json", action="store_true", help="pretty-print structured JSON")
     s.set_defaults(func=cmd_update)
     s = sub.add_parser("feedback-rules", help="list curated feedback rules")

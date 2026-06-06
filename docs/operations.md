@@ -111,8 +111,7 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 The planner is deliberately conservative. Dashboard-only changes can be staged
 while executor jobs are active, executor/shared changes set a pending reload
 when the queue is busy, and SQLite schema changes are deferred while active jobs
-exist. This first workflow records the safe action and blocker state; package
-installation and systemd restarts remain operator-controlled.
+exist.
 
 The JSON output also includes a `service_plan` for user-level systemd. It names
 the executor, dashboard, reader, monitor, and feedback units, shows whether a
@@ -142,6 +141,31 @@ The private env file can also set `GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO`,
 `GITHUB_AGENT_BRIDGE_READER_TIMER_UNIT`,
 `GITHUB_AGENT_BRIDGE_MONITOR_TIMER_UNIT`, and
 `GITHUB_AGENT_BRIDGE_FEEDBACK_TIMER_UNIT`.
+
+To apply the immediate safe subset in one operator command, add `--apply`.
+This installs the target release with pip and runs only the `service_plan`
+`immediate` systemd actions. Deferred actions, such as an executor restart while
+jobs are active, remain recorded for a later quiet window:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  update --repo-dir /path/to/github-agent-bridge --record --apply --json
+```
+
+The default install command is:
+
+```bash
+python -m pip install git+https://github.com/pilipilisbot/github-agent-bridge.git@<target-tag>
+```
+
+Set `GITHUB_AGENT_BRIDGE_AUTOUPDATE_INSTALL_COMMAND` or pass
+`--install-command` when the deployment needs a local wheelhouse, a different
+Python executable, or another package source. Use `--skip-install` or
+`--skip-systemd-actions` for a partial operator-controlled run.
+
+`--apply` refuses releases that include SQLite schema/migration changes for now.
+Those still need the follow-up migration workflow with DB backup, migration
+status tracking, rollback/degraded-state handling, and post-checks.
 
 Running-job age is not treated as a failure signal by itself. The monitor uses
 the latest semantic heartbeat, visible OpenClaw output, and persisted

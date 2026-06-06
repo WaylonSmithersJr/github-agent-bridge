@@ -4,7 +4,14 @@ import json
 import subprocess
 from pathlib import Path
 
-from github_agent_bridge.autoupdate import load_update_state, plan_systemd_actions, plan_update, record_update_plan
+from github_agent_bridge.autoupdate import (
+    apply_update_plan,
+    default_install_command,
+    load_update_state,
+    plan_systemd_actions,
+    plan_update,
+    record_update_plan,
+)
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
@@ -175,3 +182,89 @@ def test_systemd_plan_accepts_custom_unit_names():
     )
 
     assert [item["unit"] for item in plan["immediate"]] == ["custom-dashboard.service", "custom-executor.service"]
+
+
+def test_default_install_command_targets_release_tag():
+    assert default_install_command("pilipilisbot/github-agent-bridge", "v1.2.4", python_bin="python") == [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "git+https://github.com/pilipilisbot/github-agent-bridge.git@v1.2.4",
+    ]
+
+
+def test_apply_update_plan_installs_and_runs_immediate_systemd_actions():
+    calls: list[list[str]] = []
+
+    def runner(args, cwd: Path | None):
+        calls.append(list(args))
+        return completed("ok")
+
+    execution = apply_update_plan(
+        {
+            "target": {"tag_name": "v1.2.4"},
+            "decision": "stage_full_reload",
+            "up_to_date": False,
+            "classification": {"migration_files": []},
+            "service_plan": {
+                "immediate": [
+                    {"command": "try-restart", "unit": "github-agent-bridge-dashboard.service", "reason": "refresh dashboard"},
+                    {"command": "restart", "unit": "github-agent-bridge.service", "reason": "queue is quiet"},
+                ]
+            },
+        },
+        repo="pilipilisbot/github-agent-bridge",
+        install_command=["python", "-m", "pip", "install", "pkg"],
+        runner=runner,
+    )
+
+    assert execution["applied"] is True
+    assert execution["blocked"] == []
+    assert calls == [
+        ["python", "-m", "pip", "install", "pkg"],
+        ["systemctl", "--user", "try-restart", "github-agent-bridge-dashboard.service"],
+        ["systemctl", "--user", "restart", "github-agent-bridge.service"],
+    ]
+
+
+def test_apply_update_plan_blocks_migration_execution_before_install():
+    calls: list[list[str]] = []
+
+    execution = apply_update_plan(
+        {
+            "target": {"tag_name": "v1.2.4"},
+            "decision": "stage_full_reload",
+            "classification": {"migration_files": ["src/github_agent_bridge/sql/schema.sql"]},
+            "service_plan": {"immediate": [{"command": "restart", "unit": "github-agent-bridge.service"}]},
+        },
+        runner=lambda args, cwd: calls.append(list(args)) or completed("ok"),
+    )
+
+    assert execution["applied"] is False
+    assert execution["blocked"] == ["migration_execution_not_supported"]
+    assert calls == []
+
+
+def test_apply_update_plan_stops_before_services_when_install_fails():
+    calls: list[list[str]] = []
+
+    def runner(args, cwd: Path | None):
+        calls.append(list(args))
+        if args[:3] == ["python", "-m", "pip"]:
+            return completed("install failed", returncode=1)
+        return completed("service should not run")
+
+    execution = apply_update_plan(
+        {
+            "target": {"tag_name": "v1.2.4"},
+            "decision": "stage_dashboard_reload",
+            "classification": {"migration_files": []},
+            "service_plan": {"immediate": [{"command": "try-restart", "unit": "github-agent-bridge-dashboard.service"}]},
+        },
+        install_command=["python", "-m", "pip", "install", "pkg"],
+        runner=runner,
+    )
+
+    assert execution["applied"] is False
+    assert calls == [["python", "-m", "pip", "install", "pkg"]]

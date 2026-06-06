@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.36.0 (2026-06-06)
+
+### Features
+
+- Inline systemd journal tails
+  ([`e47517a`](https://github.com/pilipilisbot/github-agent-bridge/commit/e47517aa470b10c789f9ce37bc23330841a01698))
+
+
 ## v0.35.0 (2026-06-06)
 
 ### Features

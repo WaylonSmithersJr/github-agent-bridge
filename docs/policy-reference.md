@@ -630,6 +630,74 @@ With this policy, trusted source notifications for comment/assignment actions be
 - Use `gab monitor` after policy changes to verify queue health.
 - Use `gab jobs --limit 20` to inspect recent decisions.
 
+## Model routing
+
+`modelRoutes` optionally adds `openclaw agent --model` and/or `--thinking`
+overrides for normal GitHub work dispatches. If `modelRoutes` is absent, or no
+route matches, the bridge does not add either flag and OpenClaw keeps its
+configured default behavior.
+
+```json
+{
+  "modelRoutes": {
+    "default": {
+      "model": "openai/gpt-5.5",
+      "thinking": "medium"
+    },
+    "byIntent": {
+      "review_only": {
+        "model": "openai/gpt-5.4-mini",
+        "thinking": "medium"
+      }
+    },
+    "byAction": {
+      "sync_after_merge": {
+        "model": "openai/gpt-5.4-mini",
+        "thinking": "low"
+      },
+      "workflow_run_failed": {
+        "model": "openai/gpt-5.4-mini",
+        "thinking": "medium"
+      }
+    },
+    "byRepo": {
+      "gisce/erp": {
+        "default": {
+          "model": "openai/gpt-5.5",
+          "thinking": "medium"
+        },
+        "byAction": {
+          "sync_after_merge": {
+            "model": "openai/gpt-5.4-mini",
+            "thinking": "low"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Resolution order is deterministic:
+
+1. repo + action
+2. repo + intent
+3. repo default
+4. global action
+5. global intent
+6. global default
+7. no override
+
+Each route is an object with optional `model` and `thinking` fields. A route can
+set only one field; the bridge appends only the flags that are configured on the
+selected route. Supported `thinking` values are `off`, `minimal`, `low`,
+`medium`, `high`, `xhigh`, `adaptive`, and `max`; invalid values fail policy
+load with a clear error.
+
+When a configured route is selected, the executor records a
+`model_route_selected` session event and semantic progress row so job detail and
+session views can explain which override was used.
+
 ### Comment value / no-op reaction rule
 
 For PR/issue comments that produce `reply_comment`, the bridge checks the actual GitHub comment before dispatch. If the comment is not addressed to the authenticated bot and the bot is not assigned, the bridge reacts with 👀 plus 👍 and skips agent dispatch. “Addressed to the bot” currently means the bot is the first mentioned user; later mentions can be merely referential. This avoids low-value “I checked / no extra input” comments when the conversation is clearly directed at someone else.

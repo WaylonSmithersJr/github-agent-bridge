@@ -507,6 +507,11 @@ class OpenClawDispatcher:
         cmd = [self.openclaw_bin, "agent"]
         if agent:
             cmd += ["--agent", agent]
+        model_route = policy.model_route_for(job.repo, job.action, job.work_intent)
+        if model_route.model:
+            cmd += ["--model", model_route.model]
+        if model_route.thinking:
+            cmd += ["--thinking", model_route.thinking]
         agent_timeout = self.timeout_for(job)
         session_id = normalize_session_id(str(job.metadata.get("openclaw_session_id") or session_id_for_job(job.id)))
         session_key = session_key_for_work(job.work_key)

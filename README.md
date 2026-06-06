@@ -113,6 +113,20 @@ The bridge is conservative by default. `policy.json` decides what is trusted, wh
   "repoRoles": {
     "your-org/your-repo": "maintainer"
   },
+  "modelRoutes": {
+    "byIntent": {
+      "review_only": {
+        "model": "gpt-5.4-mini",
+        "thinking": "medium"
+      }
+    },
+    "byAction": {
+      "sync_after_merge": {
+        "model": "gpt-5.4-mini",
+        "thinking": "low"
+      }
+    }
+  },
   "actions": {
     "auto": ["archive_notification"],
     "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"],
@@ -124,6 +138,8 @@ The bridge is conservative by default. `policy.json` decides what is trusted, wh
 For PR review/discussion follow-ups, the bridge defaults to `review_only` unless the human explicitly asks to implement/apply/fix/push, assigns/has assigned the bot to the PR/issue, or the PR was authored by the bot and the review/comment is asking it to adjust its own work.
 
 Repository roles control **judgment**; work intent controls **allowed actions**. For example, `owner` + `review_only` means “review with owner-level judgment, but do not modify code or PR metadata”.
+
+`modelRoutes` can optionally choose the OpenClaw `--model` and `--thinking` values by action, work intent, or repository. If no route matches, dispatch uses OpenClaw's normal defaults. These routes apply to normal agent jobs; feedback-learning model settings are configured separately under `feedbackLearning`.
 
 Full reference: [`docs/policy-reference.md`](docs/policy-reference.md).
 

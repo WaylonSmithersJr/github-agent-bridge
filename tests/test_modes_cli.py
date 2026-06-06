@@ -1,6 +1,6 @@
 from github_agent_bridge.dispatch import GitHubClient, OpenClawDispatcher, RunMode
 from github_agent_bridge.models import GitHubContext, Job
-from github_agent_bridge.policy import Policy
+from github_agent_bridge.policy import ModelRoute, ModelRoutes, Policy
 
 
 def make_job(work_intent="work_allowed"):
@@ -65,6 +65,8 @@ def test_shadow_dispatch_returns_command_without_running():
     assert result.ok is True
     assert result.command
     assert "agent" in result.command
+    assert "--model" not in result.command
+    assert "--thinking" not in result.command
     assert "--session-id" in result.command
     assert result.command[result.command.index("--session-id") + 1] == "github-agent-bridge-job-1"
     assert "--session-key" in result.command
@@ -109,6 +111,27 @@ def test_review_only_dispatch_uses_shorter_timeout():
     assert result.command
     timeout_idx = result.command.index("--timeout")
     assert result.command[timeout_idx + 1] == "900"
+
+
+def test_dispatch_adds_configured_model_route_to_command():
+    dispatcher = OpenClawDispatcher(openclaw_bin="definitely-not-present", mode=RunMode.SHADOW)
+    policy = Policy(
+        trusted_orgs={"gisce"},
+        model_routes=ModelRoutes(
+            by_action={
+                "reply_comment": ModelRoute(
+                    model="openai/gpt-5.4-mini",
+                    thinking="low",
+                )
+            }
+        ),
+    )
+
+    result = dispatcher.dispatch(make_job(), policy, reaction_ok=True)
+
+    assert result.command
+    assert result.command[result.command.index("--model") + 1] == "openai/gpt-5.4-mini"
+    assert result.command[result.command.index("--thinking") + 1] == "low"
 
 
 def test_live_dispatch_streams_openclaw_output_to_activity_callback(tmp_path):

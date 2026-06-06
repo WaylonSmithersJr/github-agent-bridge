@@ -101,6 +101,72 @@ def test_policy_from_file_loads_feedback_learning(tmp_path):
     assert policy.feedback_learning.session_id == "feedback-test"
 
 
+def test_policy_from_file_loads_model_routes_and_resolution_order(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text(
+        """{
+          "modelRoutes": {
+            "default": {"model": "openai/gpt-5.5", "thinking": "medium"},
+            "byIntent": {
+              "review_only": {"model": "openai/gpt-5.4-mini", "thinking": "medium"}
+            },
+            "byAction": {
+              "sync_after_merge": {"model": "openai/gpt-5.4-mini", "thinking": "low"}
+            },
+            "byRepo": {
+              "GISCE/ERP": {
+                "default": {"model": "repo-default", "thinking": "high"},
+                "byIntent": {
+                  "review_only": {"model": "repo-review", "thinking": "low"}
+                },
+                "byAction": {
+                  "sync_after_merge": {"model": "repo-sync", "thinking": "minimal"}
+                }
+              }
+            }
+          }
+        }"""
+    )
+
+    policy = Policy.from_file(policy_file)
+
+    route = policy.model_route_for("gisce/erp", "sync_after_merge", "work_allowed")
+    assert route.model == "repo-sync"
+    assert route.thinking == "minimal"
+
+    route = policy.model_route_for("gisce/erp", "reply_comment", "review_only")
+    assert route.model == "repo-review"
+    assert route.thinking == "low"
+
+    route = policy.model_route_for("gisce/erp", "reply_comment", "work_allowed")
+    assert route.model == "repo-default"
+    assert route.thinking == "high"
+
+    route = policy.model_route_for("other/repo", "sync_after_merge", "work_allowed")
+    assert route.model == "openai/gpt-5.4-mini"
+    assert route.thinking == "low"
+
+    route = policy.model_route_for("other/repo", "reply_comment", "review_only")
+    assert route.model == "openai/gpt-5.4-mini"
+    assert route.thinking == "medium"
+
+    route = policy.model_route_for("other/repo", "reply_comment", "work_allowed")
+    assert route.model == "openai/gpt-5.5"
+    assert route.thinking == "medium"
+
+
+def test_policy_from_file_rejects_invalid_model_route_thinking(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text('{"modelRoutes": {"byAction": {"sync_after_merge": {"thinking": "turbo"}}}}')
+
+    try:
+        Policy.from_file(policy_file)
+    except ValueError as exc:
+        assert "modelRoutes.byAction.sync_after_merge.thinking" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for invalid model route thinking")
+
+
 def test_policy_from_file_rejects_invalid_feedback_learning_confidence(tmp_path):
     policy_file = tmp_path / "policy.json"
     policy_file.write_text('{"feedbackLearning": {"minConfidence": 1.7}}')

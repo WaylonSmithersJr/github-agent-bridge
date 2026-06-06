@@ -438,6 +438,37 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 If no model is set by CLI or policy, OpenClaw uses its default model. The model
 used for each classification is stored in `feedback_rule_proposals.model`.
 
+Normal GitHub work agents use a separate `modelRoutes` policy section. Use it
+to move low-risk actions to lighter models without changing implementation jobs:
+
+```json
+{
+  "modelRoutes": {
+    "byAction": {
+      "sync_after_merge": {
+        "model": "gpt-5.4-mini",
+        "thinking": "low"
+      },
+      "workflow_run_failed": {
+        "model": "gpt-5.4-mini",
+        "thinking": "medium"
+      }
+    },
+    "byIntent": {
+      "review_only": {
+        "model": "gpt-5.4-mini",
+        "thinking": "medium"
+      }
+    }
+  }
+}
+```
+
+The executor adds `--model` and `--thinking` only for the selected configured
+route. Configured selections are recorded as `model_route_selected` job session
+events so the dashboard can explain model choices after token-pressure or
+compaction incidents.
+
 For unattended operation, install and enable:
 
 ```bash

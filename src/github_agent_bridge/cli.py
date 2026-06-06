@@ -17,6 +17,7 @@ from .autoupdate import apply_update_plan, plan_update, record_update_plan
 from .dashboard_data import inspect_db_read_only, list_jobs
 from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
 from .executor import ExecutorConfig, ExecutorPool
+from .github_notifications import list_notification_threads, mark_thread_read, notification_from_github_thread
 from .models import Notification, utc_now
 from .monitor import MonitorThresholds, monitor, report_json
 from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS
@@ -141,6 +142,37 @@ def cmd_read_imap_once(args: argparse.Namespace) -> int:
     cfg = ImapConfig(args.imap_host, args.imap_port, args.email, args.password, imap_mailbox_arg(args.mailbox))
     count = ImapReader(cfg, q, policy, mark_seen=args.mark_seen).fetch_once()
     print(json.dumps({"enqueued_or_seen": count, "mark_seen": args.mark_seen}, ensure_ascii=False))
+    return 0
+
+
+def cmd_read_github_notifications_once(args: argparse.Namespace) -> int:
+    q = JobQueue(args.db); policy = load_policy(args.policy)
+    threads = list_notification_threads(args.gh_bin, all_threads=args.all, participating=args.participating)
+    count = 0
+    marked_read = 0
+    results = []
+    for thread in threads:
+        converted = notification_from_github_thread(thread, args.gh_bin)
+        if converted is None:
+            continue
+        job, state = q.enqueue(converted.notification, policy)
+        count += 1
+        if args.mark_read and state in {"enqueued", "duplicate", "coalesced"}:
+            mark_thread_read(converted.thread_id, args.gh_bin)
+            marked_read += 1
+        if args.verbose:
+            results.append({
+                "thread_id": converted.thread_id,
+                "state": state,
+                "job_id": job.id if job else None,
+                "work_key": job.work_key if job else None,
+                "subject": converted.notification.subject,
+                "url": converted.html_url,
+            })
+    payload = {"enqueued_or_seen": count, "mark_read": args.mark_read, "marked_read": marked_read}
+    if args.verbose:
+        payload["threads"] = results
+    print(json.dumps(payload, ensure_ascii=False, indent=2 if args.verbose else None))
     return 0
 
 
@@ -338,6 +370,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--password", default=os.getenv("GITHUB_AGENT_BRIDGE_PASSWORD", ""))
     s.add_argument("--mailbox", default=os.getenv("GITHUB_AGENT_BRIDGE_MAILBOX", "INBOX")); s.add_argument("--mark-seen", action="store_true", help="mark GitHub notifications as seen; leave off for shadow mode")
     s.set_defaults(func=cmd_read_imap_once)
+    s = sub.add_parser("read-github-notifications-once", help="read GitHub notification threads through gh api and enqueue them")
+    s.add_argument("--gh-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_GH_BIN", "gh"))
+    s.add_argument("--all", action="store_true", help="include read notifications; default reads unread notifications only")
+    s.add_argument("--participating", action="store_true", help="only include notifications where the authenticated user is participating")
+    s.add_argument("--mark-read", action="store_true", help="mark GitHub notification threads as read after enqueue/dedup/coalesce")
+    s.add_argument("--verbose", action="store_true")
+    s.set_defaults(func=cmd_read_github_notifications_once)
     s = sub.add_parser("run")
     s.add_argument("--mode", choices=[m.value for m in RunMode], default=RunMode.SHADOW.value)
     s.add_argument("--workers", type=int, default=4); s.add_argument("--once", action="store_true")

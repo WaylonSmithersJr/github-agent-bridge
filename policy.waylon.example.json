@@ -1,0 +1,52 @@
+{
+  "source": {
+    "from": ["notifications@github.com"]
+  },
+  "botLogins": ["WaylonSmithersJr"],
+  "trustedRepos": [
+    "waylonsmithersjr/proton-web-agent",
+    "waylonsmithersjr/github-agent-bridge"
+  ],
+  "enabledRepos": [
+    "waylonsmithersjr/proton-web-agent",
+    "waylonsmithersjr/github-agent-bridge"
+  ],
+  "repoRoutes": {
+    "waylonsmithersjr/proton-web-agent": {
+      "agent": "main",
+      "channel": "telegram",
+      "to": "telegram:345504031"
+    },
+    "waylonsmithersjr/github-agent-bridge": {
+      "agent": "main",
+      "channel": "telegram",
+      "to": "telegram:345504031"
+    }
+  },
+  "repoRoles": {
+    "waylonsmithersjr/proton-web-agent": "maintainer",
+    "waylonsmithersjr/github-agent-bridge": "maintainer"
+  },
+  "actions": {
+    "auto": ["archive_notification"],
+    "trustedAuto": ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"],
+    "ask": []
+  },
+  "modelRoutes": {
+    "byIntent": {
+      "review_only": {
+        "thinking": "medium"
+      }
+    },
+    "byAction": {
+      "sync_after_merge": {
+        "thinking": "low"
+      }
+    }
+  },
+  "feedbackLearning": {
+    "enabled": true,
+    "thinking": "low",
+    "sessionId": "github-agent-bridge-feedback"
+  }
+}

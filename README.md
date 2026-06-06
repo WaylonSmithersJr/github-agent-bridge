@@ -91,6 +91,17 @@ gab --db "$DB" --policy ./policy.example.json enqueue-comment-url \
 gab --db "$DB" --policy ./policy.example.json run --mode shadow --once
 ```
 
+Waylon/OpenClaw fork note: this fork also supports reading GitHub notification
+threads directly through the GitHub API, which is useful when the assistant's
+mailbox does not provide IMAP:
+
+```bash
+gab --db "$DB" --policy ./policy.waylon.example.json read-github-notifications-once --verbose
+gab --db "$DB" --policy ./policy.waylon.example.json run --mode shadow --once
+```
+
+See [`docs/waylon-openclaw-setup.md`](docs/waylon-openclaw-setup.md).
+
 ## Policy in one screen
 
 The bridge is conservative by default. `policy.json` decides what is trusted, what is in scope, where work is delivered, and how the agent should behave.

@@ -202,6 +202,8 @@ The process activity API and dashboard distinguish live executor process state,
 persisted process activity, semantic job progress, and visible transcript/output
 progress so operators can tell whether a running job is merely alive or actually
 making useful progress.
+The System page lists configured user-level systemd units and lets operators
+expand a unit row to follow its live journal tail in place.
 Timestamps stay stored and returned by the API in UTC, while the browser renders
 them in the viewer's local timezone from `Intl.DateTimeFormat`; hovering a
 rendered timestamp shows the UTC value.

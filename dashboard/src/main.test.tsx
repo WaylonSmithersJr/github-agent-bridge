@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -304,6 +304,25 @@ describe("status badges", () => {
 });
 
 describe("system page", () => {
+  const systemdUnit = {
+    role: "executor",
+    kind: "service",
+    unit: "github-agent-bridge.service",
+    load_state: "loaded",
+    active_state: "active",
+    sub_state: "running",
+    result: "success",
+    exec_main_status: "0",
+    main_pid: 123,
+    uptime_seconds: 90,
+    active_enter_timestamp: "Sat 2026-06-06 09:00:00 UTC",
+    inactive_enter_timestamp: "",
+    next_elapse: "",
+    last_trigger: "",
+    unit_file_state: "enabled",
+    ok: true,
+  };
+
   it("renders systemd service and timer status cards", () => {
     render(
       <SystemdUnits
@@ -312,24 +331,7 @@ describe("system page", () => {
           available: true,
           errors: [],
           units: [
-            {
-              role: "executor",
-              kind: "service",
-              unit: "github-agent-bridge.service",
-              load_state: "loaded",
-              active_state: "active",
-              sub_state: "running",
-              result: "success",
-              exec_main_status: "0",
-              main_pid: 123,
-              uptime_seconds: 90,
-              active_enter_timestamp: "Sat 2026-06-06 09:00:00 UTC",
-              inactive_enter_timestamp: "",
-              next_elapse: "",
-              last_trigger: "",
-              unit_file_state: "enabled",
-              ok: true,
-            },
+            systemdUnit,
             {
               role: "reader",
               kind: "timer",
@@ -357,6 +359,49 @@ describe("system page", () => {
     expect(screen.getByText("github-agent-bridge-reader.timer")).toBeInTheDocument();
     expect(screen.getByText("1m 30s")).toBeInTheDocument();
     expect(screen.getByText(/next Sat 2026-06-06/)).toBeInTheDocument();
+  });
+
+  it("streams a unit journal when its process row is expanded", async () => {
+    const listeners = new Map<string, (message: MessageEvent) => void>();
+    const close = vi.fn();
+    const EventSourceMock = vi.fn(function (this: EventSource) {
+      this.addEventListener = ((event: string, callback: (message: MessageEvent) => void) => {
+        listeners.set(event, callback);
+      }) as EventSource["addEventListener"];
+      this.close = close;
+      this.onerror = null;
+    });
+    vi.stubGlobal("EventSource", EventSourceMock);
+
+    render(
+      <SystemdUnits
+        loading={false}
+        data={{
+          available: true,
+          errors: [],
+          units: [systemdUnit],
+        }}
+      />,
+    );
+
+    expect(EventSourceMock).not.toHaveBeenCalled();
+
+    const rowSummary = screen.getByText("github-agent-bridge.service").closest("summary");
+    expect(rowSummary).not.toBeNull();
+    fireEvent.click(rowSummary!);
+
+    await waitFor(() => expect(EventSourceMock).toHaveBeenCalledWith("/api/systemd/journal/stream?unit=github-agent-bridge.service"));
+    act(() => {
+      listeners.get("journal_line")?.(new MessageEvent("journal_line", { data: JSON.stringify({ unit: "github-agent-bridge.service", line: "started worker" }) }));
+    });
+
+    expect(screen.getByText("started worker")).toBeInTheDocument();
+    expect(screen.getByText("1 lines streamed")).toBeInTheDocument();
+
+    fireEvent.click(rowSummary!);
+
+    await waitFor(() => expect(close).toHaveBeenCalled());
+    vi.unstubAllGlobals();
   });
 });
 

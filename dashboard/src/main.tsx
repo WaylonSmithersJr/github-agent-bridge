@@ -1101,10 +1101,7 @@ function SystemPage({
     <section className="grid gap-4" aria-label="Bridge system">
       <Panel title="Systemd" action={<RefreshButton onClick={onRefreshSystemd} />}>
         {systemdError ? <Banner tone="error" text={systemdError.message} /> : null}
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
-          <SystemdUnits data={systemd} loading={systemdLoading} />
-          <JournalPanel units={systemd?.units ?? []} />
-        </div>
+        <SystemdUnits data={systemd} loading={systemdLoading} />
       </Panel>
       <Panel title="Process activity" action={<RefreshButton onClick={onRefreshProcesses} />}>
         {processesError ? <Banner tone="error" text={processesError.message} /> : null}
@@ -2355,34 +2352,44 @@ function SystemdSummaryMetric({ label, value, tone = "neutral" }: { label: strin
 }
 
 function SystemdUnitRow({ unit }: { unit: SystemdUnit }) {
+  const [isOpen, setIsOpen] = React.useState(false);
   const active = unit.active_state === "active";
   const failed = unit.active_state === "failed" || unit.result === "failed";
   const schedule = unit.next_elapse || unit.last_trigger || "n/a";
   return (
-    <div className="grid min-w-0 grid-cols-2 gap-2 px-3 py-3 text-sm md:grid-cols-[minmax(0,1.35fr)_90px_120px_90px_minmax(0,1fr)] md:items-center md:gap-3">
-      <div className="col-span-2 min-w-0 md:col-span-1">
-        <div className="truncate font-mono text-xs font-semibold text-foreground">{unit.unit}</div>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold uppercase text-muted">
-          <span>{unit.role}</span>
-          <span>{unit.kind}</span>
-          <span>{unit.load_state}</span>
+    <details className="group min-w-0" open={isOpen} onToggle={(event) => setIsOpen(event.currentTarget.open)}>
+      <summary className="grid min-w-0 cursor-pointer list-none grid-cols-2 gap-2 px-3 py-3 text-sm marker:hidden hover:bg-slate-50 md:grid-cols-[minmax(0,1.35fr)_90px_120px_90px_minmax(0,1fr)] md:items-center md:gap-3">
+        <div className="col-span-2 min-w-0 md:col-span-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted transition-transform group-open:rotate-180" aria-hidden />
+            <span className="truncate font-mono text-xs font-semibold text-foreground">{unit.unit}</span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-5 text-[11px] font-semibold uppercase text-muted">
+            <span>{unit.role}</span>
+            <span>{unit.kind}</span>
+            <span>{unit.load_state}</span>
+            <span>{isOpen ? "following log" : "expand log"}</span>
+          </div>
         </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 md:block">
-        <span className="text-[11px] font-semibold uppercase text-muted md:hidden">Status</span>
-        <span className={cn("inline-flex h-6 items-center rounded-full border px-2 text-xs font-semibold", failed ? "border-red-300 bg-red-50 text-red-700" : active ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-300 bg-slate-50 text-slate-700")}>
-          {unit.active_state}
-        </span>
-      </div>
-      <SystemdFact label="State" value={unit.sub_state} detail={unit.result || "unknown"} />
-      <SystemdFact label="PID" value={unit.main_pid ? String(unit.main_pid) : "n/a"} detail={formatSeconds(unit.uptime_seconds)} />
-      <div className="col-span-2 min-w-0 md:col-span-1">
-        <div className="text-[11px] font-semibold uppercase text-muted md:hidden">Schedule</div>
-        <div className="truncate font-mono text-[11px] text-foreground" title={schedule}>
-          {unit.next_elapse ? `next ${unit.next_elapse}` : schedule}
+        <div className="flex flex-wrap items-center gap-2 md:block">
+          <span className="text-[11px] font-semibold uppercase text-muted md:hidden">Status</span>
+          <span className={cn("inline-flex h-6 items-center rounded-full border px-2 text-xs font-semibold", failed ? "border-red-300 bg-red-50 text-red-700" : active ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-300 bg-slate-50 text-slate-700")}>
+            {unit.active_state}
+          </span>
         </div>
+        <SystemdFact label="State" value={unit.sub_state} detail={unit.result || "unknown"} />
+        <SystemdFact label="PID" value={unit.main_pid ? String(unit.main_pid) : "n/a"} detail={formatSeconds(unit.uptime_seconds)} />
+        <div className="col-span-2 min-w-0 md:col-span-1">
+          <div className="text-[11px] font-semibold uppercase text-muted md:hidden">Schedule</div>
+          <div className="truncate font-mono text-[11px] text-foreground" title={schedule}>
+            {unit.next_elapse ? `next ${unit.next_elapse}` : schedule}
+          </div>
+        </div>
+      </summary>
+      <div className="border-t border-border bg-slate-50 px-3 pb-3 pt-2">
+        <LiveJournalTail unit={unit.unit} active={isOpen} />
       </div>
-    </div>
+    </details>
   );
 }
 
@@ -2396,23 +2403,19 @@ function SystemdFact({ label, value, detail }: { label: string; value: string; d
   );
 }
 
-function JournalPanel({ units }: { units: SystemdUnit[] }) {
-  const [selectedUnit, setSelectedUnit] = React.useState("");
+function LiveJournalTail({ unit, active }: { unit: string; active: boolean }) {
   const [lines, setLines] = React.useState<JournalLine[]>([]);
   const [error, setError] = React.useState("");
-  const availableUnits = units.map((unit) => unit.unit);
+  const scrollRef = React.useRef<HTMLDivElement | null>(null);
   React.useEffect(() => {
-    if (selectedUnit && availableUnits.includes(selectedUnit)) return;
-    setSelectedUnit(availableUnits[0] ?? "");
-  }, [availableUnits.join("\n"), selectedUnit]);
-  React.useEffect(() => {
-    if (!selectedUnit) {
+    if (!active) {
       setLines([]);
+      setError("");
       return;
     }
     setLines([]);
     setError("");
-    const source = new EventSource(`/api/systemd/journal/stream?unit=${encodeURIComponent(selectedUnit)}`);
+    const source = new EventSource(`/api/systemd/journal/stream?unit=${encodeURIComponent(unit)}`);
     source.addEventListener("journal_line", (message) => {
       const payload = parseSseData<JournalLine>(message);
       if (!payload) return;
@@ -2424,29 +2427,25 @@ function JournalPanel({ units }: { units: SystemdUnit[] }) {
     });
     source.onerror = () => undefined;
     return () => source.close();
-  }, [selectedUnit]);
+  }, [active, unit]);
 
-  if (availableUnits.length === 0) return <EmptyState text="No configured unit to stream." />;
+  React.useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [lines]);
+
   return (
-    <div className="grid min-w-0 gap-3 rounded-md border border-border bg-slate-50 p-3">
-      <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+    <div className="grid min-w-0 gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-xs font-semibold uppercase text-muted">Live journal</div>
-          <div className="mt-1 truncate font-mono text-[11px] text-muted">{lines.length > 0 ? `${lines.length} lines streamed` : "waiting for journal output"}</div>
+          <div className="text-[11px] font-semibold uppercase text-muted">Live journal</div>
+          <div className="mt-0.5 truncate font-mono text-[11px] text-muted">{lines.length > 0 ? `${lines.length} lines streamed` : "waiting for journal output"}</div>
         </div>
-        <label className="sr-only" htmlFor="journal-unit">
-          Unit
-        </label>
-        <select id="journal-unit" className="h-9 min-w-0 rounded-md border border-border bg-white px-2 font-mono text-xs" value={selectedUnit} onChange={(event) => setSelectedUnit(event.target.value)}>
-          {units.map((unit) => (
-            <option key={unit.unit} value={unit.unit}>
-              {unit.unit}
-            </option>
-          ))}
-        </select>
+        <div className="font-mono text-[11px] text-muted">journalctl -f</div>
       </div>
       {error ? <Banner tone="error" text={error} /> : null}
-      <div className="h-72 overflow-auto rounded-md border border-slate-800 bg-slate-950 p-3 font-mono text-xs leading-relaxed text-slate-100">
+      <div ref={scrollRef} className="h-72 overflow-auto rounded-md border border-slate-800 bg-slate-950 p-3 font-mono text-xs leading-relaxed text-slate-100">
         {lines.length > 0 ? (
           lines.map((item, index) => (
             <div key={`${item.unit}-${index}`} className="break-words [overflow-wrap:anywhere]">

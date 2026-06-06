@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.32.3 (2026-06-06)
+
+### Bug Fixes
+
+- **monitor**: Add stable alert codes
+  ([`f536bd0`](https://github.com/pilipilisbot/github-agent-bridge/commit/f536bd017b36c68ad4a4a5ebfed7d9ba0a516302))
+
+- **monitor**: Auto-unlock no-child running jobs
+  ([`752fcf8`](https://github.com/pilipilisbot/github-agent-bridge/commit/752fcf86758f42949d6288df38b3ea75dbee3a1c))
+
+
 ## v0.32.2 (2026-06-05)
 
 ### Bug Fixes

@@ -16,6 +16,19 @@ from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS, recent_proc
 from .process_inspection import direct_children
 
 
+ALERT_RELEASE_AVAILABLE = "monitor.release_available"
+ALERT_DATABASE_MISSING = "monitor.database_missing"
+ALERT_SCHEMA_MISSING = "monitor.schema_missing"
+ALERT_BLOCKED_JOBS = "monitor.blocked_jobs"
+ALERT_PENDING_QUEUE_OLD = "monitor.pending_queue_old"
+ALERT_EXECUTOR_SERVICE = "monitor.executor_service"
+ALERT_RUNNING_NO_EXECUTOR_CHILD = "monitor.running_no_executor_child"
+ALERT_READER_TIMER = "monitor.reader_timer"
+ALERT_READER_LAST_RESULT = "monitor.reader_last_result"
+ALERT_READER_STALE = "monitor.reader_stale"
+ALERT_RUNNING_JOB_STALLED = "monitor.running_job_stalled"
+
+
 @dataclass(frozen=True)
 class MonitorThresholds:
     pending_warn_seconds: int = 300
@@ -50,7 +63,11 @@ class MonitorReport:
         ]
         parts.append(" ".join(compact))
         if self.alerts:
-            parts.extend(f"- {a}" for a in self.alerts)
+            alert_codes = metrics.get("alert_codes") or []
+            for index, alert in enumerate(self.alerts):
+                code = alert_codes[index] if index < len(alert_codes) else ""
+                prefix = f"[{code}] " if code else ""
+                parts.append(f"- {prefix}{alert}")
         for job in metrics.get("running_jobs", []):
             last = job.get("last_worklog") or {}
             semantic = job.get("semantic_progress") or {}
@@ -179,6 +196,12 @@ def _release_summary(release: dict[str, str]) -> str:
     return release.get("name") or release.get("tag_name") or ""
 
 
+def _add_alert(metrics: dict[str, Any], alerts: list[str], code: str, message: str) -> None:
+    alerts.append(message)
+    metrics.setdefault("alert_codes", []).append(code)
+    metrics.setdefault("alert_details", []).append({"code": code, "message": message})
+
+
 def monitor(
     db: str | Path,
     executor_unit: str = "github-agent-bridge.service",
@@ -208,26 +231,34 @@ def monitor(
                 summary = _release_summary(latest_release)
                 detail = f": {summary}" if summary else ""
                 url = f" ({latest_release['html_url']})" if latest_release.get("html_url") else ""
-                alerts.append(
+                _add_alert(
+                    metrics,
+                    alerts,
+                    ALERT_RELEASE_AVAILABLE,
                     f"new github-agent-bridge release {latest_release['tag_name']} available; "
-                    f"installed package version is {package_version}{url}{detail}"
+                    f"installed package version is {package_version}{url}{detail}",
                 )
         else:
             metrics["latest_release_error"] = f"could not fetch latest release for {release_repo}"
 
     if not metrics.get("db_exists"):
-        alerts.append(f"database missing: {metrics.get('db_path')}")
+        _add_alert(metrics, alerts, ALERT_DATABASE_MISSING, f"database missing: {metrics.get('db_path')}")
     elif not metrics.get("schema_ok", True):
-        alerts.append("database schema missing jobs table")
+        _add_alert(metrics, alerts, ALERT_SCHEMA_MISSING, "database schema missing jobs table")
 
     pending = int(metrics.get("pending", 0) or 0)
     blocked = int(metrics.get("blocked", 0) or 0)
     waiting = int(metrics.get("waiting_approval", 0) or 0)
     pending_age = metrics.get("oldest_pending_age_seconds")
     if blocked:
-        alerts.append(f"blocked jobs: {blocked}")
+        _add_alert(metrics, alerts, ALERT_BLOCKED_JOBS, f"blocked jobs: {blocked}")
     if pending and pending_age is not None and pending_age > thresholds.pending_warn_seconds:
-        alerts.append(f"pending queue oldest age {pending_age}s > {thresholds.pending_warn_seconds}s")
+        _add_alert(
+            metrics,
+            alerts,
+            ALERT_PENDING_QUEUE_OLD,
+            f"pending queue oldest age {pending_age}s > {thresholds.pending_warn_seconds}s",
+        )
     if waiting:
         metrics["waiting_approval"] = waiting
 
@@ -247,20 +278,35 @@ def monitor(
             "reader_last_age_seconds": reader_age,
         })
         if executor_state != "active":
-            alerts.append(f"executor service is {executor_state}")
+            _add_alert(metrics, alerts, ALERT_EXECUTOR_SERVICE, f"executor service is {executor_state}")
         if metrics.get("running_jobs") and executor_state == "active" and not children:
-            alerts.append("running jobs exist but executor has no child process")
+            _add_alert(
+                metrics,
+                alerts,
+                ALERT_RUNNING_NO_EXECUTOR_CHILD,
+                "running jobs exist but executor has no child process",
+            )
         if timer_state != "active":
-            alerts.append(f"reader timer is {timer_state}")
+            _add_alert(metrics, alerts, ALERT_READER_TIMER, f"reader timer is {timer_state}")
         if reader_result not in ("success", "unknown"):
-            alerts.append(f"reader last result is {reader_result} exit={reader_exit}")
+            _add_alert(
+                metrics,
+                alerts,
+                ALERT_READER_LAST_RESULT,
+                f"reader last result is {reader_result} exit={reader_exit}",
+            )
         if reader_age is None:
             metrics["reader_recent"] = "unknown"
         else:
             reader_recent = reader_age <= thresholds.reader_recent_seconds
             metrics["reader_recent"] = reader_recent
             if not reader_recent:
-                alerts.append(f"reader last run age {reader_age}s > {thresholds.reader_recent_seconds}s")
+                _add_alert(
+                    metrics,
+                    alerts,
+                    ALERT_READER_STALE,
+                    f"reader last run age {reader_age}s > {thresholds.reader_recent_seconds}s",
+                )
 
     latest_sample = recent_process_samples(db, limit=1)
     metrics["latest_process_sample"] = latest_sample[-1] if latest_sample else None
@@ -270,7 +316,12 @@ def monitor(
             continue
         limit = thresholds.review_running_warn_seconds if job.get("work_intent") == "review_only" else thresholds.work_running_warn_seconds
         if age > limit and _running_job_looks_stalled(job, metrics, thresholds):
-            alerts.append(f"running job {job.get('id')} {job.get('work_key')} age {age}s > {limit}s without recent progress")
+            _add_alert(
+                metrics,
+                alerts,
+                ALERT_RUNNING_JOB_STALLED,
+                f"running job {job.get('id')} {job.get('work_key')} age {age}s > {limit}s without recent progress",
+            )
 
     if persist_observability:
         record_monitor_observation(

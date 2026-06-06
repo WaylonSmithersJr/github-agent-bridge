@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .monitor import ALERT_RUNNING_NO_EXECUTOR_CHILD
+
 
 @dataclass(frozen=True)
 class AlertConfig:
@@ -287,7 +289,14 @@ def terminate_process_group(pid: int, grace_seconds: int) -> str:
 
 
 def running_job_ids(output: str) -> list[str]:
-    return re.findall(r"running job (\d+)\b", output)
+    ids = re.findall(r"running job (\d+)\b", output)
+    no_child_alert = (
+        f"[{ALERT_RUNNING_NO_EXECUTOR_CHILD}]" in output
+        or "running jobs exist but executor has no child process" in output
+    )
+    if no_child_alert:
+        ids.extend(re.findall(r"running detail: job=(\d+)\b", output))
+    return list(dict.fromkeys(ids))
 
 
 def retry_jobs(config: AlertConfig, job_ids: list[str]) -> str:

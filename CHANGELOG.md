@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.34.0 (2026-06-06)
+
+### Documentation
+
+- Add model route job detail screenshot
+  ([`4bfd5e9`](https://github.com/pilipilisbot/github-agent-bridge/commit/4bfd5e9efab07dab0cb0b6a4cce9acdd74b9615d))
+
+- Mention model routes in readme
+  ([`2c9f44a`](https://github.com/pilipilisbot/github-agent-bridge/commit/2c9f44acd06a02a5e2b454328fb855c9ad1bc2fc))
+
+### Features
+
+- Add action-aware model routing
+  ([`fb2cc5d`](https://github.com/pilipilisbot/github-agent-bridge/commit/fb2cc5dedce2091bb4443d1f21b0da7eed248fd7))
+
+
 ## v0.33.0 (2026-06-06)
 
 ### Bug Fixes

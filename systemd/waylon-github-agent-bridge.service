@@ -1,0 +1,13 @@
+[Unit]
+Description=Waylon GitHub Agent Bridge executor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=10
+ExecStart=/home/clawbot/.openclaw/workspace/github-agent-bridge/scripts/waylon-executor-run.sh
+
+[Install]
+WantedBy=default.target

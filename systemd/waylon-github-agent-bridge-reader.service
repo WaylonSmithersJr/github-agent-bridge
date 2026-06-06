@@ -1,0 +1,8 @@
+[Unit]
+Description=Waylon GitHub Agent Bridge reader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/clawbot/.openclaw/workspace/github-agent-bridge/scripts/waylon-reader-run.sh

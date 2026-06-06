@@ -5,7 +5,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from .dispatch import GitHubClient, OpenClawDispatcher
+from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
 from .policy import Policy
 from .queue import JobQueue
 from .session_events import redact_event_detail
@@ -86,9 +86,10 @@ class ExecutorPool:
                 redact_event_detail(dispatch_detail),
             )
             if result.ok:
-                followup_url = self.github.visible_followup_after_trigger(job.context)
+                dispatcher_mode = getattr(self.dispatcher, "mode", RunMode.LIVE)
+                followup_url = None if dispatcher_mode != RunMode.LIVE else self.github.visible_followup_after_trigger(job.context)
                 missing_followup_ok = self._missing_followup_is_acceptable(job, result)
-                if job.work_intent == "work_allowed" and job.action not in {"archive_notification", "workflow_run_failed"} and not followup_url and not missing_followup_ok:
+                if dispatcher_mode == RunMode.LIVE and job.work_intent == "work_allowed" and job.action not in {"archive_notification", "workflow_run_failed"} and not followup_url and not missing_followup_ok:
                     summary = "agent finished without visible GitHub follow-up"
                     detail = result.detail or "OpenClaw command succeeded, but no new bot comment was found in the GitHub thread."
                     if job.attempts <= self.config.missing_followup_retries:

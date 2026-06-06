@@ -12,12 +12,34 @@ def env(name: str, default: str = "") -> str:
 
 
 def main() -> int:
-    """Run one IMAP reader pass from GITHUB_AGENT_BRIDGE_* environment.
+    """Run one reader pass from GITHUB_AGENT_BRIDGE_* environment.
 
-    This small wrapper keeps the systemd unit simple, especially for the
-    optional --mark-seen flag, which should be omitted completely in shadow
-    deployments.
+    This small wrapper keeps the systemd unit simple, especially for optional
+    mutation flags, which should be omitted completely in shadow deployments.
     """
+    source = env("GITHUB_AGENT_BRIDGE_READER_SOURCE", "imap").lower()
+    if source == "github":
+        argv = [
+            "--db",
+            env("GITHUB_AGENT_BRIDGE_DB", DEFAULT_DB),
+            "--policy",
+            env("GITHUB_AGENT_BRIDGE_POLICY", DEFAULT_POLICY),
+            "read-github-notifications-once",
+            "--gh-bin",
+            env("GITHUB_AGENT_BRIDGE_GH_BIN", "gh"),
+        ]
+        if env("GITHUB_AGENT_BRIDGE_GITHUB_ALL") in {"1", "true", "TRUE", "yes", "YES", "--all"}:
+            argv.append("--all")
+        if env("GITHUB_AGENT_BRIDGE_GITHUB_PARTICIPATING") in {"1", "true", "TRUE", "yes", "YES", "--participating"}:
+            argv.append("--participating")
+        if env("GITHUB_AGENT_BRIDGE_MARK_READ") in {"1", "true", "TRUE", "yes", "YES", "--mark-read"}:
+            argv.append("--mark-read")
+        return cli_main(argv)
+
+    if source != "imap":
+        print("GITHUB_AGENT_BRIDGE_READER_SOURCE must be 'imap' or 'github'", file=sys.stderr)
+        return 2
+
     missing = [name for name in ("GITHUB_AGENT_BRIDGE_EMAIL", "GITHUB_AGENT_BRIDGE_PASSWORD") if not env(name)]
     if missing:
         print(f"missing required environment variables: {', '.join(missing)}", file=sys.stderr)

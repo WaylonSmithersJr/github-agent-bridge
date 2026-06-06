@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Waylon GitHub Agent Bridge reader every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=waylon-github-agent-bridge-reader.service
+
+[Install]
+WantedBy=timers.target

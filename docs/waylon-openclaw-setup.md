@@ -33,6 +33,20 @@ chmod 600 ~/.config/github-agent-bridge/policy.json
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 init-db
 ```
 
+Create the environment file used by the packaged reader wrapper:
+
+```bash
+cat > ~/.config/github-agent-bridge/env <<'EOF'
+GITHUB_AGENT_BRIDGE_READER_SOURCE=github
+GITHUB_AGENT_BRIDGE_GH_BIN=gh
+GITHUB_AGENT_BRIDGE_MODE=shadow
+GITHUB_AGENT_BRIDGE_MARK_READ=
+GITHUB_AGENT_BRIDGE_DEFAULT_CHANNEL=telegram
+GITHUB_AGENT_BRIDGE_DEFAULT_TO=telegram:345504031
+EOF
+chmod 600 ~/.config/github-agent-bridge/env
+```
+
 Read GitHub notifications without side effects:
 
 ```bash
@@ -49,6 +63,18 @@ gab \
   --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   --policy ~/.config/github-agent-bridge/policy.json \
   run --mode shadow --once
+```
+
+Install the Waylon user services:
+
+```bash
+chmod +x scripts/waylon-reader-run.sh scripts/waylon-executor-run.sh
+mkdir -p ~/.config/systemd/user
+cp systemd/waylon-github-agent-bridge*.service ~/.config/systemd/user/
+cp systemd/waylon-github-agent-bridge-reader.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now waylon-github-agent-bridge-reader.timer
+systemctl --user enable --now waylon-github-agent-bridge.service
 ```
 
 Only after shadow behavior is clean, add `--mark-read` to the reader and move the

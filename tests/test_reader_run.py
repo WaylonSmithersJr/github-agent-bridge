@@ -55,6 +55,38 @@ def test_reader_run_adds_mark_seen_only_when_enabled(monkeypatch):
     assert captured["argv"][-1] == "--mark-seen"
 
 
+def test_reader_run_builds_github_notification_args(monkeypatch):
+    captured = {}
+
+    def fake_cli_main(argv):
+        captured["argv"] = argv
+        return 0
+
+    monkeypatch.setattr(reader_run, "cli_main", fake_cli_main)
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_READER_SOURCE", "github")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_DB", "/tmp/bridge.sqlite3")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_POLICY", "/tmp/policy.json")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_GH_BIN", "/usr/bin/gh")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_GITHUB_ALL", "true")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_GITHUB_PARTICIPATING", "yes")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_MARK_READ", "--mark-read")
+
+    assert reader_run.main() == 0
+
+    assert captured["argv"] == [
+        "--db",
+        "/tmp/bridge.sqlite3",
+        "--policy",
+        "/tmp/policy.json",
+        "read-github-notifications-once",
+        "--gh-bin",
+        "/usr/bin/gh",
+        "--all",
+        "--participating",
+        "--mark-read",
+    ]
+
+
 def test_reader_run_quotes_mailbox_with_spaces(monkeypatch):
     captured = {}
 

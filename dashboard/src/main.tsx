@@ -1099,12 +1099,12 @@ function SystemPage({
 }) {
   return (
     <section className="grid gap-4" aria-label="Bridge system">
-      <Panel title="Systemd units" action={<RefreshButton onClick={onRefreshSystemd} />}>
+      <Panel title="Systemd" action={<RefreshButton onClick={onRefreshSystemd} />}>
         {systemdError ? <Banner tone="error" text={systemdError.message} /> : null}
-        <SystemdUnits data={systemd} loading={systemdLoading} />
-      </Panel>
-      <Panel title="Live journal">
-        <JournalPanel units={systemd?.units ?? []} />
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
+          <SystemdUnits data={systemd} loading={systemdLoading} />
+          <JournalPanel units={systemd?.units ?? []} />
+        </div>
       </Panel>
       <Panel title="Process activity" action={<RefreshButton onClick={onRefreshProcesses} />}>
         {processesError ? <Banner tone="error" text={processesError.message} /> : null}
@@ -2309,18 +2309,47 @@ function SystemdUnits({ data, loading }: { data: SystemdResponse | undefined; lo
   if (loading && !data) return <EmptyState text="Loading systemd units..." />;
   if (!data) return <EmptyState text="No systemd snapshot available." />;
   const units = data.units ?? [];
+  const activeUnits = units.filter((unit) => unit.active_state === "active").length;
+  const failedUnits = units.filter((unit) => unit.active_state === "failed" || unit.result === "failed").length;
+  const timers = units.filter((unit) => unit.kind === "timer").length;
   return (
-    <div className="grid gap-3">
+    <div className="grid min-w-0 gap-3">
       {data.errors.length > 0 ? <Banner tone="error" text={data.errors[0]} /> : null}
       {units.length === 0 ? (
         <EmptyState text="No configured bridge units found." />
       ) : (
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          {units.map((unit) => (
-            <SystemdUnitRow key={unit.unit} unit={unit} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <SystemdSummaryMetric label="Units" value={String(units.length)} />
+            <SystemdSummaryMetric label="Active" value={String(activeUnits)} />
+            <SystemdSummaryMetric label="Failed" value={String(failedUnits)} tone={failedUnits > 0 ? "bad" : "neutral"} />
+            <SystemdSummaryMetric label="Timers" value={String(timers)} />
+          </div>
+          <div className="overflow-hidden rounded-md border border-border bg-white">
+            <div className="hidden grid-cols-[minmax(0,1.35fr)_90px_120px_90px_minmax(0,1fr)] gap-3 border-b border-border bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase text-muted md:grid">
+              <span>Unit</span>
+              <span>Status</span>
+              <span>State</span>
+              <span>PID</span>
+              <span>Schedule</span>
+            </div>
+            <div className="divide-y divide-border">
+              {units.map((unit) => (
+                <SystemdUnitRow key={unit.unit} unit={unit} />
+              ))}
+            </div>
+          </div>
+        </>
       )}
+    </div>
+  );
+}
+
+function SystemdSummaryMetric({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "bad" }) {
+  return (
+    <div className={cn("min-w-0 rounded-md border bg-white px-3 py-2", tone === "bad" ? "border-red-200" : "border-border")}>
+      <div className={cn("font-mono text-lg font-semibold", tone === "bad" ? "text-red-700" : "text-foreground")}>{value}</div>
+      <div className="mt-0.5 text-[11px] font-semibold uppercase text-muted">{label}</div>
     </div>
   );
 }
@@ -2328,36 +2357,41 @@ function SystemdUnits({ data, loading }: { data: SystemdResponse | undefined; lo
 function SystemdUnitRow({ unit }: { unit: SystemdUnit }) {
   const active = unit.active_state === "active";
   const failed = unit.active_state === "failed" || unit.result === "failed";
+  const schedule = unit.next_elapse || unit.last_trigger || "n/a";
   return (
-    <div className={cn("min-w-0 rounded-md border p-3", failed ? "border-red-200 bg-red-50" : active ? "border-emerald-200 bg-emerald-50" : "border-border bg-white")}>
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate font-mono text-xs font-semibold text-foreground">{unit.unit}</div>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold uppercase text-muted">
-            <span>{unit.role}</span>
-            <span>{unit.kind}</span>
-          </div>
+    <div className="grid min-w-0 grid-cols-2 gap-2 px-3 py-3 text-sm md:grid-cols-[minmax(0,1.35fr)_90px_120px_90px_minmax(0,1fr)] md:items-center md:gap-3">
+      <div className="col-span-2 min-w-0 md:col-span-1">
+        <div className="truncate font-mono text-xs font-semibold text-foreground">{unit.unit}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold uppercase text-muted">
+          <span>{unit.role}</span>
+          <span>{unit.kind}</span>
+          <span>{unit.load_state}</span>
         </div>
-        <span className={cn("inline-flex h-6 shrink-0 items-center rounded-full border px-2 text-xs font-semibold", failed ? "border-red-300 bg-white text-red-700" : active ? "border-emerald-300 bg-white text-emerald-700" : "border-slate-300 bg-slate-50 text-slate-700")}>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 md:block">
+        <span className="text-[11px] font-semibold uppercase text-muted md:hidden">Status</span>
+        <span className={cn("inline-flex h-6 items-center rounded-full border px-2 text-xs font-semibold", failed ? "border-red-300 bg-red-50 text-red-700" : active ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-300 bg-slate-50 text-slate-700")}>
           {unit.active_state}
         </span>
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <SystemdFact label="Sub" value={unit.sub_state} />
-        <SystemdFact label="PID" value={unit.main_pid ? String(unit.main_pid) : "n/a"} />
-        <SystemdFact label="Uptime" value={formatSeconds(unit.uptime_seconds)} />
-        <SystemdFact label="Result" value={unit.result || "unknown"} />
+      <SystemdFact label="State" value={unit.sub_state} detail={unit.result || "unknown"} />
+      <SystemdFact label="PID" value={unit.main_pid ? String(unit.main_pid) : "n/a"} detail={formatSeconds(unit.uptime_seconds)} />
+      <div className="col-span-2 min-w-0 md:col-span-1">
+        <div className="text-[11px] font-semibold uppercase text-muted md:hidden">Schedule</div>
+        <div className="truncate font-mono text-[11px] text-foreground" title={schedule}>
+          {unit.next_elapse ? `next ${unit.next_elapse}` : schedule}
+        </div>
       </div>
-      {unit.next_elapse ? <div className="mt-2 truncate font-mono text-[11px] text-muted">next {unit.next_elapse}</div> : null}
     </div>
   );
 }
 
-function SystemdFact({ label, value }: { label: string; value: string }) {
+function SystemdFact({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
-    <div className="min-w-0 rounded-sm border border-white/70 bg-white/70 px-2 py-1">
-      <div className="text-[10px] font-semibold uppercase text-muted">{label}</div>
+    <div className="min-w-0">
+      <div className="text-[11px] font-semibold uppercase text-muted md:hidden">{label}</div>
       <div className="truncate font-mono text-[11px] text-foreground">{value}</div>
+      {detail ? <div className="truncate font-mono text-[11px] text-muted">{detail}</div> : null}
     </div>
   );
 }
@@ -2388,15 +2422,19 @@ function JournalPanel({ units }: { units: SystemdUnit[] }) {
       const payload = parseSseData<{ unit: string; error: string }>(message);
       setError(payload?.error ?? "journal stream failed");
     });
-    source.onerror = () => setError("journal stream disconnected");
+    source.onerror = () => undefined;
     return () => source.close();
   }, [selectedUnit]);
 
   if (availableUnits.length === 0) return <EmptyState text="No configured unit to stream." />;
   return (
-    <div className="grid gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="text-xs font-semibold uppercase text-muted" htmlFor="journal-unit">
+    <div className="grid min-w-0 gap-3 rounded-md border border-border bg-slate-50 p-3">
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase text-muted">Live journal</div>
+          <div className="mt-1 truncate font-mono text-[11px] text-muted">{lines.length > 0 ? `${lines.length} lines streamed` : "waiting for journal output"}</div>
+        </div>
+        <label className="sr-only" htmlFor="journal-unit">
           Unit
         </label>
         <select id="journal-unit" className="h-9 min-w-0 rounded-md border border-border bg-white px-2 font-mono text-xs" value={selectedUnit} onChange={(event) => setSelectedUnit(event.target.value)}>
@@ -2406,7 +2444,6 @@ function JournalPanel({ units }: { units: SystemdUnit[] }) {
             </option>
           ))}
         </select>
-        <span className="text-xs text-muted">{lines.length > 0 ? `${lines.length} lines` : "waiting for journal output"}</span>
       </div>
       {error ? <Banner tone="error" text={error} /> : null}
       <div className="h-72 overflow-auto rounded-md border border-slate-800 bg-slate-950 p-3 font-mono text-xs leading-relaxed text-slate-100">

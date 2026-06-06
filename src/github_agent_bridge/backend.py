@@ -38,6 +38,7 @@ from .dashboard_data import (
 from .monitor import monitor
 from .observability import list_alerts, recent_process_samples
 from .queue import JobQueue
+from .systemd_status import allowed_unit_names, stream_journal_lines, systemd_status
 
 
 DEFAULT_HOST = os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_HOST", "127.0.0.1")
@@ -147,6 +148,14 @@ async def _session_stream_events(db: str | Path, job_id: int, *, after_id: int |
         if not emitted:
             yield _sse_event("session_heartbeat", {"job_id": job_id, "last_event_id": last_id})
         await asyncio.sleep(sleep_seconds)
+
+
+async def _journal_stream_events(unit: str):
+    try:
+        async for line in stream_journal_lines(unit):
+            yield _sse_event("journal_line", {"unit": unit, "line": line})
+    except FileNotFoundError:
+        yield _sse_event("journal_error", {"unit": unit, "error": "journalctl_not_found"})
 
 
 def _sign(config: DashboardConfig, value: str) -> str:
@@ -515,6 +524,16 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "samples": samples,
             "detail": "Live process state, persisted process activity samples, semantic job heartbeats and visible OpenClaw output are reported separately.",
         }
+
+    @app.get("/api/systemd")
+    def api_systemd(_: str = Depends(current_user)) -> dict[str, Any]:
+        return systemd_status()
+
+    @app.get("/api/systemd/journal/stream")
+    def api_systemd_journal_stream(unit: str, _: str = Depends(current_user)) -> StreamingResponse:
+        if unit not in allowed_unit_names():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="systemd_unit_not_allowed")
+        return StreamingResponse(_journal_stream_events(unit), media_type="text/event-stream", headers=_sse_headers())
 
     @app.get("/api/alerts")
     def api_alerts(include_resolved: bool = False, limit: int = 50, _: str = Depends(current_user)) -> dict[str, Any]:

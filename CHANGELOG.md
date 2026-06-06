@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.33.0 (2026-06-06)
+
+### Bug Fixes
+
+- **queue**: Preserve finished time on dismiss
+  ([`ea87f69`](https://github.com/pilipilisbot/github-agent-bridge/commit/ea87f6988f980eb91774c800469420867ceeb440))
+
+### Features
+
+- Apply safe autoupdate plans
+  ([`e783cb1`](https://github.com/pilipilisbot/github-agent-bridge/commit/e783cb1974523375394b45b21a9962fee4db7900))
+
+
 ## v0.32.3 (2026-06-06)
 
 ### Bug Fixes

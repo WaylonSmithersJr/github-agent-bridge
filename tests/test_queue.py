@@ -267,12 +267,16 @@ def test_dismiss_blocked_job_marks_done(tmp_path):
     q = JobQueue(tmp_path / "q.sqlite3")
     job, _ = q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
     q.finish(job.id, "blocked", "boom", "details")
+    with q.connect() as con:
+        finished_at = con.execute("SELECT finished_at FROM jobs WHERE id=?", (job.id,)).fetchone()["finished_at"]
 
     assert q.dismiss(job.id, "already answered") is True
     stored = q.get(job.id)
     assert stored is not None
     assert stored.status == "done"
     assert stored.last_error is None
+    with q.connect() as con:
+        assert con.execute("SELECT finished_at FROM jobs WHERE id=?", (job.id,)).fetchone()["finished_at"] == finished_at
 
 
 def test_unlock_stale_can_limit_to_selected_running_jobs(tmp_path):

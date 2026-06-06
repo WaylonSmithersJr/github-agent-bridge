@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -216,6 +217,96 @@ def load_update_state(queue: JobQueue) -> dict[str, Any]:
 
 def save_update_state(queue: JobQueue, state: dict[str, Any]) -> None:
     queue.set_state(UPDATE_STATE_KEY, json.dumps(state, sort_keys=True))
+
+
+def default_install_command(repo: str, target_tag: str, *, python_bin: str = sys.executable) -> list[str]:
+    repo_ref = repo
+    if not repo_ref.startswith(("http://", "https://", "git@")):
+        repo_ref = f"https://github.com/{repo_ref}.git"
+    return [python_bin, "-m", "pip", "install", f"git+{repo_ref}@{target_tag}"]
+
+
+def _command_result(
+    kind: str,
+    args: Sequence[str],
+    proc: subprocess.CompletedProcess[str],
+    *,
+    unit: str = "",
+    reason: str = "",
+) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "command": list(args),
+        "unit": unit,
+        "reason": reason,
+        "returncode": proc.returncode,
+        "status": "succeeded" if proc.returncode == 0 else "failed",
+        "stdout": proc.stdout.strip(),
+        "stderr": proc.stderr.strip(),
+    }
+
+
+def apply_update_plan(
+    plan: dict[str, Any],
+    *,
+    repo: str = "pilipilisbot/github-agent-bridge",
+    install_command: Sequence[str] | None = None,
+    systemctl_bin: str = "systemctl",
+    run_install: bool = True,
+    run_systemd: bool = True,
+    runner: CommandRunner = _default_runner,
+) -> dict[str, Any]:
+    """Execute the safe, immediate subset described by an update plan."""
+
+    target = plan.get("target") if isinstance(plan.get("target"), dict) else {}
+    target_tag = str(target.get("tag_name") or "")
+    classification = plan.get("classification") if isinstance(plan.get("classification"), dict) else {}
+    result: dict[str, Any] = {
+        "applied": False,
+        "blocked": [],
+        "commands": [],
+    }
+
+    if plan.get("decision") == "noop" or plan.get("up_to_date"):
+        result["applied"] = True
+        return result
+    if not target_tag:
+        result["blocked"].append("missing_target_tag")
+        return result
+    if classification.get("migration_files"):
+        result["blocked"].append("migration_execution_not_supported")
+        return result
+
+    if run_install:
+        command = list(install_command or default_install_command(repo, target_tag))
+        proc = runner(command, None)
+        result["commands"].append(_command_result("install", command, proc, reason=f"install {target_tag}"))
+        if proc.returncode != 0:
+            return result
+
+    if run_systemd:
+        service_plan = plan.get("service_plan") if isinstance(plan.get("service_plan"), dict) else {}
+        for action in service_plan.get("immediate") or []:
+            command = str(action.get("command") or "")
+            unit = str(action.get("unit") or "")
+            if not command:
+                continue
+            if command == "daemon-reload":
+                args = [systemctl_bin, "--user", "daemon-reload"]
+            elif unit:
+                args = [systemctl_bin, "--user", command, unit]
+            else:
+                result["blocked"].append(f"missing_unit_for_{command}")
+                return result
+            proc = runner(args, None)
+            result["commands"].append(
+                _command_result("systemd", args, proc, unit=unit, reason=str(action.get("reason") or ""))
+            )
+            if proc.returncode != 0:
+                return result
+
+    result["applied"] = True
+    return result
 
 
 def plan_update(

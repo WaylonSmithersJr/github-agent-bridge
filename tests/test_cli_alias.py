@@ -44,6 +44,52 @@ def test_update_cli_can_record_pending_reload_state(tmp_path, capsys, monkeypatc
     assert load_update_state(JobQueue(db))["target"]["tag_name"] == "v1.2.4"
 
 
+def test_update_cli_apply_runs_configured_install_command(tmp_path, capsys, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    calls = []
+
+    def fake_plan(*args, **kwargs):
+        return {
+            "installed_version": "1.2.3",
+            "installed_tag": "v1.2.3",
+            "target": {"tag_name": "v1.2.4", "source": "explicit_target"},
+            "up_to_date": False,
+            "decision": "stage_dashboard_reload",
+            "executor_reload_pending": False,
+            "blocked_reason": "",
+            "queue": {"active_counts": {"pending": 0, "running": 1, "waiting_approval": 0}, "active_total": 1},
+            "classification": {"risk": "dashboard_only", "migration_files": [], "risky_files": []},
+            "service_plan": {
+                "immediate": [
+                    {"command": "try-restart", "unit": "dashboard.service", "reason": "dashboard-only update can reload independently"}
+                ]
+            },
+            "warnings": [],
+        }
+
+    def fake_apply(plan, **kwargs):
+        calls.append(kwargs)
+        return {"applied": True, "blocked": [], "commands": [{"kind": "install", "command": kwargs["install_command"]}]}
+
+    monkeypatch.setattr("github_agent_bridge.cli.plan_update", fake_plan)
+    monkeypatch.setattr("github_agent_bridge.cli.apply_update_plan", fake_apply)
+
+    assert cli.main([
+        "--db",
+        str(db),
+        "update",
+        "--apply",
+        "--install-command",
+        "python -m pip install pkg",
+        "--json",
+    ]) == 0
+
+    captured = capsys.readouterr()
+    assert '"execution": {' in captured.out
+    assert calls[0]["install_command"] == ["python", "-m", "pip", "install", "pkg"]
+
+
 def test_feedback_rule_add_cli_creates_rule(tmp_path, capsys):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)

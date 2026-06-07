@@ -3,9 +3,15 @@
     "from": ["notifications@github.com"]
   },
   "botLogins": ["WaylonSmithersJr"],
+  "trustedTeams": [
+    "Palomos-Molones/team-rocket"
+  ],
   "trustedRepos": [
     "waylonsmithersjr/proton-web-agent",
     "waylonsmithersjr/github-agent-bridge"
+  ],
+  "enabledOrgs": [
+    "Palomos-Molones"
   ],
   "enabledRepos": [
     "waylonsmithersjr/proton-web-agent",

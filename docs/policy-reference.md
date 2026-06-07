@@ -52,7 +52,9 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
   "botLogins": ["pilipilisbot"],
   "trustedRepos": ["your-org/your-repo"],
   "trustedOrgs": ["your-org"],
+  "trustedTeams": ["your-org/your-team-slug"],
   "enabledRepos": ["your-org/your-repo"],
+  "enabledOrgs": ["your-org"],
   "repoRoutes": {
     "another-org/another-repo": {
       "agent": "another-openclaw-agent",
@@ -93,7 +95,9 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 | `source` | object | built-in GitHub defaults | Defines which notifications count as trusted GitHub source mail. |
 | `trustedRepos` | array of strings | `[]` | Exact `owner/repo` names trusted for `trustedAuto` actions. Case-insensitive. |
 | `trustedOrgs` | array of strings | `[]` | GitHub org/user names trusted for all repos under that owner. Case-insensitive. |
-| `enabledRepos` | array of strings | `[]` | Optional hard allowlist/canary scope. If non-empty, all repos not listed here are denied before other checks. Case-insensitive. |
+| `trustedTeams` | array of strings | `[]` | GitHub `org/team-slug` entries whose active members are trusted actors for `trustedAuto` actions. Case-insensitive team config; actor membership is checked with `gh api`. |
+| `enabledRepos` | array of strings | `[]` | Optional hard allowlist/canary scope by exact repo. If neither `enabledRepos` nor `enabledOrgs` is set, there is no extra scope restriction. Case-insensitive. |
+| `enabledOrgs` | array of strings | `[]` | Optional hard allowlist/canary scope by owner/org. Repos outside listed repos/orgs are denied before other checks. Case-insensitive. |
 | `repoRoutes` | object | `{}` | Exact per-repo delivery routes. Takes precedence over `orgRoutes`. |
 | `orgRoutes` | object | `{}` | Per-owner delivery routes used when no `repoRoutes` entry matches. |
 | `repoRoles` | object | `{}` | Exact per-repo operating role. Takes precedence over `orgRoles`. |
@@ -199,7 +203,27 @@ Example:
 
 `your-org` trusts `your-org/your-repo`, `your-org/another-repo`, etc., unless `enabledRepos` narrows the active scope.
 
-## `enabledRepos`
+## `trustedTeams`
+
+GitHub teams whose active members are trusted actors for `trustedAuto` actions.
+
+Example:
+
+```json
+{
+  "trustedTeams": ["your-org/your-team-slug"]
+}
+```
+
+When a notification is triggered by a GitHub actor, the bridge checks membership with:
+
+```bash
+gh api orgs/your-org/teams/your-team-slug/memberships/ACTOR_LOGIN
+```
+
+An active team membership can make `trustedAuto` work eligible even when the repo owner is not listed in `trustedOrgs`. Use `enabledRepos` or `enabledOrgs` with `trustedTeams` to keep the active scope narrow.
+
+## `enabledRepos` and `enabledOrgs`
 
 Hard allowlist for canary/live scope.
 
@@ -207,22 +231,25 @@ Default:
 
 ```json
 {
-  "enabledRepos": []
+  "enabledRepos": [],
+  "enabledOrgs": []
 }
 ```
 
 Semantics:
 
-- Empty array: no extra scope restriction.
-- Non-empty array: only listed repos may be processed.
-- Repos not listed are denied before source trust, action policy, or routes are considered.
+- Both arrays empty: no extra scope restriction.
+- `enabledRepos` non-empty: listed repos may be processed.
+- `enabledOrgs` non-empty: repos owned by listed orgs/users may be processed.
+- Repos outside both configured scopes are denied before source trust, action policy, or routes are considered.
 
 Example canary policy:
 
 ```json
 {
   "trustedOrgs": ["your-org"],
-  "enabledRepos": ["your-org/your-repo"]
+  "enabledRepos": ["your-org/your-repo"],
+  "enabledOrgs": ["another-org"]
 }
 ```
 
@@ -232,7 +259,8 @@ Result:
 | --- | --- |
 | `your-org/your-repo` | Eligible for normal decisions. |
 | `your-org/another-repo` | `deny`. |
-| `another-org/another-repo` | `deny`. |
+| `another-org/any-repo` | Eligible for normal decisions. |
+| `third-org/another-repo` | `deny`. |
 
 This is the preferred key for staged rollout from the legacy inbox worker to the bridge.
 
@@ -462,12 +490,12 @@ Use `auto` only for low-risk internal handling that should not require repo trus
 Actions in `trustedAuto` are accepted only when:
 
 1. source trust passes, and
-2. repo is trusted by `trustedRepos` or `trustedOrgs`, and
-3. repo passes `enabledRepos` if that list is non-empty.
+2. repo is trusted by `trustedRepos`/`trustedOrgs` or the triggering actor is an active member of a `trustedTeams` entry, and
+3. repo passes `enabledRepos`/`enabledOrgs` if either scope is configured.
 
 Decision produced:
 
-- `auto_trusted` when repo is trusted.
+- `auto_trusted` when repo or actor trust passes.
 - `ask` when repo is not trusted.
 
 Queue status produced:
@@ -556,7 +584,9 @@ The implementation lowercases:
 
 - `trustedRepos`
 - `trustedOrgs`
+- `trustedTeams`
 - `enabledRepos`
+- `enabledOrgs`
 - `repoRoutes` keys
 - `orgRoutes` keys
 - extracted `ctx.repo`

@@ -46,10 +46,10 @@ class JobQueue:
         ctx = extract_github_context(n.body)
         action = classify_github_action(n.subject, n.body, policy.bot_logins)
         intent = classify_work_intent(n.subject, n.body, policy.bot_logins)
-        decision = policy.decision(n, ctx, action)
+        trigger_actor = trigger_actor_details_for_enqueue(n, ctx)
+        decision = policy.decision(n, ctx, action, actor_login=trigger_actor.login if trigger_actor else None)
         status = {"auto": "done", "ask": "waiting_approval", "deny": "denied"}.get(decision, "pending")
         now = utc_now()
-        trigger_actor = trigger_actor_details_for_enqueue(n, ctx)
         metadata: dict[str, object] = {"received_at": n.received_at}
         if trigger_actor and trigger_actor.user_id:
             metadata["trigger_actor_id"] = trigger_actor.user_id

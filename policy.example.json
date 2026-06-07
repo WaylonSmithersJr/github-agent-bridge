@@ -13,6 +13,9 @@
     "messageIdDomain": "github.com"
   },
   "trustedRepos": [],
+  "trustedTeams": [
+    "your-org/your-team-slug"
+  ],
   "botLogins": [
     "pilipilisbot"
   ],
@@ -21,6 +24,9 @@
   ],
   "enabledRepos": [
     "your-org/your-repo"
+  ],
+  "enabledOrgs": [
+    "your-org"
   ],
   "repoRoutes": {},
   "orgRoutes": {

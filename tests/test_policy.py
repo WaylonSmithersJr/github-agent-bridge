@@ -37,6 +37,42 @@ def test_enabled_repos_restricts_canary_scope():
     assert policy.decision(n, other, "sync_after_merge") == "deny"
 
 
+def test_enabled_orgs_restricts_canary_scope():
+    n = Notification(1, "<x@github.com>", "subj", "notifications@github.com", "", auth={"spf": True, "dkim": True, "dmarc": True})
+    org_repo = extract_github_context("@pilipilisbot https://github.com/gisce/erp/issues/1#issuecomment-1")
+    other = extract_github_context("@pilipilisbot https://github.com/other/erp/issues/1#issuecomment-1")
+    policy = Policy(trusted_orgs={"gisce"}, enabled_orgs={"gisce"})
+
+    assert policy.decision(n, org_repo, "reply_comment") == "auto_trusted"
+    assert policy.decision(n, other, "reply_comment") == "deny"
+
+
+def test_trusted_team_actor_allows_trusted_auto(tmp_path):
+    gh = tmp_path / "gh"
+    gh.write_text(
+        """#!/bin/sh
+case "$2" in
+  orgs/palomos-molones/teams/team-rocket/memberships/PolSala)
+    printf '{"state":"active"}'
+    exit 0
+    ;;
+  *)
+    printf 'not found' >&2
+    exit 1
+    ;;
+esac
+"""
+    )
+    gh.chmod(0o755)
+    body = "@waylonsmithersjr https://github.com/palomos-molones/agent-lab/issues/1#issuecomment-1"
+    n = Notification(1, "<x@github.com>", "subj", "notifications@github.com", body, auth={"spf": True, "dkim": True, "dmarc": True})
+    ctx = extract_github_context(body)
+    policy = Policy(trusted_teams={"palomos-molones/team-rocket"}, enabled_orgs={"palomos-molones"})
+
+    assert policy.decision(n, ctx, "reply_comment", actor_login="PolSala", gh_bin=str(gh)) == "auto_trusted"
+    assert policy.decision(n, ctx, "reply_comment", actor_login="outsider", gh_bin=str(gh)) == "ask"
+
+
 def test_repo_roles_precedence_and_default():
     policy = Policy(repo_roles={"gisce/erp": "owner"}, org_roles={"gisce": "maintainer"})
 
@@ -47,10 +83,12 @@ def test_repo_roles_precedence_and_default():
 
 def test_policy_from_file_loads_roles_and_rejects_unknown(tmp_path):
     valid = tmp_path / "policy.json"
-    valid.write_text('{"repoRoles": {"GISCE/ERP": "Owner"}, "orgRoles": {"pilipilisbot": "maintainer"}}')
+    valid.write_text('{"repoRoles": {"GISCE/ERP": "Owner"}, "orgRoles": {"pilipilisbot": "maintainer"}, "trustedTeams": ["Palomos-Molones/Team-Rocket"], "enabledOrgs": ["Palomos-Molones"]}')
     policy = Policy.from_file(valid)
     assert policy.role_for("gisce/erp") == "owner"
     assert policy.role_for("pilipilisbot/github-agent-bridge") == "maintainer"
+    assert policy.trusted_teams == {"palomos-molones/team-rocket"}
+    assert policy.enabled_orgs == {"palomos-molones"}
 
     invalid = tmp_path / "invalid.json"
     invalid.write_text('{"repoRoles": {"gisce/erp": "boss"}}')

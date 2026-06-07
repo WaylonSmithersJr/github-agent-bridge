@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -100,7 +101,9 @@ class Policy:
     message_id_domain: str = "github.com"
     trusted_repos: set[str] = field(default_factory=set)
     trusted_orgs: set[str] = field(default_factory=set)
+    trusted_teams: set[str] = field(default_factory=set)
     enabled_repos: set[str] = field(default_factory=set)
+    enabled_orgs: set[str] = field(default_factory=set)
     auto_actions: set[str] = field(default_factory=lambda: {"archive_notification"})
     ask_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue", "docs_update", "content_change"})
     trusted_auto_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"})
@@ -242,7 +245,9 @@ class Policy:
             message_id_domain=source.get("messageIdDomain", cls.message_id_domain),
             trusted_repos={r.lower() for r in data.get("trustedRepos", [])},
             trusted_orgs={o.lower() for o in data.get("trustedOrgs", [])},
+            trusted_teams={t.lower() for t in data.get("trustedTeams", [])},
             enabled_repos={r.lower() for r in data.get("enabledRepos", [])},
+            enabled_orgs={o.lower() for o in data.get("enabledOrgs", [])},
             auto_actions=set(actions.get("auto", ["archive_notification"])),
             ask_actions=set(actions.get("ask", ["reply_comment", "open_issue", "docs_update", "content_change"])),
             trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"])),
@@ -271,15 +276,48 @@ class Policy:
         repo = repo.lower(); org = repo.split("/", 1)[0]
         return repo in self.trusted_repos or org in self.trusted_orgs
 
-    def decision(self, n: Notification, ctx: GitHubContext, action: str) -> str:
-        if self.enabled_repos and (ctx.repo or "").lower() not in self.enabled_repos:
+    def repo_enabled(self, repo: str | None) -> bool:
+        if not self.enabled_repos and not self.enabled_orgs:
+            return True
+        if not repo:
+            return False
+        repo = repo.lower(); org = repo.split("/", 1)[0]
+        return repo in self.enabled_repos or org in self.enabled_orgs
+
+    def actor_trusted(self, actor_login: str | None, *, gh_bin: str = "gh") -> bool:
+        actor = (actor_login or "").strip().lstrip("@")
+        if not actor or not self.trusted_teams:
+            return False
+        for team in self.trusted_teams:
+            if "/" not in team:
+                continue
+            org, slug = team.split("/", 1)
+            proc = subprocess.run(
+                [gh_bin, "api", f"orgs/{org}/teams/{slug}/memberships/{actor}"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if proc.returncode != 0:
+                continue
+            try:
+                payload = json.loads(proc.stdout or "{}")
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and payload.get("state") == "active":
+                return True
+        return False
+
+    def decision(self, n: Notification, ctx: GitHubContext, action: str, *, actor_login: str | None = None, gh_bin: str = "gh") -> str:
+        if not self.repo_enabled(ctx.repo):
             return "deny"
         if not self.trusted_source(n, ctx):
             return "deny"
         if action in self.auto_actions:
             return "auto"
         if action in self.trusted_auto_actions:
-            return "auto_trusted" if self.repo_trusted(ctx.repo) else "ask"
+            return "auto_trusted" if self.repo_trusted(ctx.repo) or self.actor_trusted(actor_login, gh_bin=gh_bin) else "ask"
         if action in self.ask_actions:
             return "ask"
         return "deny"

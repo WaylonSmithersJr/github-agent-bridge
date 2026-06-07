@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -284,10 +285,11 @@ class Policy:
         repo = repo.lower(); org = repo.split("/", 1)[0]
         return repo in self.enabled_repos or org in self.enabled_orgs
 
-    def actor_trusted(self, actor_login: str | None, *, gh_bin: str = "gh") -> bool:
+    def actor_trusted(self, actor_login: str | None, *, gh_bin: str | None = None) -> bool:
         actor = (actor_login or "").strip().lstrip("@")
         if not actor or not self.trusted_teams:
             return False
+        gh_bin = gh_bin or os.getenv("GITHUB_AGENT_BRIDGE_GH_BIN", "gh")
         for team in self.trusted_teams:
             if "/" not in team:
                 continue
@@ -309,7 +311,7 @@ class Policy:
                 return True
         return False
 
-    def decision(self, n: Notification, ctx: GitHubContext, action: str, *, actor_login: str | None = None, gh_bin: str = "gh") -> str:
+    def decision(self, n: Notification, ctx: GitHubContext, action: str, *, actor_login: str | None = None, gh_bin: str | None = None) -> str:
         if not self.repo_enabled(ctx.repo):
             return "deny"
         if not self.trusted_source(n, ctx):

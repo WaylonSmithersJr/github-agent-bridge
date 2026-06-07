@@ -311,12 +311,18 @@ class Policy:
                 return True
         return False
 
+    def actor_is_bot_login(self, actor_login: str | None) -> bool:
+        actor = (actor_login or "").strip().lstrip("@").lower()
+        return bool(actor and actor in self.bot_logins)
+
     def decision(self, n: Notification, ctx: GitHubContext, action: str, *, actor_login: str | None = None, gh_bin: str | None = None) -> str:
         if not self.repo_enabled(ctx.repo):
             return "deny"
         if not self.trusted_source(n, ctx):
             return "deny"
         if action in self.auto_actions:
+            return "auto"
+        if self.actor_is_bot_login(actor_login):
             return "auto"
         if action in self.trusted_auto_actions:
             return "auto_trusted" if self.repo_trusted(ctx.repo) or self.actor_trusted(actor_login, gh_bin=gh_bin) else "ask"

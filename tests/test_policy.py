@@ -73,6 +73,15 @@ esac
     assert policy.decision(n, ctx, "reply_comment", actor_login="outsider", gh_bin=str(gh)) == "ask"
 
 
+def test_bot_login_actor_is_archived_to_avoid_self_loop():
+    body = "@waylonsmithersjr https://github.com/palomos-molones/agent-lab/issues/1#issuecomment-1"
+    n = Notification(1, "<x@github.com>", "subj", "notifications@github.com", body, auth={"spf": True, "dkim": True, "dmarc": True})
+    ctx = extract_github_context(body)
+    policy = Policy(bot_logins={"waylonsmithersjr"}, trusted_teams={"palomos-molones/team-rocket"}, enabled_orgs={"palomos-molones"})
+
+    assert policy.decision(n, ctx, "reply_comment", actor_login="WaylonSmithersJr") == "auto"
+
+
 def test_repo_roles_precedence_and_default():
     policy = Policy(repo_roles={"gisce/erp": "owner"}, org_roles={"gisce": "maintainer"})
 

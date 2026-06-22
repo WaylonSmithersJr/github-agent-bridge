@@ -97,3 +97,16 @@ def test_pr_assignment_allows_work():
 
     assert classify_github_action(subject, body, {"pilipilisbot"}) == "open_issue"
     assert classify_work_intent(subject, body, {"pilipilisbot"}) == "work_allowed"
+
+
+def test_github_notifications_api_assignment_reason_allows_work():
+    subject = "Re: [palomos-molones/palomos-molones.github.io] Cursor colom (Issue #3)"
+    body = (
+        "El cursor deixa un rastre de plomes.\n\n"
+        "https://github.com/Palomos-Molones/Palomos-Molones.github.io/issues/3\n\n"
+        "GitHub notification reason: assign\n"
+        "GitHub notification type: Issue"
+    )
+
+    assert classify_github_action(subject, body, {"waylonsmithersjr"}) == "open_issue"
+    assert classify_work_intent(subject, body, {"waylonsmithersjr"}) == "work_allowed"

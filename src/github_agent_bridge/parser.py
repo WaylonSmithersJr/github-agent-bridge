@@ -10,6 +10,7 @@ REVIEW_ONLY_PATTERNS = ("fes-ne una review", "fes una review", "fes review", "fe
 IMPLEMENTATION_PATTERNS = ("fes els canvis", "fes-ho", "implementa", "modifica", "canvia", "arregla", "corregeix", "fix", "push", "commit", "aplica", "resol", "resolve")
 BOT_MENTION_PATTERNS = ("you are receiving this because you were mentioned",)
 ASSIGNMENT_PATTERNS = ("assigned you", "assigned to you", "you were assigned", "you are assigned")
+ASSIGNMENT_REASON_PATTERNS = ("github notification reason: assign",)
 REVIEW_REQUEST_PATTERNS = ("requested your review", "requested a review from you", "you were requested for review", "review requested")
 COPILOT_REVIEW_PATTERNS = ("copilot-pull-request-reviewer", "github-copilot", "github copilot", "copilot reviewed", "copilot commented", "copilot left a comment", "copilot suggested", "copilot requested changes")
 WORKFLOW_RUN_FAILED_PATTERNS = ("run failed", "workflow run failed", "workflow failed", "job failed", "failing after")
@@ -69,7 +70,7 @@ def _bot_patterns(bot_logins: set[str] | None) -> tuple[str, ...]:
 def github_event_flags(subject: str, body: str, bot_logins: set[str] | None = None) -> dict[str, bool]:
     text = f"{subject}\n{body}".lower()
     bot_patterns = _bot_patterns(bot_logins)
-    assignment_patterns = ASSIGNMENT_PATTERNS + tuple(f"assigned {p}" for p in bot_patterns)
+    assignment_patterns = ASSIGNMENT_PATTERNS + ASSIGNMENT_REASON_PATTERNS + tuple(f"assigned {p}" for p in bot_patterns)
     review_patterns = REVIEW_REQUEST_PATTERNS + tuple(f"requested review from {p}" for p in bot_patterns) + tuple(f"requested {p}" for p in bot_patterns)
     return {"bot_mentioned": _contains_any(text, BOT_MENTION_PATTERNS + bot_patterns), "assigned": _contains_any(text, assignment_patterns), "review_requested": _contains_any(text, review_patterns), "copilot_review": _contains_any(text, COPILOT_REVIEW_PATTERNS)}
 

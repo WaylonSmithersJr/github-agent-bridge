@@ -4,11 +4,14 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from github_agent_bridge.autoupdate import (
     _model_smoke_postcheck,
     apply_update_plan,
     complete_pending_reload,
     default_install_command,
+    latest_release,
     load_update_state,
     plan_systemd_actions,
     plan_update,
@@ -17,6 +20,11 @@ from github_agent_bridge.autoupdate import (
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
+
+
+def test_latest_release_reports_missing_gh_as_runtime_error():
+    with pytest.raises(RuntimeError, match=r"No such file or directory.*missing-gh"):
+        latest_release("gisce/github-agent-bridge", gh_bin="/missing-gh")
 
 
 def completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:

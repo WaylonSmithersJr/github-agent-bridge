@@ -448,6 +448,26 @@ describe("status badges", () => {
     expect(screen.getByText("medium")).toBeInTheDocument();
   });
 
+  it("explains when a pending job is serialized behind the same work key", () => {
+    render(
+      <JobDetail
+        job={{
+          ...job,
+          runnable: false,
+          blocked_by_job_id: 57,
+          queue_state: "serialized_by_work_key",
+          worklog: [],
+        }}
+        session={undefined}
+        sessionEvents={[]}
+        transcript={[]}
+        now={Date.parse("2026-06-08T16:40:00Z")}
+      />,
+    );
+
+    expect(screen.getByText("Serialized behind running job #57 for this work key.")).toBeInTheDocument();
+  });
+
   it("shows intent classifier decisions in the job detail", () => {
     render(
       <JobDetail

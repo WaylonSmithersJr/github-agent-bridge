@@ -120,7 +120,11 @@ def intent_classifier_summary(metadata: dict[str, Any]) -> dict[str, Any] | None
 
 def jobs_select_sql(con: sqlite3.Connection) -> str:
     if not table_exists(con, "job_session_events"):
-        return "SELECT * FROM jobs"
+        return """SELECT jobs.*, (
+            SELECT running.id FROM jobs AS running
+            WHERE jobs.status='pending' AND running.work_key=jobs.work_key AND running.status='running'
+            ORDER BY running.id LIMIT 1
+        ) AS blocked_by_job_id FROM jobs"""
     return """
         SELECT jobs.*,
             (
@@ -129,7 +133,16 @@ def jobs_select_sql(con: sqlite3.Connection) -> str:
                 WHERE job_id=jobs.id AND event_type='model_route_selected'
                 ORDER BY id DESC
                 LIMIT 1
-            ) AS model_route_detail
+            ) AS model_route_detail,
+            (
+                SELECT running.id
+                FROM jobs AS running
+                WHERE jobs.status='pending'
+                  AND running.work_key=jobs.work_key
+                  AND running.status='running'
+                ORDER BY running.id
+                LIMIT 1
+            ) AS blocked_by_job_id
         FROM jobs
     """
 
@@ -137,12 +150,17 @@ def jobs_select_sql(con: sqlite3.Connection) -> str:
 def job_summary(row: sqlite3.Row) -> dict[str, Any]:
     context = json.loads(row["context_json"] or "{}")
     metadata = json.loads(row["metadata_json"] or "{}")
+    blocked_by_job_id = row_get(row, "blocked_by_job_id")
+    status = row["status"]
     return {
         "id": row["id"],
         "work_key": row["work_key"],
         "repo": row["repo"],
         "thread": row["thread"],
-        "status": row["status"],
+        "status": status,
+        "runnable": status == "pending" and blocked_by_job_id is None,
+        "blocked_by_job_id": blocked_by_job_id,
+        "queue_state": "serialized_by_work_key" if blocked_by_job_id is not None else ("runnable" if status == "pending" else status),
         "action": row["action"],
         "decision": row["decision"],
         "intent": row["work_intent"],

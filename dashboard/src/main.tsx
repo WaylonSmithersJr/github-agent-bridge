@@ -102,6 +102,9 @@ type Job = {
   repo: string | null;
   thread: number | null;
   status: string;
+  runnable?: boolean;
+  blocked_by_job_id?: number | null;
+  queue_state?: string;
   action: string;
   decision: string;
   intent: string;
@@ -3327,6 +3330,11 @@ function JobDetail({ job, session, sessionEvents, transcript, now, compact = fal
         <MiniStat label={job.status === "running" ? "Running for" : "Runtime"} value={formatSeconds(liveRuntime)} />
         <MiniStat label="Coalesced" value={String(job.coalesced_count)} />
       </div>
+      {job.queue_state === "serialized_by_work_key" ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Serialized behind running job #{job.blocked_by_job_id} for this work key.
+        </p>
+      ) : null}
       <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-3")}>
         <MiniStat label="Model" value={modelRouteModel(job.model_route)} />
         <MiniStat label="Reasoning" value={modelRouteThinking(job.model_route)} />

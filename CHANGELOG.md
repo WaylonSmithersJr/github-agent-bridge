@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.60.8 (2026-09-29)
+
+### Bug Fixes
+
+- Coalesce equivalent running notifications
+  ([`13b955e`](https://github.com/gisce/github-agent-bridge/commit/13b955ead13a0fa9f12ba8e816b4e77744dde84a))
+
+- Handle missing autoupdate executable
+  ([`8f18603`](https://github.com/gisce/github-agent-bridge/commit/8f1860316adc03bd5f4fb8b753ddf37f6989c00e))
+
+
 ## v0.60.7 (2026-09-26)
 
 ### Bug Fixes

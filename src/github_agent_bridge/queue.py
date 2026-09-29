@@ -26,6 +26,21 @@ ACTIVE_STATUSES = ("pending", "running", "waiting_approval")
 COALESCE_STATUSES = ("pending", "waiting_approval")
 
 
+def semantic_event_identity(
+    action: str, ctx: GitHubContext, trigger_actor: str | None
+) -> tuple[object, ...]:
+    """Return the stable GitHub target identity used across notification variants."""
+    target_id = (
+        ctx.comment_id
+        or ctx.review_comment_id
+        or ctx.review_id
+        or ctx.commit_comment_id
+        or ctx.workflow_run_id
+        or ctx.commit_sha
+    )
+    return (ctx.work_key, action, ctx.target_kind, target_id, (trigger_actor or "").lower())
+
+
 class ClosingConnection(sqlite3.Connection):
     """Commit or roll back a context-managed connection, then close it."""
 
@@ -120,12 +135,39 @@ class JobQueue:
                     f"SELECT * FROM jobs WHERE work_key=? AND status IN ({','.join('?' for _ in COALESCE_STATUSES)}) ORDER BY id LIMIT 1",
                     (ctx.work_key, *COALESCE_STATUSES),
                 ).fetchone()
+                if existing is None and decision == "auto_trusted":
+                    running_rows = con.execute(
+                        "SELECT * FROM jobs WHERE work_key=? AND status='running' ORDER BY id",
+                        (ctx.work_key,),
+                    ).fetchall()
+                    event_identity = semantic_event_identity(
+                        action, ctx, trigger_actor.login if trigger_actor else None
+                    )
+                    existing = next(
+                        (
+                            row
+                            for row in running_rows
+                            if semantic_event_identity(
+                                row["action"],
+                                GitHubContext.from_json(row["context_json"]),
+                                row["trigger_actor"],
+                            )
+                            == event_identity
+                        ),
+                        None,
+                    )
                 if existing and decision == "auto_trusted":
                     con.execute(
                         "INSERT OR IGNORE INTO coalesced_notifications(job_id,uid,message_id,subject,trigger_actor,trigger_actor_avatar_url,context_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
                         (existing["id"], n.uid, n.message_id, n.subject, trigger_actor.login if trigger_actor else None, trigger_actor.avatar_url if trigger_actor else None, ctx.to_json(), now),
                     )
-                    con.execute("UPDATE jobs SET coalesced_count=coalesced_count+1, uid=?, message_id=message_id, subject=?, context_json=?, updated_at=? WHERE id=?", (n.uid, n.subject, ctx.to_json(), now, existing["id"]))
+                    if existing["status"] == "running":
+                        con.execute(
+                            "UPDATE jobs SET coalesced_count=coalesced_count+1, uid=?, updated_at=? WHERE id=?",
+                            (n.uid, now, existing["id"]),
+                        )
+                    else:
+                        con.execute("UPDATE jobs SET coalesced_count=coalesced_count+1, uid=?, message_id=message_id, subject=?, context_json=?, updated_at=? WHERE id=?", (n.uid, n.subject, ctx.to_json(), now, existing["id"]))
                     self._log(con, existing["id"], ctx.work_key, "coalesced", "Notification coalesced into active job", n.message_id)
                     con.commit()
                     if policy.feedback_learning.enabled and existing["message_id"] != n.message_id:

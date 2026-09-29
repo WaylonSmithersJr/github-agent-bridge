@@ -480,6 +480,23 @@ def test_dashboard_jobs_can_filter_by_status_repo_action_intent_and_actor(tmp_pa
     assert list_jobs(db, status_filter="pending", actor="ecarreras") == []
 
 
+def test_dashboard_marks_pending_job_serialized_behind_running_work_key(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    running, _ = q.enqueue(notif(uid=1, mid="<1@github.com>"), Policy(trusted_orgs=["gisce"]))
+    assert q.claim_next("worker").id == running.id
+    pending, _ = q.enqueue(
+        notif(uid=2, mid="<2@github.com>", body="@pilipilisbot two https://github.com/gisce/erp/pull/1#issuecomment-20"),
+        Policy(trusted_orgs=["gisce"]),
+    )
+
+    row = next(job for job in list_jobs(db) if job["id"] == pending.id)
+
+    assert row["runnable"] is False
+    assert row["blocked_by_job_id"] == running.id
+    assert row["queue_state"] == "serialized_by_work_key"
+
+
 def test_dashboard_job_owner_can_cancel_running_job(tmp_path, monkeypatch):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)

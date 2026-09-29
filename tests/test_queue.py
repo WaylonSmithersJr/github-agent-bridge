@@ -118,6 +118,59 @@ def test_enqueue_and_coalesce_same_work_key(tmp_path, monkeypatch):
     assert job1.trigger_actor_avatar_url == "https://github.com/Edu.png?size=80"
 
 
+def test_equivalent_open_issue_notification_coalesces_after_claim(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    q = JobQueue(tmp_path / "q.sqlite3")
+    first = Notification(
+        uid=1,
+        message_id="<gisce/erp/issues/29307@github.com>",
+        subject="[gisce/erp] Example issue (Issue #29307)",
+        from_addr="polsala <notifications@github.com>",
+        body="@pilipilisbot was assigned\nhttps://github.com/gisce/erp/issues/29307",
+        auth={"spf": True, "dkim": True, "dmarc": True},
+    )
+    duplicate = Notification(
+        uid=2,
+        message_id="<gisce/erp/issue/29307/issue_event/32055234716@github.com>",
+        subject="Re: [gisce/erp] Example issue (Issue #29307)",
+        from_addr="polsala <notifications@github.com>",
+        body="@pilipilisbot was assigned\nhttps://github.com/gisce/erp/issues/29307#event-32055234716",
+        auth={"spf": True, "dkim": True, "dmarc": True},
+    )
+
+    job, state = q.enqueue(first, policy())
+    assert state == "enqueued"
+    assert q.claim_next("worker").id == job.id
+
+    coalesced, duplicate_state = q.enqueue(duplicate, policy())
+
+    assert duplicate_state == "coalesced"
+    assert coalesced.id == job.id
+    assert q.stats().get("pending", 0) == 0
+    stored = q.get(job.id)
+    assert stored.coalesced_count == 1
+    with q.connect() as con:
+        row = con.execute(
+            "SELECT message_id FROM coalesced_notifications WHERE job_id=?",
+            (job.id,),
+        ).fetchone()
+    assert row["message_id"] == duplicate.message_id
+
+
+def test_distinct_comment_remains_pending_while_same_work_key_is_running(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    q = JobQueue(tmp_path / "q.sqlite3")
+    running, _ = q.enqueue(notif(1, "<1@github.com>", BODY1), policy())
+    assert q.claim_next("worker").id == running.id
+
+    followup, state = q.enqueue(notif(2, "<2@github.com>", BODY2), policy())
+
+    assert state == "enqueued"
+    assert followup.id != running.id
+    assert followup.status == "pending"
+    assert q.get(running.id).coalesced_count == 0
+
+
 def test_enqueue_stores_trigger_actor_and_coalesced_actor(tmp_path, monkeypatch):
     monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
     q = JobQueue(tmp_path / "q.sqlite3")

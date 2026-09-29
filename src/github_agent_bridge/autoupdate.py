@@ -70,7 +70,11 @@ class ReleaseInfo:
 
 
 def _default_runner(args: Sequence[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(list(args), cwd=cwd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    command = list(args)
+    try:
+        return subprocess.run(command, cwd=cwd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(command, 127, "", str(exc))
 
 
 def _run_json(args: Sequence[str], cwd: Path | None, runner: CommandRunner) -> dict[str, Any]:

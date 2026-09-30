@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.60.9 (2026-09-30)
+
+### Bug Fixes
+
+- Learn from archived pull request reviews
+  ([`bdfcfe8`](https://github.com/gisce/github-agent-bridge/commit/bdfcfe87006e20d46163768c81bd7c45938fc0f8))
+
+
 ## v0.60.8 (2026-09-29)
 
 ### Bug Fixes

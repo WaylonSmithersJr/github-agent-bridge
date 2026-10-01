@@ -2,6 +2,40 @@
 
 <!-- version list -->
 
+## v0.60.11 (2026-10-01)
+
+### Bug Fixes
+
+- **deps**: Update dashboard dependencies
+  ([`c297216`](https://github.com/gisce/github-agent-bridge/commit/c29721682ed8d249d8421dca713baa5a4e08f667))
+
+### Chores
+
+- **deps**: Bump @vitest/mocker and vitest in /dashboard
+  ([#206](https://github.com/gisce/github-agent-bridge/pull/206),
+  [`6f4395f`](https://github.com/gisce/github-agent-bridge/commit/6f4395f63a8e3d575973780f1eb8bebc22d975a9))
+
+- **deps-dev**: Bump @babel/core from 7.29.0 to 7.29.7 in /dashboard
+  ([#223](https://github.com/gisce/github-agent-bridge/pull/223),
+  [`7f2956b`](https://github.com/gisce/github-agent-bridge/commit/7f2956bce384a588165d66f2b6b726c858607300))
+
+- **deps-dev**: Bump baseline-browser-mapping in /dashboard
+  ([#207](https://github.com/gisce/github-agent-bridge/pull/207),
+  [`d84e313`](https://github.com/gisce/github-agent-bridge/commit/d84e313721404e186720cb72da85123377c62f15))
+
+- **deps-dev**: Bump browserslist from 4.28.2 to 4.29.0 in /dashboard
+  ([#204](https://github.com/gisce/github-agent-bridge/pull/204),
+  [`ab2a630`](https://github.com/gisce/github-agent-bridge/commit/ab2a6306137d29194b5be8a10b69bd9ffac90f4f))
+
+- **deps-dev**: Bump postcss from 8.5.15 to 8.5.28 in /dashboard
+  ([#221](https://github.com/gisce/github-agent-bridge/pull/221),
+  [`ef2b735`](https://github.com/gisce/github-agent-bridge/commit/ef2b73556c352975f0f60a27ce19757969ed2f59))
+
+- **deps-dev**: Bump postcss-selector-parser in /dashboard
+  ([#208](https://github.com/gisce/github-agent-bridge/pull/208),
+  [`7049c62`](https://github.com/gisce/github-agent-bridge/commit/7049c62211115dcb41819765c85ffb3c21729d7e))
+
+
 ## v0.60.10 (2026-10-01)
 
 ### Bug Fixes

@@ -1319,7 +1319,12 @@ def test_dashboard_mcp_users_include_all_job_actors(tmp_path):
     policy = Policy(trusted_orgs=["pilipilisbot"])
     for index in range(205):
         q.enqueue(
-            notif(uid=index + 1, mid=f"<{index + 1}@github.com>", from_addr=f"user{index:03d} <notifications@github.com>"),
+            notif(
+                uid=index + 1,
+                mid=f"<{index + 1}@github.com>",
+                body=f"@pilipilisbot https://github.com/gisce/erp/pull/1#issuecomment-{index + 10}",
+                from_addr=f"user{index:03d} <notifications@github.com>",
+            ),
             policy,
         )
     app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))

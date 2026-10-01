@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from importlib import resources
@@ -41,6 +42,33 @@ def semantic_event_identity(
     return (ctx.work_key, action, ctx.target_kind, target_id, (trigger_actor or "").lower())
 
 
+def canonical_event_key(
+    action: str,
+    ctx: GitHubContext,
+    source: str,
+    source_key: str,
+) -> str:
+    """Identify a GitHub event across transports when immutable IDs prove identity.
+
+    A source-specific fallback is deliberately used when an email does not expose
+    enough immutable GitHub data. False negatives are safer than merging distinct
+    user actions.
+    """
+    repo = (ctx.repo or "").lower()
+    identities = (
+        ("issue_comment", ctx.comment_id),
+        ("pull_request_review_comment", ctx.review_comment_id),
+        ("pull_request_review", ctx.review_id),
+        ("commit_comment", ctx.commit_comment_id),
+    )
+    for event_type, target_id in identities:
+        if repo and target_id:
+            return f"{event_type}:created:{repo}:{target_id}"
+    if repo and ctx.workflow_run_id:
+        return f"workflow_run:{action}:{repo}:{ctx.workflow_run_id}"
+    return f"{source}:{source_key}"
+
+
 class ClosingConnection(sqlite3.Connection):
     """Commit or roll back a context-managed connection, then close it."""
 
@@ -80,6 +108,18 @@ class JobQueue:
             self._ensure_indexes(con)
 
     def enqueue(self, n: Notification, policy: Policy) -> tuple[Job | None, str]:
+        """Backward-compatible email enqueue entrypoint."""
+        return self.ingest(n, policy, source="email", source_key=n.message_id)
+
+    def ingest(
+        self,
+        n: Notification,
+        policy: Policy,
+        *,
+        source: str = "email",
+        source_key: str | None = None,
+    ) -> tuple[Job | None, str]:
+        source_key = source_key or n.message_id
         ctx = extract_github_context(n.body)
         action = classify_github_action(
             n.subject,
@@ -126,11 +166,43 @@ class JobQueue:
         status = {"auto": "done", "ask": "waiting_approval", "deny": "denied"}.get(decision, "pending")
         now = utc_now()
         trigger_actor = trigger_actor_details_for_enqueue(n, ctx)
+        event_key = canonical_event_key(action, ctx, source, source_key)
+        payload_hash = hashlib.sha256(n.body.encode("utf-8")).hexdigest()
         if trigger_actor and trigger_actor.user_id:
             metadata["trigger_actor_id"] = trigger_actor.user_id
         with self.connect() as con:
             con.execute("BEGIN IMMEDIATE")
             try:
+                try:
+                    con.execute(
+                        "INSERT INTO ingest_receipts(source,source_key,payload_hash,event_key,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                        (source, source_key, payload_hash, event_key, "received", now, now),
+                    )
+                    receipt_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                except sqlite3.IntegrityError:
+                    receipt = con.execute(
+                        "SELECT job_id FROM ingest_receipts WHERE source=? AND source_key=?",
+                        (source, source_key),
+                    ).fetchone()
+                    con.commit()
+                    job = self.get(int(receipt["job_id"])) if receipt and receipt["job_id"] else None
+                    return job, "duplicate"
+                event = con.execute(
+                    "SELECT job_id FROM github_events WHERE event_key=?",
+                    (event_key,),
+                ).fetchone()
+                if event is not None:
+                    con.execute(
+                        "UPDATE ingest_receipts SET status='duplicate',job_id=?,updated_at=? WHERE id=?",
+                        (event["job_id"], now, receipt_id),
+                    )
+                    con.commit()
+                    job = self.get(int(event["job_id"])) if event["job_id"] else None
+                    return job, "duplicate"
+                con.execute(
+                    "INSERT INTO github_events(event_key,first_source,context_json,created_at,updated_at) VALUES(?,?,?,?,?)",
+                    (event_key, source, ctx.to_json(), now, now),
+                )
                 existing = con.execute(
                     f"SELECT * FROM jobs WHERE work_key=? AND status IN ({','.join('?' for _ in COALESCE_STATUSES)}) ORDER BY id LIMIT 1",
                     (ctx.work_key, *COALESCE_STATUSES),
@@ -169,6 +241,14 @@ class JobQueue:
                     else:
                         con.execute("UPDATE jobs SET coalesced_count=coalesced_count+1, uid=?, message_id=message_id, subject=?, context_json=?, updated_at=? WHERE id=?", (n.uid, n.subject, ctx.to_json(), now, existing["id"]))
                     self._log(con, existing["id"], ctx.work_key, "coalesced", "Notification coalesced into active job", n.message_id)
+                    con.execute(
+                        "UPDATE github_events SET job_id=?,updated_at=? WHERE event_key=?",
+                        (existing["id"], now, event_key),
+                    )
+                    con.execute(
+                        "UPDATE ingest_receipts SET status='accepted',job_id=?,updated_at=? WHERE id=?",
+                        (existing["id"], now, receipt_id),
+                    )
                     con.commit()
                     if policy.feedback_learning.enabled and existing["message_id"] != n.message_id:
                         feedback.capture_feedback(
@@ -187,6 +267,14 @@ class JobQueue:
                     (ctx.work_key, ctx.repo, ctx.issue_number, status, action, decision, intent, n.subject, n.message_id, n.uid, trigger_actor.login if trigger_actor else None, trigger_actor.avatar_url if trigger_actor else None, ctx.to_json(), json.dumps(metadata), now, now),
                 )
                 job_id = int(con.execute("SELECT last_insert_rowid()").fetchone()[0])
+                con.execute(
+                    "UPDATE github_events SET job_id=?,updated_at=? WHERE event_key=?",
+                    (job_id, now, event_key),
+                )
+                con.execute(
+                    "UPDATE ingest_receipts SET status='accepted',job_id=?,updated_at=? WHERE id=?",
+                    (job_id, now, receipt_id),
+                )
                 self._log(con, job_id, ctx.work_key, "queued" if status == "pending" else status, f"decision={decision} action={action}", n.message_id)
                 con.commit()
                 if policy.feedback_learning.enabled:

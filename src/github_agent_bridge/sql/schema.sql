@@ -39,6 +39,29 @@ CREATE INDEX IF NOT EXISTS idx_jobs_dashboard_order ON jobs(
   COALESCE(finished_at, started_at, updated_at, created_at) DESC,
   id DESC
 );
+CREATE TABLE IF NOT EXISTS ingest_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  event_key TEXT,
+  job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+  status TEXT NOT NULL CHECK(status IN ('received','accepted','duplicate')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source, source_key)
+);
+CREATE INDEX IF NOT EXISTS idx_ingest_receipts_event_key ON ingest_receipts(event_key);
+CREATE INDEX IF NOT EXISTS idx_ingest_receipts_job_id ON ingest_receipts(job_id);
+CREATE TABLE IF NOT EXISTS github_events (
+  event_key TEXT PRIMARY KEY,
+  job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+  first_source TEXT NOT NULL,
+  context_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_github_events_job_id ON github_events(job_id);
 CREATE TABLE IF NOT EXISTS coalesced_notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

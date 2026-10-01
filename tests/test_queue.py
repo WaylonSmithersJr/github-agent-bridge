@@ -2,7 +2,8 @@ import sqlite3
 
 import pytest
 
-from github_agent_bridge.models import Notification
+from github_agent_bridge.models import GitHubContext, Notification
+from github_agent_bridge.queue import canonical_event_key
 from github_agent_bridge.intent_classifier import IntentClassification
 from github_agent_bridge.policy import FeedbackLearning, IntentClassifier, Policy
 from github_agent_bridge.queue import JobQueue
@@ -116,6 +117,68 @@ def test_enqueue_and_coalesce_same_work_key(tmp_path, monkeypatch):
     assert contexts[0].comment_id == 11
     assert job1.trigger_actor == "Edu"
     assert job1.trigger_actor_avatar_url == "https://github.com/Edu.png?size=80"
+
+
+def test_canonical_event_key_uses_immutable_comment_id_across_sources():
+    ctx = GitHubContext(
+        urls=["https://github.com/gisce/erp/issues/42#issuecomment-123"],
+        repo="gisce/erp",
+        issue_number=42,
+        comment_id=123,
+        target_kind="issue",
+    )
+
+    assert canonical_event_key("reply_comment", ctx, "email", "<mail@github.com>") == (
+        "issue_comment:created:gisce/erp:123"
+    )
+    assert canonical_event_key("reply_comment", ctx, "webhook", "delivery-1") == (
+        "issue_comment:created:gisce/erp:123"
+    )
+
+
+def test_canonical_event_key_falls_back_to_source_receipt_when_identity_is_uncertain():
+    ctx = GitHubContext(
+        urls=["https://github.com/gisce/erp/issues/42"],
+        repo="gisce/erp",
+        issue_number=42,
+        target_kind="issue",
+    )
+
+    assert canonical_event_key("mention", ctx, "email", "<mail@github.com>") == (
+        "email:<mail@github.com>"
+    )
+
+
+def test_ingest_records_receipt_and_event_and_deduplicates_same_event(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    q = JobQueue(tmp_path / "q.sqlite3")
+
+    first, first_state = q.ingest(notif(1, "<first@github.com>", BODY1), policy())
+    duplicate = Notification(
+        uid=2,
+        message_id="<second@github.com>",
+        subject="Re: [gisce/erp] PR",
+        from_addr="Edu <notifications@github.com>",
+        body=BODY1,
+        auth={"spf": True, "dkim": True, "dmarc": True},
+    )
+    second, second_state = q.ingest(duplicate, policy())
+
+    assert first_state == "enqueued"
+    assert second_state == "duplicate"
+    assert second.id == first.id
+    with q.connect() as con:
+        receipts = con.execute(
+            "SELECT source_key,status,job_id FROM ingest_receipts ORDER BY id"
+        ).fetchall()
+        events = con.execute("SELECT event_key,job_id FROM github_events").fetchall()
+    assert [(row["source_key"], row["status"], row["job_id"]) for row in receipts] == [
+        ("<first@github.com>", "accepted", first.id),
+        ("<second@github.com>", "duplicate", first.id),
+    ]
+    assert len(events) == 1
+    assert events[0]["event_key"] == "issue_comment:created:gisce/erp:10"
+    assert events[0]["job_id"] == first.id
 
 
 def test_equivalent_open_issue_notification_coalesces_after_claim(tmp_path, monkeypatch):

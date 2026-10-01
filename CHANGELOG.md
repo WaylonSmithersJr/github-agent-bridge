@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v0.60.10 (2026-10-01)
+
+### Bug Fixes
+
+- Handle addressed approved reviews
+  ([`893c3d0`](https://github.com/gisce/github-agent-bridge/commit/893c3d05ca832526998352fc90485fd6099faa63))
+
+### Chores
+
+- **deps**: Bump undici from 7.25.0 to 7.30.0 in /dashboard
+  ([#220](https://github.com/gisce/github-agent-bridge/pull/220),
+  [`104c92c`](https://github.com/gisce/github-agent-bridge/commit/104c92cd76f02a7bfd654183572411aab256cb9c))
+
+
 ## v0.60.9 (2026-09-30)
 
 ### Bug Fixes

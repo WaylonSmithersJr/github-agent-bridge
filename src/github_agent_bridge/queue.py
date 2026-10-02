@@ -805,6 +805,22 @@ class JobQueue:
                 "duplicate_count": "INTEGER NOT NULL DEFAULT 0",
                 "hook_id": "TEXT",
             },
+            "webhook_hooks": {
+                "name": "TEXT",
+                "content_type": "TEXT",
+                "insecure_ssl": "INTEGER",
+                "delivery_url": "TEXT",
+                "github_api_url": "TEXT",
+                "ping_url": "TEXT",
+                "deliveries_url": "TEXT",
+                "github_created_at": "TEXT",
+                "github_updated_at": "TEXT",
+                "last_delivery_id": "TEXT",
+                "last_event_name": "TEXT",
+                "last_action": "TEXT",
+                "last_repository": "TEXT",
+                "last_result": "TEXT",
+            },
         }
         for table, columns in tables.items():
             if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is None:
@@ -818,6 +834,10 @@ class JobQueue:
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='webhook_shadow_receipts'").fetchone() is not None:
             con.execute(
                 "CREATE INDEX IF NOT EXISTS idx_webhook_shadow_delivery_page ON webhook_shadow_receipts(created_at DESC, delivery_id DESC)"
+            )
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='webhook_hooks'").fetchone() is not None:
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_webhook_hooks_page ON webhook_hooks(updated_at DESC, hook_id DESC)"
             )
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mcp_tokens'").fetchone() is not None:
             con.execute(

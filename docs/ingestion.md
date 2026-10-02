@@ -94,11 +94,21 @@ the overview does not load hook inventory or delivery history:
   returns only the requested interval. Daily ranges are capped at 366 days and
   hourly ranges at 31 days; omitted bounds default to the configured retention
   window ending now, capped at the daily maximum.
-- `GET /api/webhooks/github/hooks` returns the per-hook inventory.
+- `GET /api/webhooks/github/hooks?limit=<1-100>&cursor=<opaque>` returns a
+  cursor-paginated per-hook inventory. A signed `ping` stores its sanitized
+  configuration (never the secret or raw payload), while later deliveries
+  update its latest event, repository, delivery ID, and result.
+- `GET /api/webhooks/github/hooks/{hook_id}` returns the sanitized hook detail,
+  aggregate retained-delivery counts, and its most recent deliveries.
 - `GET /api/webhooks/github/deliveries?limit=<1-100>&cursor=<opaque>` returns a
-  cursor-paginated delivery page.
+  cursor-paginated delivery page. Optional `hook_id`, `event_name`, `repository`,
+  and `result` filters are applied server-side; every row includes the known
+  hook identity so operators can navigate directly to its detail.
 
-The dashboard loads these resources lazily per tab and caches them separately.
+The dashboard loads these resources lazily per tab, caches them separately, and
+appends cursor pages as the inventory or delivery list scrolls. Hook detail URLs
+are shareable under `/webhooks/hooks/{hook_id}` and link to GitHub's webhook
+settings when the target is known.
 Here “operators” means users authorized as dashboard administrators through
 `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS` or
 `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS`; every monitoring endpoint returns

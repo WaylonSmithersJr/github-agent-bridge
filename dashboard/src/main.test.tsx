@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
   ActorFilter,
+  App,
   AutoupdateNotice,
   Filters,
   JobDetail,
@@ -18,6 +20,7 @@ import {
   SystemdUnits,
   UserMenu,
   WebPushControl,
+  WebhookHookDetailPage,
   WebhookPage,
   buildJobQuery,
   buildKnowledgeQuery,
@@ -36,8 +39,10 @@ import {
   shouldRefreshJobForSessionEvent,
   urlBase64ToUint8Array,
   webhookDeliveriesPath,
+  webhookHooksPath,
   webhookQuerySelection,
   webhookTimeseriesPath,
+  selectedWebhookHookIdFromPath,
 } from "./main";
 
 describe("dashboard routing and API query helpers", () => {
@@ -90,6 +95,10 @@ describe("dashboard routing and API query helpers", () => {
       .toBe("/api/webhooks/github/timeseries?from=2026-09-01T00%3A00%3A00Z&to=2026-10-01T00%3A00%3A00Z&bucket=day");
     expect(webhookDeliveriesPath(50, "next page"))
       .toBe("/api/webhooks/github/deliveries?limit=50&cursor=next+page");
+    expect(webhookHooksPath(25, "next hook"))
+      .toBe("/api/webhooks/github/hooks?limit=25&cursor=next+hook");
+    expect(webhookDeliveriesPath(50, null, { hook_id: "42", event_name: " issue_comment " }))
+      .toBe("/api/webhooks/github/deliveries?limit=50&hook_id=42&event_name=issue_comment");
   });
 
   it("recognizes only canonical job detail routes", () => {
@@ -97,6 +106,12 @@ describe("dashboard routing and API query helpers", () => {
     expect(selectedJobIdFromPath("/jobs/45/")).toBe(45);
     expect(selectedJobIdFromPath("/jobs/not-a-number")).toBeNull();
     expect(selectedJobIdFromPath("/jobs/45/activity")).toBeNull();
+  });
+
+  it("recognizes shareable webhook hook detail routes", () => {
+    expect(isWebhooksPath("/webhooks/hooks/690954530")).toBe(true);
+    expect(selectedWebhookHookIdFromPath("/webhooks/hooks/690954530")).toBe("690954530");
+    expect(selectedWebhookHookIdFromPath("/webhooks")).toBeNull();
   });
 
   it("shows a knowledge badge when proposed rules need moderation", () => {
@@ -127,7 +142,7 @@ describe("dashboard routing and API query helpers", () => {
   });
 
   it("renders the webhook status exported by the backend", () => {
-    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3 }} timeseries={[]} section="overview" summaryLoading={false} sectionLoading={false} error={null} onSectionChange={vi.fn()} onOlderDeliveries={vi.fn()} onNewestDeliveries={vi.fn()} onRefresh={vi.fn()} />);
+    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3 }} timeseries={[]} section="overview" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore={false} deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={vi.fn()} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
 
     expect(screen.getByRole("heading", { name: "GitHub webhooks" })).toBeInTheDocument();
     expect(screen.getByText("shadow")).toBeInTheDocument();
@@ -138,10 +153,11 @@ describe("dashboard routing and API query helpers", () => {
   it("navigates webhook hook inventory and delivery details", async () => {
     const user = userEvent.setup();
     const onSectionChange = vi.fn();
+    const onViewHook = vi.fn();
     const summary = { mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3 };
     const hooks = [{ id: "42", target: "gisce", target_type: "organization" as const, active: true, events: ["issue_comment"], status: "receiving" as const, last_ping_at: "2026-10-02T10:00:00Z", last_event_at: "2026-10-02T10:05:00Z" }];
-    const deliveries = [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }];
-    const common = { summary, summaryLoading: false, sectionLoading: false, error: null, onSectionChange, onOlderDeliveries: vi.fn(), onNewestDeliveries: vi.fn(), onRefresh: vi.fn() };
+    const deliveries = [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", hook_id: "42", hook: { id: "42", target: "gisce", target_type: "organization" as const }, event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }];
+    const common = { summary, summaryLoading: false, sectionLoading: false, loadingMore: false, hasMore: false, deliveryFilters: { hook_id: "", event_name: "", repository: "", result: "" }, error: null, onSectionChange, onLoadMore: vi.fn(), onDeliveryFiltersChange: vi.fn(), onViewHook, onRefresh: vi.fn() };
     const { rerender } = render(<WebhookPage {...common} section="overview" />);
 
     await user.click(screen.getByRole("tab", { name: /Hooks/ }));
@@ -149,12 +165,81 @@ describe("dashboard routing and API query helpers", () => {
     rerender(<WebhookPage {...common} hooks={hooks} section="hooks" />);
     expect(screen.getByText("organization · #42")).toBeInTheDocument();
     expect(screen.getByText("receiving")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "gisce" }));
+    expect(onViewHook).toHaveBeenCalledWith("42");
 
     await user.click(screen.getByRole("tab", { name: /Deliveries/ }));
     expect(onSectionChange).toHaveBeenCalledWith("deliveries");
     rerender(<WebhookPage {...common} deliveries={deliveries} section="deliveries" />);
-    expect(screen.getByText("issue_comment · created")).toBeInTheDocument();
+    expect(screen.getAllByText("issue_comment · created").length).toBeGreaterThan(0);
     expect(screen.getByText("gisce/github-agent-bridge")).toBeInTheDocument();
+    expect(screen.getByText("#42")).toBeInTheDocument();
+  });
+
+  it("shows sanitized hook configuration and recent delivery identity", () => {
+    render(<WebhookHookDetailPage data={{ hook: { id: "42", target: "gisce", target_type: "organization", name: "web", active: true, events: ["issue_comment"], content_type: "json", ssl_verify: true, delivery_url: "https://gab.gisce.net/api/webhooks/github", github_created_at: "2026-10-02T11:07:17Z", github_updated_at: "2026-10-02T11:07:17Z", last_ping_at: "2026-10-02T11:07:20Z", last_event_at: "2026-10-02T11:08:00Z", last_delivery_id: "delivery-1", last_event_name: "issue_comment", last_action: "created", last_repository: "gisce/github-agent-bridge", last_result: "observed", status: "receiving", admin_url: "https://github.com/organizations/gisce/settings/hooks/42" }, stats: { deliveries: 3, duplicates: 1, unsupported: 0 }, recent_deliveries: [{ delivery_id: "delivery-1", created_at: "2026-10-02T11:08:00Z", hook_id: "42", hook: { id: "42", target: "gisce", target_type: "organization" }, event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }] }} loading={false} error={null} onBack={vi.fn()} onRefresh={vi.fn()} onViewHook={vi.fn()} />);
+
+    expect(screen.getByRole("link", { name: /Open in GitHub/i })).toHaveAttribute("href", "https://github.com/organizations/gisce/settings/hooks/42");
+    expect(screen.getByText("https://gab.gisce.net/api/webhooks/github")).toBeInTheDocument();
+    expect(screen.getAllByText("issue_comment · created").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("delivery-1").length).toBeGreaterThan(0);
+  });
+
+  it("loads the next hook cursor page when the inventory sentinel enters view", async () => {
+    const onLoadMore = vi.fn();
+    class ImmediateIntersectionObserver {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(target: Element) {
+        this.callback([{ isIntersecting: true, target } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+      }
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return []; }
+    }
+    vi.stubGlobal("IntersectionObserver", ImmediateIntersectionObserver);
+    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: {}, duplicate_deliveries: 0, cross_source_matches: 0 }} hooks={[{ id: "42", target: "gisce", target_type: "organization", active: true, events: [], status: "quiet" }]} section="hooks" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={onLoadMore} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
+
+    await waitFor(() => expect(onLoadMore).toHaveBeenCalledTimes(1));
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches and accumulates cursor-paginated hooks through the dashboard", async () => {
+    window.history.replaceState({}, "", "/webhooks");
+    class ImmediateIntersectionObserver {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(target: Element) {
+        this.callback([{ isIntersecting: true, target } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+      }
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return []; }
+    }
+    vi.stubGlobal("IntersectionObserver", ImmediateIntersectionObserver);
+    const jsonResponse = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/status") return jsonResponse({ service: "github-agent-bridge-dashboard", read_only: false, admin_actions: [], webhook_configured: true, autoupdate: {} });
+      if (path === "/api/me") return jsonResponse({ user: { login: "operator", avatar_url: "", html_url: "", is_admin: true } });
+      if (path === "/api/about") return jsonResponse({ service: "github-agent-bridge", version: "0.63.0", repository_url: "https://github.com/gisce/github-agent-bridge" });
+      if (path === "/api/web-push/config") return jsonResponse({ status: { enabled: false } });
+      if (path === "/api/webhooks/github/summary") return jsonResponse({ mode: "shadow", configured: true, receipts: {}, duplicate_deliveries: 0, cross_source_matches: 0 });
+      if (path.startsWith("/api/webhooks/github/timeseries")) return jsonResponse({ from: "", to: "", bucket: "day", points: [] });
+      if (path === "/api/webhooks/github/hooks?limit=50") return jsonResponse({ hooks: [{ id: "42", target: "gisce", target_type: "organization", active: true, events: [], status: "quiet" }], next_cursor: "page-2" });
+      if (path === "/api/webhooks/github/hooks?limit=50&cursor=page-2") return jsonResponse({ hooks: [{ id: "41", target: "gisce/repository", target_type: "repository", active: true, events: [], status: "quiet" }], next_cursor: null });
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
+
+    await user.click(await screen.findByRole("tab", { name: /Hooks/ }));
+    expect(await screen.findByText("gisce/repository")).toBeInTheDocument();
+    expect(screen.getByText("organization · #42")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/webhooks/github/hooks?limit=50&cursor=page-2", expect.anything());
+
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllGlobals();
   });
 
   it("uses client-side navigation for dashboard section links", async () => {

@@ -60,6 +60,14 @@ class ModelRoute:
             parts.append(f"thinking={self.thinking}")
         return " ".join(parts) if parts else "OpenClaw default model route"
 
+    def overlay(self, override: ModelRoute | None) -> ModelRoute:
+        if override is None:
+            return self
+        return ModelRoute(
+            model=override.model if override.model is not None else self.model,
+            thinking=override.thinking if override.thinking is not None else self.thinking,
+        )
+
 
 @dataclass(frozen=True)
 class RepoModelRoutes:
@@ -370,19 +378,14 @@ class Policy:
         if complexity_key not in ALLOWED_COMPLEXITIES:
             complexity_key = "substantive"
         repo_routes = self.model_routes.by_repo.get(repo_key)
+        route = ModelRoute().overlay(self.model_routes.default)
         if repo_routes:
-            route = (
-                repo_routes.by_action.get(action_key)
-                or repo_routes.by_complexity.get(complexity_key)
-                or repo_routes.by_intent.get(intent_key)
-                or repo_routes.default
-            )
-            if route:
-                return route
-        return (
-            self.model_routes.by_action.get(action_key)
-            or self.model_routes.by_complexity.get(complexity_key)
-            or self.model_routes.by_intent.get(intent_key)
-            or self.model_routes.default
-            or ModelRoute()
-        )
+            route = route.overlay(repo_routes.default)
+        route = route.overlay(self.model_routes.by_intent.get(intent_key))
+        route = route.overlay(self.model_routes.by_complexity.get(complexity_key))
+        route = route.overlay(self.model_routes.by_action.get(action_key))
+        if repo_routes:
+            route = route.overlay(repo_routes.by_intent.get(intent_key))
+            route = route.overlay(repo_routes.by_complexity.get(complexity_key))
+            route = route.overlay(repo_routes.by_action.get(action_key))
+        return route

@@ -211,6 +211,83 @@ def test_policy_from_file_loads_model_routes_and_resolution_order(tmp_path):
     assert route.thinking == "low"
 
 
+def test_model_routes_compose_partial_repo_default_with_global_specific_routes(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text(
+        """{
+          "modelRoutes": {
+            "default": {"model": "default-model", "thinking": "medium"},
+            "byAction": {
+              "sync_after_merge": {"model": "sync-model", "thinking": "low"}
+            },
+            "byComplexity": {
+              "mechanical": {"model": "mechanical-model", "thinking": "minimal"}
+            },
+            "byRepo": {
+              "gisce/github-agent-bridge": {
+                "default": {"thinking": "xhigh"}
+              }
+            }
+          }
+        }"""
+    )
+
+    policy = Policy.from_file(policy_file)
+
+    route = policy.model_route_for(
+        "gisce/github-agent-bridge", "reply_comment", "work_allowed"
+    )
+    assert route.model == "default-model"
+    assert route.thinking == "xhigh"
+
+    route = policy.model_route_for(
+        "gisce/github-agent-bridge", "sync_after_merge", "work_allowed"
+    )
+    assert route.model == "sync-model"
+    assert route.thinking == "low"
+
+    route = policy.model_route_for(
+        "gisce/github-agent-bridge", "reply_comment", "work_allowed", "mechanical"
+    )
+    assert route.model == "mechanical-model"
+    assert route.thinking == "minimal"
+
+
+def test_model_routes_compose_matching_rules_field_by_field(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text(
+        """{
+          "modelRoutes": {
+            "default": {"model": "default-model", "thinking": "medium"},
+            "byIntent": {
+              "review_only": {"model": "review-model"}
+            },
+            "byComplexity": {
+              "mechanical": {"thinking": "low"}
+            },
+            "byAction": {
+              "reply_comment": {"model": "comment-model"}
+            },
+            "byRepo": {
+              "gisce/erp": {
+                "byAction": {
+                  "reply_comment": {"thinking": "high"}
+                }
+              }
+            }
+          }
+        }"""
+    )
+
+    policy = Policy.from_file(policy_file)
+    route = policy.model_route_for(
+        "gisce/erp", "reply_comment", "review_only", "mechanical"
+    )
+
+    assert route.model == "comment-model"
+    assert route.thinking == "high"
+
+
 def test_policy_from_file_rejects_invalid_model_route_thinking(tmp_path):
     policy_file = tmp_path / "policy.json"
     policy_file.write_text('{"modelRoutes": {"byAction": {"sync_after_merge": {"thinking": "turbo"}}}}')

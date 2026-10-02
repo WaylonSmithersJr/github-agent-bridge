@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.63.0 (2026-10-02)
+
+### Features
+
+- **dashboard**: Add webhook monitoring views
+  ([`0367a3f`](https://github.com/gisce/github-agent-bridge/commit/0367a3fa73a07ca863ae95f16b6879f71985a474))
+
+- **webhooks**: Expose monitoring data
+  ([`a4be314`](https://github.com/gisce/github-agent-bridge/commit/a4be314862b57ac815cf387b1eefe9424f5164bc))
+
+### Performance Improvements
+
+- **webhooks**: Split dashboard monitoring queries
+  ([`d13698e`](https://github.com/gisce/github-agent-bridge/commit/d13698ead46a81f65832f486a6c1c58cd19d9ab9))
+
+
 ## v0.62.1 (2026-10-02)
 
 ### Bug Fixes

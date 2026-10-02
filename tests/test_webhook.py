@@ -143,6 +143,13 @@ def test_webhook_status_requires_dashboard_admin(tmp_path):
     assert client.get("/api/webhooks/github/status").status_code == 403
     client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "operator"}, is_admin=True)))
     assert client.get("/api/webhooks/github/status").status_code == 200
+    assert client.get("/api/status").json()["webhook_configured"] is True
+
+
+def test_dashboard_status_hides_webhook_tab_when_not_configured(tmp_path):
+    client = TestClient(create_app(DashboardConfig(db=tmp_path / "bridge.sqlite3", require_auth=False)))
+
+    assert client.get("/api/status").json()["webhook_configured"] is False
 
 
 def test_submitted_review_uses_same_canonical_key_as_email_ingestion(tmp_path):

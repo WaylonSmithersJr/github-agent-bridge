@@ -717,6 +717,14 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             return redirect
         return dashboard_index()
 
+    @app.get("/webhooks")
+    @app.get("/webhooks/{webhook_path:path}")
+    async def dashboard_webhooks(request: Request, webhook_path: str = "") -> Response:
+        redirect = await require_dashboard_profile_or_login(request)
+        if redirect is not None:
+            return redirect
+        return dashboard_index()
+
     @app.get("/api/status")
     def api_status(request: Request, profile: dict[str, Any] = Depends(current_profile)) -> dict[str, Any]:
         queue = JobQueue(config.db)
@@ -740,6 +748,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "dashboard_url": dashboard_url,
             "dashboard_url_source": dashboard_url_source,
             "admin_actions": admin_actions,
+            "webhook_configured": bool(config.webhook_secrets or config.webhook_secrets_by_owner) if profile.get("is_admin") else False,
             "metrics": inspect_db_read_only(config.db),
             "autoupdate": load_update_state(queue) if profile.get("is_admin") else {},
         }

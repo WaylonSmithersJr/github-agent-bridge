@@ -57,6 +57,7 @@ type DashboardStatus = {
   dashboard_url?: string;
   dashboard_url_source?: "configured" | "forwarded" | "request";
   admin_actions: string[];
+  webhook_configured?: boolean;
   autoupdate: AutoupdateState;
   metrics?: {
     knowledge?: {
@@ -66,6 +67,14 @@ type DashboardStatus = {
       errors?: number;
     };
   };
+};
+
+type WebhookStatus = {
+  mode: string;
+  configured: boolean;
+  receipts: Record<string, number>;
+  duplicate_deliveries: number;
+  cross_source_matches: number;
 };
 
 type AutoupdateState = {
@@ -785,6 +794,10 @@ function isSystemPath(pathname = window.location.pathname) {
   return /^\/system\/?$/.test(pathname);
 }
 
+function isWebhooksPath(pathname = window.location.pathname) {
+  return /^\/webhooks\/?$/.test(pathname);
+}
+
 function repoFromScope(scope: string) {
   return scope.startsWith("repo:") ? scope.slice("repo:".length) : scope;
 }
@@ -820,7 +833,8 @@ function App() {
   const isKnowledgeRoute = isKnowledgePath(pathname);
   const isMcpRoute = isMcpPath(pathname);
   const isSystemRoute = isSystemPath(pathname);
-  const isDashboardRoute = !isJobDetailRoute && !isKnowledgeRoute && !isMcpRoute && !isSystemRoute;
+  const isWebhooksRoute = isWebhooksPath(pathname);
+  const isDashboardRoute = !isJobDetailRoute && !isKnowledgeRoute && !isMcpRoute && !isSystemRoute && !isWebhooksRoute;
   const selectedJobId = jobRouteId;
   const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: isDashboardRoute || isSystemRoute });
   const dashboardStatus = useQuery({ queryKey: ["dashboard-status"], queryFn: () => api<DashboardStatus>("/api/status") });
@@ -837,6 +851,11 @@ function App() {
   const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: isSystemRoute });
   const systemd = useQuery({ queryKey: ["systemd"], queryFn: () => api<SystemdResponse>("/api/systemd"), enabled: isSystemRoute });
   const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => api<{ alerts: AlertRecord[] }>("/api/alerts"), enabled: isSystemRoute });
+  const webhookStatus = useQuery({
+    queryKey: ["webhook-status"],
+    queryFn: () => api<WebhookStatus>("/api/webhooks/github/status"),
+    enabled: isWebhooksRoute && Boolean(me.data?.user?.is_admin && dashboardStatus.data?.webhook_configured),
+  });
   const knowledge = useQuery({
     queryKey: ["knowledge", knowledgeRepo, knowledgeStatus],
     queryFn: () => api<KnowledgeResponse>(buildKnowledgeQuery(knowledgeRepo, knowledgeStatus)),
@@ -1092,7 +1111,7 @@ function App() {
       </header>
 
       <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-3 py-4 sm:px-4 md:px-6 md:py-5">
-        <SectionNav isDashboardRoute={isDashboardRoute} isSystemRoute={isSystemRoute} isKnowledgeRoute={isKnowledgeRoute} isMcpRoute={isMcpRoute} knowledgeBadgeCount={dashboardStatus.data?.metrics?.knowledge?.proposed ?? 0} onNavigate={navigateDashboard} />
+        <SectionNav isDashboardRoute={isDashboardRoute} isSystemRoute={isSystemRoute} isKnowledgeRoute={isKnowledgeRoute} isMcpRoute={isMcpRoute} isWebhooksRoute={isWebhooksRoute} showWebhooks={Boolean(me.data?.user?.is_admin && dashboardStatus.data?.webhook_configured)} knowledgeBadgeCount={dashboardStatus.data?.metrics?.knowledge?.proposed ?? 0} onNavigate={navigateDashboard} />
         <WebPushToast notification={inAppPush} onDismiss={() => setInAppPush(null)} onNavigate={navigateDashboard} />
         {jobRouteId !== null ? (
           <JobDetailPage
@@ -1143,6 +1162,8 @@ function App() {
             onRevoke={revokeMcpToken}
             onRefresh={() => mcpTokens.refetch()}
           />
+        ) : isWebhooksRoute ? (
+          <WebhookPage status={webhookStatus.data} loading={webhookStatus.isLoading} error={webhookStatus.error} onRefresh={() => webhookStatus.refetch()} />
         ) : isSystemRoute ? (
           <SystemPage
             processes={processes.data}
@@ -1418,6 +1439,8 @@ function SectionNav({
   isSystemRoute = false,
   isKnowledgeRoute,
   isMcpRoute = false,
+  isWebhooksRoute = false,
+  showWebhooks = false,
   knowledgeBadgeCount = 0,
   onNavigate,
 }: {
@@ -1425,6 +1448,8 @@ function SectionNav({
   isSystemRoute?: boolean;
   isKnowledgeRoute: boolean;
   isMcpRoute?: boolean;
+  isWebhooksRoute?: boolean;
+  showWebhooks?: boolean;
   knowledgeBadgeCount?: number;
   onNavigate?: (path: string) => void;
 }) {
@@ -1438,6 +1463,12 @@ function SectionNav({
         <Gauge className="h-4 w-4" aria-hidden />
         <span>System</span>
       </SectionLink>
+      {showWebhooks ? (
+        <SectionLink href="/webhooks" active={isWebhooksRoute} onNavigate={onNavigate}>
+          <Activity className="h-4 w-4" aria-hidden />
+          <span>Webhooks</span>
+        </SectionLink>
+      ) : null}
       <SectionLink href="/knowledge" active={isKnowledgeRoute} onNavigate={onNavigate}>
         <Brain className="h-4 w-4" aria-hidden />
         <span>Knowledge</span>
@@ -1458,6 +1489,29 @@ function SectionNav({
         <span>MCP</span>
       </SectionLink>
     </nav>
+  );
+}
+
+function WebhookPage({ status, loading, error, onRefresh }: { status: WebhookStatus | undefined; loading: boolean; error: Error | null; onRefresh: () => void }) {
+  const observed = Object.values(status?.receipts ?? {}).reduce((total, count) => total + count, 0);
+  return (
+    <section className="grid gap-4">
+      <PageTitle icon={<Activity className="h-5 w-5 text-muted" aria-hidden />} title="GitHub webhooks" subtitle="Shadow ingestion health. Deliveries are observed but do not create jobs." action={<RefreshButton onClick={onRefresh} />} />
+      {error ? <Banner tone="error" text={error.message} /> : null}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Webhook status">
+        <Metric title="Receipts" value={observed} icon={<Activity className="h-5 w-5" />} />
+        <Metric title="Duplicates" value={status?.duplicate_deliveries ?? 0} icon={<RefreshCw className="h-5 w-5" />} />
+        <Metric title="Cross-source matches" value={status?.cross_source_matches ?? 0} icon={<Link className="h-5 w-5" />} />
+        <Metric title="Mode" value={loading ? "…" : status?.mode ?? "unknown"} icon={<Eye className="h-5 w-5" />} />
+      </div>
+      <Panel title="Receipt states">
+        {loading ? <EmptyState text="Loading webhook status..." /> : Object.keys(status?.receipts ?? {}).length ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {Object.entries(status?.receipts ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => <MiniStat key={state} label={state} value={count} />)}
+          </div>
+        ) : <EmptyState text="No webhook deliveries observed yet." />}
+      </Panel>
+    </section>
   );
 }
 
@@ -2609,7 +2663,7 @@ function Panel({ title, action, children, className, flushHeader = false }: { ti
   );
 }
 
-function Metric({ title, value, icon }: { title: string; value: number; icon: React.ReactNode }) {
+function Metric({ title, value, icon }: { title: string; value: number | string; icon: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-border bg-panel p-3 shadow-sm md:p-4">
       <div className="flex items-center justify-between text-muted">
@@ -4059,6 +4113,7 @@ export {
   isKnowledgePath,
   isMcpPath,
   isSystemPath,
+  isWebhooksPath,
   isRetryableStatus,
   groupSessionEvents,
   groupTranscriptEntries,
@@ -4068,6 +4123,7 @@ export {
   selectedJobIdFromPath,
   shouldRefreshJobForSessionEvent,
   urlBase64ToUint8Array,
+  WebhookPage,
 };
 
 const root = document.getElementById("root");

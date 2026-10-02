@@ -55,6 +55,7 @@ from .observability import configure_sentry, list_alerts, recent_process_samples
 from .queue import JobQueue
 from .systemd_status import allowed_unit_names, stream_journal_lines, systemd_status
 from .web_push import delete_subscription, save_subscription, subscription_status
+from .webhook import persist_shadow_delivery, verify_signature
 
 
 DEFAULT_HOST = os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_HOST", "127.0.0.1")
@@ -114,6 +115,8 @@ class DashboardConfig:
         static_dir: str | Path | None = None,
         public_url: str | None = None,
         web_push_public_key: str | None = None,
+        webhook_secrets: tuple[str, ...] | None = None,
+        webhook_max_bytes: int | None = None,
     ) -> None:
         self.db = Path(db).expanduser()
         self.secret_key = secret_key or os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_SECRET_KEY", "")
@@ -128,6 +131,13 @@ class DashboardConfig:
         self.static_dir = Path(static_dir or os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_STATIC_DIR", Path(__file__).with_name("dashboard_static"))).expanduser()
         self.public_url = (public_url if public_url is not None else os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_PUBLIC_URL", "")).rstrip("/")
         self.web_push_public_key = web_push_public_key if web_push_public_key is not None else os.getenv("GITHUB_AGENT_BRIDGE_WEB_PUSH_VAPID_PUBLIC_KEY", "")
+        self.webhook_secrets = webhook_secrets if webhook_secrets is not None else tuple(
+            value for value in (
+                os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_SECRET", ""),
+                os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_PREVIOUS_SECRET", ""),
+            ) if value
+        )
+        self.webhook_max_bytes = webhook_max_bytes or int(os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_MAX_BYTES", "1048576"))
 
     @property
     def oauth_ready(self) -> bool:
@@ -564,6 +574,63 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "schema_ok": bool(metrics.get("schema_ok", True)),
             "oauth_configured": config.oauth_ready,
             "read_only": False,
+        }
+
+    @app.post("/api/webhooks/github")
+    async def github_webhook_shadow(request: Request) -> dict[str, Any]:
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="application_json_required")
+        delivery_id = request.headers.get("x-github-delivery", "").strip()
+        event_name = request.headers.get("x-github-event", "").strip()
+        signature = request.headers.get("x-hub-signature-256", "").strip()
+        if not delivery_id or not event_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="github_headers_required")
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > config.webhook_max_bytes:
+                    raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="payload_too_large")
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_content_length")
+        raw_payload = await request.body()
+        if len(raw_payload) > config.webhook_max_bytes:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="payload_too_large")
+        if not verify_signature(raw_payload, signature, config.webhook_secrets):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_signature")
+        try:
+            json.loads(raw_payload)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_json")
+        JobQueue(config.db)
+        receipt = persist_shadow_delivery(
+            config.db,
+            delivery_id=delivery_id,
+            event_name=event_name,
+            raw_payload=raw_payload,
+        )
+        return {"mode": "shadow", "status": receipt.status, "event_key": receipt.event_key}
+
+    @app.get("/api/webhooks/github/status")
+    def github_webhook_shadow_status(_: dict[str, Any] = Depends(current_profile)) -> dict[str, Any]:
+        JobQueue(config.db)
+        with sqlite3.connect(config.db) as con:
+            rows = con.execute(
+                "SELECT status,COUNT(*) FROM webhook_shadow_receipts GROUP BY status"
+            ).fetchall()
+            cross_source = con.execute(
+                "SELECT COUNT(DISTINCT w.event_key) FROM webhook_shadow_receipts w "
+                "JOIN ingest_receipts i ON i.event_key=w.event_key WHERE w.event_key IS NOT NULL"
+            ).fetchone()[0]
+            duplicate_deliveries = con.execute(
+                "SELECT COALESCE(SUM(duplicate_count),0) FROM webhook_shadow_receipts"
+            ).fetchone()[0]
+        counts = {row[0]: row[1] for row in rows}
+        return {
+            "mode": "shadow",
+            "configured": bool(config.webhook_secrets),
+            "receipts": counts,
+            "duplicate_deliveries": duplicate_deliveries,
+            "cross_source_matches": cross_source,
         }
 
     def dashboard_index() -> FileResponse:

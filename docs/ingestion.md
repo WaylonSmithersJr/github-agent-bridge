@@ -33,13 +33,30 @@ accepts a possible duplicate rather than risk dropping a legitimate action.
 
 1. **Phase 0 (implemented):** route IMAP through the common transactional
    ingestor while preserving the existing queue and dispatch behavior.
-2. **Shadow webhook:** verify signatures and persist receipts/events, but do
-   not create jobs. Compare coverage and canonical keys with IMAP.
+2. **Shadow webhook (implemented):** verify signatures and persist shadow
+   receipts, but do not create jobs or claim canonical events. Compare coverage
+   and canonical keys with IMAP.
 3. **Canary dual ingest:** allow webhook enqueue only for `enabledRepos`.
    The unique event key guarantees that the first source wins.
 4. **Webhook primary:** keep IMAP as a delayed fallback until a complete
    operational cycle has no unexplained IMAP-only actionable events.
 
-Webhook ingestion must not be enabled until raw-body signature verification,
-payload-size limits, secret rotation, recovery of persisted-but-unprocessed
-receipts, and metrics for source divergence are in place.
+Phase 1 is exposed as `POST /api/webhooks/github` by the dashboard service.
+Configure `GITHUB_AGENT_BRIDGE_WEBHOOK_SECRET`; during rotation,
+`GITHUB_AGENT_BRIDGE_WEBHOOK_PREVIOUS_SECRET` accepts the old secret as well.
+`GITHUB_AGENT_BRIDGE_WEBHOOK_MAX_BYTES` defaults to 1 MiB. GitHub must send
+`Content-Type: application/json`, `X-GitHub-Delivery`, `X-GitHub-Event`, and a
+valid `X-Hub-Signature-256` computed over the unmodified request bytes.
+
+The endpoint stores only routing metadata, a SHA-256 payload hash, and the
+canonical event key in `webhook_shadow_receipts`; it deliberately stores no raw
+payload and never creates a queue job. Authenticated operators can inspect
+counts, duplicate deliveries, and cross-source event-key matches at
+`GET /api/webhooks/github/status`.
+
+Comment and review `edited` deliveries are observed under a distinct key and
+do not retrigger work. Phase 2 must make an explicit policy decision before
+any non-`created` action can enqueue a job.
+
+Webhook enqueueing must not be enabled until recovery of persisted-but-
+unprocessed receipts and divergence metrics have been validated in production.

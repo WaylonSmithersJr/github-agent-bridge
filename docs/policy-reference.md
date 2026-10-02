@@ -699,19 +699,21 @@ configured default behavior.
 }
 ```
 
-Resolution order is deterministic:
+Matching routes are composed in deterministic order, from broad defaults to
+specific overrides:
 
-1. repo + action
-2. repo + intent
-3. repo default
-4. global action
-5. global intent
-6. global default
-7. no override
+1. global default
+2. repo default
+3. global intent, complexity, then action
+4. repo intent, complexity, then action
 
-Each route is an object with optional `model` and `thinking` fields. A route can
-set only one field; the bridge appends only the flags that are configured on the
-selected route. Supported `thinking` values are `off`, `minimal`, `low`,
+Each route is an object with optional `model` and `thinking` fields. Every
+matching route overrides only the fields it defines, so a repo default such as
+`{"thinking": "xhigh"}` keeps the inherited model and still allows global
+action or complexity rules to select cheaper settings. Repo-specific action,
+complexity, and intent rules remain the final and most specific overrides. The
+bridge appends only the flags configured in the composed result. Supported
+`thinking` values are `off`, `minimal`, `low`,
 `medium`, `high`, `xhigh`, `adaptive`, and `max`; invalid values fail policy
 load with a clear error. Use provider-qualified model IDs such as
 `openai/gpt-5.4-mini`; bare model names can resolve to a different provider

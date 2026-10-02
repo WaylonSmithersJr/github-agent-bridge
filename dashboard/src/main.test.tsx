@@ -18,6 +18,7 @@ import {
   SystemdUnits,
   UserMenu,
   WebPushControl,
+  WebhookPage,
   buildJobQuery,
   buildKnowledgeQuery,
   changelogMarkdown,
@@ -28,6 +29,7 @@ import {
   isMcpPath,
   isRetryableStatus,
   isSystemPath,
+  isWebhooksPath,
   metricsSummaryPath,
   runtimeBucketLabel,
   selectedJobIdFromPath,
@@ -71,6 +73,12 @@ describe("dashboard routing and API query helpers", () => {
     expect(isSystemPath("/system/processes")).toBe(false);
   });
 
+  it("recognizes the webhook monitoring route", () => {
+    expect(isWebhooksPath("/webhooks")).toBe(true);
+    expect(isWebhooksPath("/webhooks/")).toBe(true);
+    expect(isWebhooksPath("/webhooks/github")).toBe(false);
+  });
+
   it("recognizes only canonical job detail routes", () => {
     expect(selectedJobIdFromPath("/jobs/45")).toBe(45);
     expect(selectedJobIdFromPath("/jobs/45/")).toBe(45);
@@ -95,6 +103,23 @@ describe("dashboard routing and API query helpers", () => {
 
     rerender(<SectionNav isDashboardRoute={false} isSystemRoute={false} isKnowledgeRoute={false} isMcpRoute={true} knowledgeBadgeCount={0} />);
     expect(screen.getByRole("link", { name: /MCP/i })).toHaveClass("bg-primary");
+  });
+
+  it("shows the webhook section only when shadow ingestion is configured", () => {
+    const { rerender } = render(<SectionNav isDashboardRoute={true} isKnowledgeRoute={false} showWebhooks={false} />);
+    expect(screen.queryByRole("link", { name: /Webhooks/i })).not.toBeInTheDocument();
+
+    rerender(<SectionNav isDashboardRoute={false} isKnowledgeRoute={false} isWebhooksRoute={true} showWebhooks={true} />);
+    expect(screen.getByRole("link", { name: /Webhooks/i })).toHaveClass("bg-primary");
+  });
+
+  it("renders the webhook status exported by the backend", () => {
+    render(<WebhookPage status={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3 }} loading={false} error={null} onRefresh={vi.fn()} />);
+
+    expect(screen.getByRole("heading", { name: "GitHub webhooks" })).toBeInTheDocument();
+    expect(screen.getByText("shadow")).toBeInTheDocument();
+    expect(screen.getByText("observed")).toBeInTheDocument();
+    expect(screen.getAllByText("7").length).toBeGreaterThan(0);
   });
 
   it("uses client-side navigation for dashboard section links", async () => {

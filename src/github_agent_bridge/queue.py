@@ -801,6 +801,7 @@ class JobQueue:
             "jobs": {"trigger_actor": "TEXT", "trigger_actor_avatar_url": "TEXT"},
             "coalesced_notifications": {"trigger_actor": "TEXT", "trigger_actor_avatar_url": "TEXT"},
             "mcp_tokens": {"user_login": "TEXT", "created_by": "TEXT"},
+            "webhook_shadow_receipts": {"duplicate_count": "INTEGER NOT NULL DEFAULT 0"},
         }
         for table, columns in tables.items():
             if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is None:

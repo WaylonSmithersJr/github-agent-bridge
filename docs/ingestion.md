@@ -78,17 +78,22 @@ organization webhook under **Organization settings → Webhooks**:
 
 A repository webhook covers only that repository. An organization webhook
 covers repositories in that organization and is the recommended deployment.
-Multiple organizations may use the same endpoint when each owner has its own
-entry in `GITHUB_AGENT_BRIDGE_WEBHOOK_SECRETS_BY_OWNER`.
+Multiple organizations and multiple hooks may use the same endpoint when each
+owner has its own entry in `GITHUB_AGENT_BRIDGE_WEBHOOK_SECRETS_BY_OWNER`.
+GitHub's `X-GitHub-Hook-ID` header keeps their inventory and activity separate.
 
 The endpoint stores only routing metadata, a SHA-256 payload hash, and the
 canonical event key in `webhook_shadow_receipts`; it deliberately stores no raw
 payload and never creates a queue job. Authenticated operators can inspect
-counts, duplicate deliveries, and cross-source event-key matches at
+counts, a daily activity series, hook inventory, recent deliveries, duplicate
+deliveries, and cross-source event-key matches at
 `GET /api/webhooks/github/status`. Here “operators” means users authorized as
 dashboard administrators through `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS`
 or `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS`; other authenticated dashboard
 users receive HTTP 403 and unauthenticated requests receive HTTP 401.
+Receipt details are retained for 30 days by default and pruned during ingestion;
+set `GITHUB_AGENT_BRIDGE_WEBHOOK_RETENTION_DAYS` to change that window. Raw
+payloads are never retained.
 
 The maintained event inventory and support levels are in
 [`webhook-events.md`](webhook-events.md).

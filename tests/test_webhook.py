@@ -23,6 +23,10 @@ def signed_headers(payload: bytes, *, delivery: str = "delivery-1", event: str =
     }
 
 
+def hook_headers(payload: bytes, *, delivery: str, event: str, hook_id: str) -> dict[str, str]:
+    return {**signed_headers(payload, delivery=delivery, event=event), "x-github-hook-id": hook_id}
+
+
 def issue_comment_payload(*, action: str = "created") -> bytes:
     return json.dumps({
         "action": action,
@@ -150,6 +154,70 @@ def test_dashboard_status_hides_webhook_tab_when_not_configured(tmp_path):
     client = TestClient(create_app(DashboardConfig(db=tmp_path / "bridge.sqlite3", require_auth=False)))
 
     assert client.get("/api/status").json()["webhook_configured"] is False
+
+
+def test_webhook_status_exposes_real_hook_inventory_deliveries_and_timeseries(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+    ping = json.dumps({
+        "zen": "Keep it logically awesome.",
+        "hook": {"id": 42, "active": True, "events": ["issue_comment", "pull_request_review"]},
+        "organization": {"login": "gisce"},
+    }).encode()
+    delivery = issue_comment_payload()
+
+    assert client.post("/api/webhooks/github", content=ping, headers=hook_headers(ping, delivery="ping-1", event="ping", hook_id="42")).status_code == 200
+    assert client.post("/api/webhooks/github", content=delivery, headers=hook_headers(delivery, delivery="delivery-1", event="issue_comment", hook_id="42")).status_code == 200
+    response = client.get("/api/webhooks/github/status")
+
+    assert response.status_code == 200
+    status = response.json()
+    assert status["hooks"] == [{
+        "id": "42", "target": "gisce", "target_type": "organization",
+        "active": True, "events": ["issue_comment", "pull_request_review"],
+        "last_ping_at": status["hooks"][0]["last_ping_at"],
+        "last_event_at": status["hooks"][0]["last_event_at"], "status": "receiving",
+    }]
+    assert status["hooks"][0]["last_ping_at"]
+    assert status["hooks"][0]["last_event_at"]
+    assert status["recent_deliveries"][0]["delivery_id"] == "delivery-1"
+    assert status["recent_deliveries"][0]["hook_id"] == "42"
+    assert status["timeseries"][0]["observed"] == 1
+    assert status["timeseries"][0]["unsupported"] == 1
+
+
+def test_webhook_receipt_retention_removes_expired_delivery_details(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    client = TestClient(create_app(DashboardConfig(
+        db=db, require_auth=False, webhook_secrets=(SECRET,), webhook_retention_days=7,
+    )))
+    payload = issue_comment_payload()
+    client.post("/api/webhooks/github", content=payload, headers=signed_headers(payload, delivery="old"))
+    with sqlite3.connect(db) as con:
+        con.execute("UPDATE webhook_shadow_receipts SET created_at='2020-01-01T00:00:00+00:00'")
+    client.post("/api/webhooks/github", content=payload, headers=signed_headers(payload, delivery="new"))
+
+    assert [item["delivery_id"] for item in client.get("/api/webhooks/github/status").json()["recent_deliveries"]] == ["new"]
+
+
+def test_existing_webhook_receipt_schema_is_migrated_for_hook_inventory(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE webhook_shadow_receipts (delivery_id TEXT PRIMARY KEY,event_name TEXT NOT NULL,"
+            "action TEXT,event_key TEXT,repository TEXT,payload_hash TEXT NOT NULL,status TEXT NOT NULL,"
+            "duplicate_count INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL)"
+        )
+    payload = issue_comment_payload()
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+
+    response = client.post(
+        "/api/webhooks/github", content=payload,
+        headers=hook_headers(payload, delivery="migrated", event="issue_comment", hook_id="84"),
+    )
+
+    assert response.status_code == 200
+    assert client.get("/api/webhooks/github/status").json()["hooks"][0]["id"] == "84"
 
 
 def test_submitted_review_uses_same_canonical_key_as_email_ingestion(tmp_path):

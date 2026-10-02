@@ -118,6 +118,7 @@ class DashboardConfig:
         webhook_secrets: tuple[str, ...] | None = None,
         webhook_secrets_by_owner: dict[str, tuple[str, ...]] | None = None,
         webhook_max_bytes: int | None = None,
+        webhook_retention_days: int | None = None,
     ) -> None:
         self.db = Path(db).expanduser()
         self.secret_key = secret_key or os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_SECRET_KEY", "")
@@ -140,6 +141,7 @@ class DashboardConfig:
         )
         self.webhook_secrets_by_owner = webhook_secrets_by_owner if webhook_secrets_by_owner is not None else _webhook_secrets_by_owner_env()
         self.webhook_max_bytes = webhook_max_bytes or int(os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_MAX_BYTES", "1048576"))
+        self.webhook_retention_days = webhook_retention_days or int(os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_RETENTION_DAYS", "30"))
 
     @property
     def oauth_ready(self) -> bool:
@@ -605,6 +607,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="application_json_required")
         delivery_id = request.headers.get("x-github-delivery", "").strip()
         event_name = request.headers.get("x-github-event", "").strip()
+        hook_id = request.headers.get("x-github-hook-id", "").strip() or None
         signature = request.headers.get("x-hub-signature-256", "").strip()
         if not delivery_id or not event_name:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="github_headers_required")
@@ -639,6 +642,8 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             delivery_id=delivery_id,
             event_name=event_name,
             raw_payload=raw_payload,
+            hook_id=hook_id,
+            retention_days=config.webhook_retention_days,
         )
         return {"mode": "shadow", "status": receipt.status, "event_key": receipt.event_key}
 
@@ -656,6 +661,20 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             duplicate_deliveries = con.execute(
                 "SELECT COALESCE(SUM(duplicate_count),0) FROM webhook_shadow_receipts"
             ).fetchone()[0]
+            timeseries_rows = con.execute(
+                "SELECT substr(created_at,1,10), "
+                "SUM(CASE WHEN status='observed' THEN 1 ELSE 0 END), "
+                "SUM(duplicate_count), SUM(CASE WHEN status='unsupported' THEN 1 ELSE 0 END) "
+                "FROM webhook_shadow_receipts GROUP BY substr(created_at,1,10) ORDER BY 1"
+            ).fetchall()
+            delivery_rows = con.execute(
+                "SELECT delivery_id,hook_id,event_name,action,event_key,repository,status,created_at "
+                "FROM webhook_shadow_receipts ORDER BY created_at DESC LIMIT 100"
+            ).fetchall()
+            hook_rows = con.execute(
+                "SELECT hook_id,target,target_type,active,events_json,last_ping_at,last_event_at,updated_at "
+                "FROM webhook_hooks ORDER BY target_type,target,hook_id"
+            ).fetchall()
         counts = {row[0]: row[1] for row in rows}
         return {
             "mode": "shadow",
@@ -663,6 +682,21 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "receipts": counts,
             "duplicate_deliveries": duplicate_deliveries,
             "cross_source_matches": cross_source,
+            "timeseries": [
+                {"bucket": row[0], "observed": row[1], "duplicate": row[2], "unsupported": row[3]}
+                for row in timeseries_rows
+            ],
+            "hooks": [
+                {"id": row[0], "target": row[1], "target_type": row[2], "active": bool(row[3]),
+                 "events": json.loads(row[4]), "last_ping_at": row[5], "last_event_at": row[6],
+                 "status": ("inactive" if not row[3] else "receiving" if row[6] else "never_seen")}
+                for row in hook_rows
+            ],
+            "recent_deliveries": [
+                {"delivery_id": row[0], "hook_id": row[1], "event_name": row[2], "action": row[3],
+                 "event_key": row[4], "repository": row[5], "status": row[6], "created_at": row[7]}
+                for row in delivery_rows
+            ],
         }
 
     def dashboard_index() -> FileResponse:

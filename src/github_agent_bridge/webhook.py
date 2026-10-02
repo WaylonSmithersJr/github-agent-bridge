@@ -66,6 +66,8 @@ def persist_shadow_delivery(
     delivery_id: str,
     event_name: str,
     raw_payload: bytes,
+    hook_id: str | None = None,
+    retention_days: int = 30,
 ) -> ShadowReceipt:
     payload = json.loads(raw_payload)
     action = str(payload.get("action") or "") or None
@@ -77,10 +79,37 @@ def persist_shadow_delivery(
     now = utc_now()
     con = sqlite3.connect(Path(db).expanduser(), timeout=30)
     try:
+        con.execute(
+            "DELETE FROM webhook_shadow_receipts WHERE julianday(created_at) < julianday('now', ?)",
+            (f"-{retention_days} days",),
+        )
+        if hook_id:
+            hook = payload.get("hook") if isinstance(payload, dict) else None
+            organization = payload.get("organization") if isinstance(payload, dict) else None
+            target_type = "organization" if isinstance(organization, dict) else "repository"
+            target = (
+                organization.get("login") if isinstance(organization, dict)
+                else repository.get("full_name") if isinstance(repository, dict)
+                else None
+            ) or "unknown"
+            active = bool(hook.get("active", True)) if isinstance(hook, dict) else True
+            events = hook.get("events", []) if isinstance(hook, dict) else []
+            con.execute(
+                "INSERT INTO webhook_hooks(hook_id,target,target_type,active,events_json,last_ping_at,last_event_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(hook_id) DO UPDATE SET "
+                "target=CASE WHEN excluded.events_json='[]' THEN webhook_hooks.target ELSE excluded.target END,"
+                "target_type=CASE WHEN excluded.events_json='[]' THEN webhook_hooks.target_type ELSE excluded.target_type END,"
+                "active=CASE WHEN excluded.events_json='[]' THEN webhook_hooks.active ELSE excluded.active END,"
+                "events_json=CASE WHEN excluded.events_json='[]' THEN webhook_hooks.events_json ELSE excluded.events_json END,"
+                "last_ping_at=COALESCE(excluded.last_ping_at,webhook_hooks.last_ping_at),"
+                "last_event_at=COALESCE(excluded.last_event_at,webhook_hooks.last_event_at),updated_at=excluded.updated_at",
+                (hook_id, target, target_type, int(active), json.dumps(events), now if event_name == "ping" else None,
+                 now if event_name != "ping" else None, now),
+            )
         try:
             con.execute(
-                "INSERT INTO webhook_shadow_receipts(delivery_id,event_name,action,event_key,repository,payload_hash,status,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                (delivery_id, event_name, action, event_key, repo, payload_hash, status, now),
+                "INSERT INTO webhook_shadow_receipts(delivery_id,hook_id,event_name,action,event_key,repository,payload_hash,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (delivery_id, hook_id, event_name, action, event_key, repo, payload_hash, status, now),
             )
             con.commit()
         except sqlite3.IntegrityError:

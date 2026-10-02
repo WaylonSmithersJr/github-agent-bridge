@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.61.0 (2026-10-02)
+
+### Features
+
+- Add transport-independent event ingestion
+  ([`b8b48ad`](https://github.com/gisce/github-agent-bridge/commit/b8b48adffbc84cf42cc987e8709acac08f080ed8))
+
+
 ## v0.60.11 (2026-10-01)
 
 ### Bug Fixes

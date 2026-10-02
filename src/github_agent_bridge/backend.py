@@ -116,6 +116,7 @@ class DashboardConfig:
         public_url: str | None = None,
         web_push_public_key: str | None = None,
         webhook_secrets: tuple[str, ...] | None = None,
+        webhook_secrets_by_owner: dict[str, tuple[str, ...]] | None = None,
         webhook_max_bytes: int | None = None,
     ) -> None:
         self.db = Path(db).expanduser()
@@ -137,6 +138,7 @@ class DashboardConfig:
                 os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_PREVIOUS_SECRET", ""),
             ) if value
         )
+        self.webhook_secrets_by_owner = webhook_secrets_by_owner if webhook_secrets_by_owner is not None else _webhook_secrets_by_owner_env()
         self.webhook_max_bytes = webhook_max_bytes or int(os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_MAX_BYTES", "1048576"))
 
     @property
@@ -155,6 +157,27 @@ class DashboardConfig:
 def _csv_env(name: str) -> set[str]:
     raw = os.getenv(name, "")
     return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+def _webhook_secrets_by_owner_env() -> dict[str, tuple[str, ...]]:
+    raw = os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_SECRETS_BY_OWNER", "")
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_SECRETS_BY_OWNER must be valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_SECRETS_BY_OWNER must be a JSON object")
+    result: dict[str, tuple[str, ...]] = {}
+    for owner, values in parsed.items():
+        if not isinstance(owner, str) or not owner.strip() or not isinstance(values, list):
+            raise ValueError("webhook owner secrets must map owner names to JSON arrays")
+        owner_secrets = tuple(value for value in values if isinstance(value, str) and value)
+        if not owner_secrets or len(owner_secrets) != len(values):
+            raise ValueError("each webhook owner must have one or more non-empty string secrets")
+        result[owner.strip().lower()] = owner_secrets
+    return result
 
 
 def _env(name: str, default: str = "") -> str:
@@ -595,12 +618,21 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         raw_payload = await request.body()
         if len(raw_payload) > config.webhook_max_bytes:
             raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="payload_too_large")
-        if not verify_signature(raw_payload, signature, config.webhook_secrets):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_signature")
         try:
-            json.loads(raw_payload)
+            payload = json.loads(raw_payload)
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_json")
+        repository = payload.get("repository") if isinstance(payload, dict) else None
+        full_name = repository.get("full_name") if isinstance(repository, dict) else None
+        owner = str(full_name or "").partition("/")[0].lower()
+        if config.webhook_secrets_by_owner:
+            webhook_secrets = config.webhook_secrets_by_owner.get(owner, ())
+            if not webhook_secrets:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="repository_owner_not_allowed")
+        else:
+            webhook_secrets = config.webhook_secrets
+        if not verify_signature(raw_payload, signature, webhook_secrets):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_signature")
         JobQueue(config.db)
         receipt = persist_shadow_delivery(
             config.db,
@@ -611,7 +643,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         return {"mode": "shadow", "status": receipt.status, "event_key": receipt.event_key}
 
     @app.get("/api/webhooks/github/status")
-    def github_webhook_shadow_status(_: dict[str, Any] = Depends(current_profile)) -> dict[str, Any]:
+    def github_webhook_shadow_status(_: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
         JobQueue(config.db)
         with sqlite3.connect(config.db) as con:
             rows = con.execute(
@@ -627,7 +659,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         counts = {row[0]: row[1] for row in rows}
         return {
             "mode": "shadow",
-            "configured": bool(config.webhook_secrets),
+            "configured": bool(config.webhook_secrets or config.webhook_secrets_by_owner),
             "receipts": counts,
             "duplicate_deliveries": duplicate_deliveries,
             "cross_source_matches": cross_source,

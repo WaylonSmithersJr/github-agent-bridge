@@ -7,14 +7,14 @@ import sqlite3
 
 from fastapi.testclient import TestClient
 
-from github_agent_bridge.backend import DashboardConfig, create_app
+from github_agent_bridge.backend import DashboardConfig, _encode_session, _sign, create_app
 
 
 SECRET = "test-secret"
 
 
-def signed_headers(payload: bytes, *, delivery: str = "delivery-1", event: str = "issue_comment") -> dict[str, str]:
-    digest = hmac.new(SECRET.encode(), payload, hashlib.sha256).hexdigest()
+def signed_headers(payload: bytes, *, delivery: str = "delivery-1", event: str = "issue_comment", secret: str = SECRET) -> dict[str, str]:
+    digest = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     return {
         "content-type": "application/json",
         "x-github-delivery": delivery,
@@ -88,6 +88,61 @@ def test_webhook_shadow_accepts_previous_rotation_secret(tmp_path):
     )))
 
     assert client.post("/api/webhooks/github", content=payload, headers=signed_headers(payload)).status_code == 200
+
+
+def test_webhook_shadow_selects_secret_by_repository_owner(tmp_path):
+    payload = issue_comment_payload()
+    client = TestClient(create_app(DashboardConfig(
+        db=tmp_path / "bridge.sqlite3",
+        require_auth=False,
+        webhook_secrets_by_owner={"gisce": ("gisce-secret",), "example": ("example-secret",)},
+    )))
+
+    assert client.post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, secret="gisce-secret"),
+    ).status_code == 200
+    assert client.post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="wrong-owner-secret", secret="example-secret"),
+    ).status_code == 401
+
+
+def test_webhook_shadow_rejects_unconfigured_repository_owner(tmp_path):
+    payload = json.dumps({
+        "action": "created",
+        "repository": {"full_name": "unknown/repository"},
+        "comment": {"id": 1},
+    }).encode()
+    client = TestClient(create_app(DashboardConfig(
+        db=tmp_path / "bridge.sqlite3",
+        require_auth=False,
+        webhook_secrets_by_owner={"gisce": (SECRET,)},
+    )))
+
+    response = client.post("/api/webhooks/github", content=payload, headers=signed_headers(payload))
+
+    assert response.status_code == 403
+    assert not (tmp_path / "bridge.sqlite3").exists()
+
+
+def test_webhook_status_requires_dashboard_admin(tmp_path):
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3",
+        secret_key="dashboard-secret",
+        allowed_users={"alice"},
+        admin_users={"operator"},
+        webhook_secrets=(SECRET,),
+    )
+    client = TestClient(create_app(config))
+
+    assert client.get("/api/webhooks/github/status").status_code == 401
+    client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "alice"})))
+    assert client.get("/api/webhooks/github/status").status_code == 403
+    client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "operator"}, is_admin=True)))
+    assert client.get("/api/webhooks/github/status").status_code == 200
 
 
 def test_submitted_review_uses_same_canonical_key_as_email_ingestion(tmp_path):

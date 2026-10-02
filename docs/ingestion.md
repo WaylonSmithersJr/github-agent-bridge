@@ -23,7 +23,7 @@ accepts a possible duplicate rather than risk dropping a legitimate action.
 
 | Concern | IMAP | GitHub App webhook |
 | --- | --- | --- |
-| Trust | Auth headers and GitHub sender checks | Mandatory HMAC-SHA256 signature over raw bytes, plus installation/repository policy |
+| Trust | Auth headers and GitHub sender checks | Mandatory HMAC-SHA256 signature over raw bytes; optional owner allowlist through owner-specific secrets |
 | Idempotency | `Message-ID` receipt | `X-GitHub-Delivery` receipt |
 | Cross-source identity | IDs parsed from GitHub URLs | IDs in the structured payload |
 | Latency | Polling and mail delivery | Immediate delivery with retries |
@@ -42,17 +42,56 @@ accepts a possible duplicate rather than risk dropping a legitimate action.
    operational cycle has no unexplained IMAP-only actionable events.
 
 Phase 1 is exposed as `POST /api/webhooks/github` by the dashboard service.
-Configure `GITHUB_AGENT_BRIDGE_WEBHOOK_SECRET`; during rotation,
-`GITHUB_AGENT_BRIDGE_WEBHOOK_PREVIOUS_SECRET` accepts the old secret as well.
+For a single trusted owner, configure `GITHUB_AGENT_BRIDGE_WEBHOOK_SECRET`;
+during rotation, `GITHUB_AGENT_BRIDGE_WEBHOOK_PREVIOUS_SECRET` accepts the old
+secret as well. This legacy form accepts any repository signed with that shared
+secret.
+
+For multiple organizations or owners, use independent secrets and an explicit
+owner allowlist:
+
+```shell
+export GITHUB_AGENT_BRIDGE_WEBHOOK_SECRETS_BY_OWNER='{"gisce":["current-gisce-secret","previous-gisce-secret"],"example":["example-secret"]}'
+```
+
+Each value is an ordered list of accepted current/rotation secrets. When this
+setting is present, a payload whose `repository.full_name` owner is not in the
+map is rejected before persistence. Do not reuse a secret across owners: that
+would couple rotation and increase the blast radius of a leak.
+
 `GITHUB_AGENT_BRIDGE_WEBHOOK_MAX_BYTES` defaults to 1 MiB. GitHub must send
 `Content-Type: application/json`, `X-GitHub-Delivery`, `X-GitHub-Event`, and a
 valid `X-Hub-Signature-256` computed over the unmodified request bytes.
+
+### GitHub configuration
+
+Create either a repository webhook under **Settings → Webhooks** or an
+organization webhook under **Organization settings → Webhooks**:
+
+1. Set **Payload URL** to `https://<host>/api/webhooks/github`.
+2. Set **Content type** to `application/json` and **Secret** to the matching
+   configured owner secret.
+3. Keep SSL verification enabled and the webhook active.
+4. Select individual events: **Issue comments**, **Pull request reviews**,
+   **Pull request review comments**, **Commit comments**, and **Workflow runs**.
+   Do not select “Send me everything” for Phase 1.
+
+A repository webhook covers only that repository. An organization webhook
+covers repositories in that organization and is the recommended deployment.
+Multiple organizations may use the same endpoint when each owner has its own
+entry in `GITHUB_AGENT_BRIDGE_WEBHOOK_SECRETS_BY_OWNER`.
 
 The endpoint stores only routing metadata, a SHA-256 payload hash, and the
 canonical event key in `webhook_shadow_receipts`; it deliberately stores no raw
 payload and never creates a queue job. Authenticated operators can inspect
 counts, duplicate deliveries, and cross-source event-key matches at
-`GET /api/webhooks/github/status`.
+`GET /api/webhooks/github/status`. Here “operators” means users authorized as
+dashboard administrators through `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS`
+or `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS`; other authenticated dashboard
+users receive HTTP 403 and unauthenticated requests receive HTTP 401.
+
+The maintained event inventory and support levels are in
+[`webhook-events.md`](webhook-events.md).
 
 Comment and review `edited` deliveries are observed under a distinct key and
 do not retrigger work. Phase 2 must make an explicit policy decision before

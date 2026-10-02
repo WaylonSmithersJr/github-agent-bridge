@@ -75,6 +75,39 @@ type WebhookStatus = {
   receipts: Record<string, number>;
   duplicate_deliveries: number;
   cross_source_matches: number;
+  timeseries?: WebhookTimeseriesPoint[];
+  hooks?: WebhookHook[];
+  recent_deliveries?: WebhookDelivery[];
+};
+
+type WebhookTimeseriesPoint = {
+  bucket: string;
+  observed: number;
+  duplicate: number;
+  unsupported: number;
+};
+
+type WebhookHook = {
+  id: string;
+  target: string;
+  target_type: "organization" | "repository";
+  active: boolean;
+  events: string[];
+  last_ping_at?: string | null;
+  last_event_at?: string | null;
+  status: "receiving" | "quiet" | "inactive" | "never_seen" | "stale_config";
+  admin_url?: string | null;
+};
+
+type WebhookDelivery = {
+  delivery_id: string;
+  created_at: string;
+  hook_id?: string | null;
+  event_name: string;
+  action?: string | null;
+  repository?: string | null;
+  status: string;
+  event_key?: string | null;
 };
 
 type AutoupdateState = {
@@ -1494,23 +1527,39 @@ function SectionNav({
 
 function WebhookPage({ status, loading, error, onRefresh }: { status: WebhookStatus | undefined; loading: boolean; error: Error | null; onRefresh: () => void }) {
   const observed = Object.values(status?.receipts ?? {}).reduce((total, count) => total + count, 0);
+  const [section, setSection] = React.useState<"overview" | "hooks" | "deliveries">("overview");
+  const sections = [
+    { id: "overview" as const, label: "Overview" },
+    { id: "hooks" as const, label: "Hooks", count: status?.hooks?.length },
+    { id: "deliveries" as const, label: "Deliveries", count: status?.recent_deliveries?.length },
+  ];
   return (
     <section className="grid gap-4">
       <PageTitle icon={<Activity className="h-5 w-5 text-muted" aria-hidden />} title="GitHub webhooks" subtitle="Shadow ingestion health. Deliveries are observed but do not create jobs." action={<RefreshButton onClick={onRefresh} />} />
       {error ? <Banner tone="error" text={error.message} /> : null}
+      <div className="flex max-w-full flex-wrap rounded-md border border-border bg-white p-1" role="tablist" aria-label="Webhook dashboard section">
+        {sections.map((item) => <button key={item.id} type="button" role="tab" aria-selected={section === item.id} className={cn("inline-flex h-8 items-center gap-2 rounded px-3 text-sm font-semibold", section === item.id ? "bg-primary text-white" : "text-muted hover:bg-slate-50 hover:text-foreground")} onClick={() => setSection(item.id)}>{item.label}{item.count !== undefined ? <span className="rounded border border-current/30 px-1 font-mono text-[10px]">{item.count}</span> : null}</button>)}
+      </div>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Webhook status">
         <Metric title="Receipts" value={observed} icon={<Activity className="h-5 w-5" />} />
         <Metric title="Duplicates" value={status?.duplicate_deliveries ?? 0} icon={<RefreshCw className="h-5 w-5" />} />
         <Metric title="Cross-source matches" value={status?.cross_source_matches ?? 0} icon={<Link className="h-5 w-5" />} />
         <Metric title="Mode" value={loading ? "…" : status?.mode ?? "unknown"} icon={<Eye className="h-5 w-5" />} />
       </div>
-      <Panel title="Receipt states">
-        {loading ? <EmptyState text="Loading webhook status..." /> : Object.keys(status?.receipts ?? {}).length ? (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {Object.entries(status?.receipts ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => <MiniStat key={state} label={state} value={count} />)}
-          </div>
-        ) : <EmptyState text="No webhook deliveries observed yet." />}
-      </Panel>
+      {section === "overview" ? <>
+        <Panel title="Delivery activity">
+          {status?.timeseries?.length ? <div className="h-72" aria-label="Webhook deliveries over time"><ResponsiveContainer width="100%" height="100%"><BarChart data={status.timeseries}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="bucket" /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="observed" stackId="deliveries" fill="#2563eb" /><Bar dataKey="duplicate" stackId="deliveries" fill="#f59e0b" /><Bar dataKey="unsupported" stackId="deliveries" fill="#94a3b8" /></BarChart></ResponsiveContainer></div> : <EmptyState text="Time-series data is not available yet. Receipt totals remain visible below." />}
+        </Panel>
+        <Panel title="Receipt states">
+          {loading ? <EmptyState text="Loading webhook status..." /> : Object.keys(status?.receipts ?? {}).length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(status?.receipts ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => <MiniStat key={state} label={state} value={count} />)}</div> : <EmptyState text="No webhook deliveries observed yet." />}
+        </Panel>
+      </> : null}
+      {section === "hooks" ? <Panel title="Hook inventory">
+        {status?.hooks?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Target</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Events</th><th className="px-3 py-2">Last ping</th><th className="px-3 py-2">Last delivery</th></tr></thead><tbody>{status.hooks.map((hook) => <tr key={hook.id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3"><div className="font-semibold">{hook.target}</div><div className="font-mono text-xs text-muted">{hook.target_type} · #{hook.id}</div></td><td className="px-3 py-3"><span className={cn("rounded border px-2 py-1 text-xs font-semibold", hook.status === "receiving" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : hook.status === "inactive" ? "border-red-200 bg-red-50 text-red-700" : "border-slate-200 bg-slate-50 text-slate-600")}>{hook.status}</span></td><td className="max-w-xs px-3 py-3 text-xs text-muted">{hook.events.join(", ") || "All events"}</td><td className="px-3 py-3 font-mono text-xs text-muted">{hook.last_ping_at ?? "Never"}</td><td className="px-3 py-3 font-mono text-xs text-muted">{hook.last_event_at ?? "Never"}</td></tr>)}</tbody></table></div> : <EmptyState text="No hook inventory is available. A signed ping is required before a hook can appear here." />}
+      </Panel> : null}
+      {section === "deliveries" ? <Panel title="Recent deliveries">
+        {status?.recent_deliveries?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{status.recent_deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3 font-mono text-xs text-muted">{delivery.created_at}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span></td><td className="max-w-[14rem] truncate px-3 py-3 font-mono text-xs text-muted" title={delivery.delivery_id}>{delivery.delivery_id}</td></tr>)}</tbody></table></div> : <EmptyState text="No delivery details are available for this window." />}
+      </Panel> : null}
     </section>
   );
 }

@@ -122,6 +122,19 @@ describe("dashboard routing and API query helpers", () => {
     expect(screen.getAllByText("7").length).toBeGreaterThan(0);
   });
 
+  it("navigates webhook hook inventory and delivery details", async () => {
+    const user = userEvent.setup();
+    render(<WebhookPage status={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, hooks: [{ id: "42", target: "gisce", target_type: "organization", active: true, events: ["issue_comment"], status: "receiving", last_ping_at: "2026-10-02T10:00:00Z", last_event_at: "2026-10-02T10:05:00Z" }], recent_deliveries: [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }] }} loading={false} error={null} onRefresh={vi.fn()} />);
+
+    await user.click(screen.getByRole("tab", { name: /Hooks/ }));
+    expect(screen.getByText("organization · #42")).toBeInTheDocument();
+    expect(screen.getByText("receiving")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /Deliveries/ }));
+    expect(screen.getByText("issue_comment · created")).toBeInTheDocument();
+    expect(screen.getByText("gisce/github-agent-bridge")).toBeInTheDocument();
+  });
+
   it("uses client-side navigation for dashboard section links", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();

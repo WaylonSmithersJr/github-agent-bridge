@@ -4,9 +4,11 @@ import hashlib
 import hmac
 import json
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
+from github_agent_bridge import backend
 from github_agent_bridge.backend import DashboardConfig, _encode_session, _sign, create_app
 
 
@@ -21,6 +23,10 @@ def signed_headers(payload: bytes, *, delivery: str = "delivery-1", event: str =
         "x-github-event": event,
         "x-hub-signature-256": f"sha256={digest}",
     }
+
+
+def hook_headers(payload: bytes, *, delivery: str, event: str, hook_id: str) -> dict[str, str]:
+    return {**signed_headers(payload, delivery=delivery, event=event), "x-github-hook-id": hook_id}
 
 
 def issue_comment_payload(*, action: str = "created") -> bytes:
@@ -138,11 +144,18 @@ def test_webhook_status_requires_dashboard_admin(tmp_path):
     )
     client = TestClient(create_app(config))
 
-    assert client.get("/api/webhooks/github/status").status_code == 401
+    paths = (
+        "/api/webhooks/github/status",
+        "/api/webhooks/github/summary",
+        "/api/webhooks/github/timeseries",
+        "/api/webhooks/github/hooks",
+        "/api/webhooks/github/deliveries",
+    )
+    assert {client.get(path).status_code for path in paths} == {401}
     client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "alice"})))
-    assert client.get("/api/webhooks/github/status").status_code == 403
+    assert {client.get(path).status_code for path in paths} == {403}
     client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "operator"}, is_admin=True)))
-    assert client.get("/api/webhooks/github/status").status_code == 200
+    assert {client.get(path).status_code for path in paths} == {200}
     assert client.get("/api/status").json()["webhook_configured"] is True
 
 
@@ -150,6 +163,136 @@ def test_dashboard_status_hides_webhook_tab_when_not_configured(tmp_path):
     client = TestClient(create_app(DashboardConfig(db=tmp_path / "bridge.sqlite3", require_auth=False)))
 
     assert client.get("/api/status").json()["webhook_configured"] is False
+
+
+def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+    ping = json.dumps({
+        "zen": "Keep it logically awesome.",
+        "hook": {"id": 42, "active": True, "events": ["issue_comment", "pull_request_review"]},
+        "organization": {"login": "gisce"},
+    }).encode()
+    delivery = issue_comment_payload()
+
+    assert client.post("/api/webhooks/github", content=ping, headers=hook_headers(ping, delivery="ping-1", event="ping", hook_id="42")).status_code == 200
+    assert client.post("/api/webhooks/github", content=delivery, headers=hook_headers(delivery, delivery="delivery-1", event="issue_comment", hook_id="42")).status_code == 200
+    summary = client.get("/api/webhooks/github/summary").json()
+    assert summary == {
+        "mode": "shadow", "configured": True,
+        "receipts": {"observed": 1, "unsupported": 1},
+        "duplicate_deliveries": 0, "cross_source_matches": 0,
+    }
+    assert client.get("/api/webhooks/github/status").json() == summary
+
+    hooks = client.get("/api/webhooks/github/hooks").json()["hooks"]
+    assert hooks == [{
+        "id": "42", "target": "gisce", "target_type": "organization",
+        "active": True, "events": ["issue_comment", "pull_request_review"],
+        "last_ping_at": hooks[0]["last_ping_at"],
+        "last_event_at": hooks[0]["last_event_at"], "status": "receiving",
+    }]
+    assert hooks[0]["last_ping_at"]
+    assert hooks[0]["last_event_at"]
+
+    first_page = client.get("/api/webhooks/github/deliveries", params={"limit": 1}).json()
+    assert len(first_page["deliveries"]) == 1
+    assert first_page["next_cursor"]
+    second_page = client.get(
+        "/api/webhooks/github/deliveries",
+        params={"limit": 1, "cursor": first_page["next_cursor"]},
+    ).json()
+    deliveries = first_page["deliveries"] + second_page["deliveries"]
+    assert {item["delivery_id"] for item in deliveries} == {"ping-1", "delivery-1"}
+    assert next(item for item in deliveries if item["delivery_id"] == "delivery-1")["hook_id"] == "42"
+    assert second_page["next_cursor"] is None
+
+    now = datetime.now(UTC)
+    timeseries = client.get("/api/webhooks/github/timeseries", params={
+        "from": (now - timedelta(days=1)).isoformat(),
+        "to": (now + timedelta(days=1)).isoformat(),
+        "bucket": "hour",
+    }).json()
+    assert timeseries["bucket"] == "hour"
+    assert timeseries["points"][0]["observed"] == 1
+    assert timeseries["points"][0]["unsupported"] == 1
+
+
+def test_webhook_monitoring_rejects_unbounded_ranges_and_invalid_cursors(tmp_path):
+    client = TestClient(create_app(DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False, webhook_secrets=(SECRET,),
+    )))
+
+    response = client.get("/api/webhooks/github/timeseries", params={
+        "from": "2020-01-01T00:00:00Z", "to": "2022-01-01T00:00:00Z", "bucket": "day",
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "time_range_too_large"
+    assert client.get("/api/webhooks/github/deliveries", params={"cursor": "invalid"}).status_code == 400
+
+
+def test_webhook_monitoring_initializes_schema_once_per_app(tmp_path, monkeypatch):
+    initializations = 0
+    queue_class = backend.JobQueue
+
+    def counting_queue(path):
+        nonlocal initializations
+        initializations += 1
+        return queue_class(path)
+
+    monkeypatch.setattr(backend, "JobQueue", counting_queue)
+    payload = issue_comment_payload()
+    client = TestClient(create_app(DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False, webhook_secrets=(SECRET,),
+    )))
+
+    assert client.post("/api/webhooks/github", content=payload, headers=signed_headers(payload)).status_code == 200
+    for path in (
+        "/api/webhooks/github/summary",
+        "/api/webhooks/github/timeseries",
+        "/api/webhooks/github/hooks",
+        "/api/webhooks/github/deliveries",
+    ):
+        assert client.get(path).status_code == 200
+    assert initializations == 1
+
+
+def test_webhook_receipt_retention_removes_expired_delivery_details(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    client = TestClient(create_app(DashboardConfig(
+        db=db, require_auth=False, webhook_secrets=(SECRET,), webhook_retention_days=7,
+    )))
+    payload = issue_comment_payload()
+    client.post("/api/webhooks/github", content=payload, headers=signed_headers(payload, delivery="old"))
+    with sqlite3.connect(db) as con:
+        con.execute("UPDATE webhook_shadow_receipts SET created_at='2020-01-01T00:00:00+00:00'")
+    client.post("/api/webhooks/github", content=payload, headers=signed_headers(payload, delivery="new"))
+
+    deliveries = client.get("/api/webhooks/github/deliveries").json()["deliveries"]
+    assert [item["delivery_id"] for item in deliveries] == ["new"]
+
+
+def test_existing_webhook_receipt_schema_is_migrated_for_hook_inventory(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE webhook_shadow_receipts (delivery_id TEXT PRIMARY KEY,event_name TEXT NOT NULL,"
+            "action TEXT,event_key TEXT,repository TEXT,payload_hash TEXT NOT NULL,status TEXT NOT NULL,"
+            "duplicate_count INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL)"
+        )
+    payload = issue_comment_payload()
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+
+    response = client.post(
+        "/api/webhooks/github", content=payload,
+        headers=hook_headers(payload, delivery="migrated", event="issue_comment", hook_id="84"),
+    )
+
+    assert response.status_code == 200
+    assert client.get("/api/webhooks/github/hooks").json()["hooks"][0]["id"] == "84"
+    with sqlite3.connect(db) as con:
+        indexes = {row[1] for row in con.execute("PRAGMA index_list(webhook_shadow_receipts)")}
+    assert "idx_webhook_shadow_delivery_page" in indexes
 
 
 def test_submitted_review_uses_same_canonical_key_as_email_ingestion(tmp_path):

@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS github_events (
 CREATE INDEX IF NOT EXISTS idx_github_events_job_id ON github_events(job_id);
 CREATE TABLE IF NOT EXISTS webhook_shadow_receipts (
   delivery_id TEXT PRIMARY KEY,
+  hook_id TEXT,
   event_name TEXT NOT NULL,
   action TEXT,
   event_key TEXT,
@@ -75,6 +76,17 @@ CREATE TABLE IF NOT EXISTS webhook_shadow_receipts (
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_shadow_event_key ON webhook_shadow_receipts(event_key);
 CREATE INDEX IF NOT EXISTS idx_webhook_shadow_created ON webhook_shadow_receipts(created_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_shadow_delivery_page ON webhook_shadow_receipts(created_at DESC, delivery_id DESC);
+CREATE TABLE IF NOT EXISTS webhook_hooks (
+  hook_id TEXT PRIMARY KEY,
+  target TEXT NOT NULL,
+  target_type TEXT NOT NULL CHECK(target_type IN ('organization','repository')),
+  active INTEGER NOT NULL DEFAULT 1,
+  events_json TEXT NOT NULL DEFAULT '[]',
+  last_ping_at TEXT,
+  last_event_at TEXT,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS coalesced_notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.62.0 (2026-10-02)
+
+### Bug Fixes
+
+- Harden webhook owner configuration
+  ([`b0a528b`](https://github.com/gisce/github-agent-bridge/commit/b0a528bacfe49a3e8f9e76bbb0889d9287bf9431))
+
+### Features
+
+- Add shadow GitHub webhook ingestion
+  ([`5b64134`](https://github.com/gisce/github-agent-bridge/commit/5b64134a18fb106163a1416aefadffb4ed08db1f))
+
+- Monitor webhook shadow ingestion
+  ([`4bc0b43`](https://github.com/gisce/github-agent-bridge/commit/4bc0b43008b230a521efe567217780a319836646))
+
+
 ## v0.61.0 (2026-10-02)
 
 ### Features

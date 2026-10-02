@@ -69,15 +69,28 @@ type DashboardStatus = {
   };
 };
 
-type WebhookStatus = {
+type WebhookSummary = {
   mode: string;
   configured: boolean;
   receipts: Record<string, number>;
   duplicate_deliveries: number;
   cross_source_matches: number;
-  timeseries?: WebhookTimeseriesPoint[];
-  hooks?: WebhookHook[];
-  recent_deliveries?: WebhookDelivery[];
+};
+
+type WebhookSection = "overview" | "hooks" | "deliveries";
+
+type WebhookTimeseriesResponse = {
+  from: string;
+  to: string;
+  bucket: "hour" | "day";
+  points: WebhookTimeseriesPoint[];
+};
+
+type WebhookHooksResponse = { hooks: WebhookHook[] };
+
+type WebhookDeliveriesResponse = {
+  deliveries: WebhookDelivery[];
+  next_cursor?: string | null;
 };
 
 type WebhookTimeseriesPoint = {
@@ -737,6 +750,32 @@ function buildKnowledgeQuery(repo: string, status: string, limit = 50) {
   return `/api/knowledge?${params.toString()}`;
 }
 
+function webhookQuerySelection(section: WebhookSection) {
+  return {
+    timeseries: section === "overview",
+    hooks: section === "hooks",
+    deliveries: section === "deliveries",
+  };
+}
+
+function webhookTimeseriesPath(from: string, to: string, bucket: "hour" | "day" = "day") {
+  const params = new URLSearchParams({ from, to, bucket });
+  return `/api/webhooks/github/timeseries?${params.toString()}`;
+}
+
+function webhookDeliveriesPath(limit = 50, cursor?: string | null) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  return `/api/webhooks/github/deliveries?${params.toString()}`;
+}
+
+function webhookMonitoringWindow(now = new Date()) {
+  return {
+    from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+    to: now.toISOString(),
+  };
+}
+
 function metricsSummaryPath(timezone = dashboardTimeZone) {
   return `/api/metrics/summary?timezone=${encodeURIComponent(timezone)}`;
 }
@@ -857,6 +896,9 @@ function App() {
   const jobLoadPendingRef = React.useRef(false);
   const [knowledgeRepo, setKnowledgeRepo] = React.useState("");
   const [knowledgeStatus, setKnowledgeStatus] = React.useState("proposed");
+  const [webhookSection, setWebhookSection] = React.useState<WebhookSection>("overview");
+  const [webhookDeliveryCursor, setWebhookDeliveryCursor] = React.useState<string | null>(null);
+  const [webhookWindow, setWebhookWindow] = React.useState(() => webhookMonitoringWindow());
   const [autoupdateAction, setAutoupdateAction] = React.useState<"refresh" | "apply" | "complete" | null>(null);
   const [autoupdateError, setAutoupdateError] = React.useState("");
   const [pathname, setPathname] = React.useState(() => window.location.pathname);
@@ -872,6 +914,8 @@ function App() {
   const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: isDashboardRoute || isSystemRoute });
   const dashboardStatus = useQuery({ queryKey: ["dashboard-status"], queryFn: () => api<DashboardStatus>("/api/status") });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
+  const webhookEnabled = isWebhooksRoute && Boolean(me.data?.user?.is_admin && dashboardStatus.data?.webhook_configured);
+  const webhookQuery = webhookQuerySelection(webhookSection);
   const webPush = useQuery({ queryKey: ["web-push-config"], queryFn: () => api<WebPushConfig>("/api/web-push/config"), enabled: Boolean(me.data?.user) });
   const about = useQuery({ queryKey: ["about"], queryFn: () => api<About>("/api/about") });
   const actorOptions = useQuery({ queryKey: ["job-actors"], queryFn: () => api<{ actors: JobActor[] }>("/api/jobs/actors"), enabled: isDashboardRoute });
@@ -884,10 +928,25 @@ function App() {
   const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: isSystemRoute });
   const systemd = useQuery({ queryKey: ["systemd"], queryFn: () => api<SystemdResponse>("/api/systemd"), enabled: isSystemRoute });
   const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => api<{ alerts: AlertRecord[] }>("/api/alerts"), enabled: isSystemRoute });
-  const webhookStatus = useQuery({
-    queryKey: ["webhook-status"],
-    queryFn: () => api<WebhookStatus>("/api/webhooks/github/status"),
-    enabled: isWebhooksRoute && Boolean(me.data?.user?.is_admin && dashboardStatus.data?.webhook_configured),
+  const webhookSummary = useQuery({
+    queryKey: ["webhook-summary"],
+    queryFn: () => api<WebhookSummary>("/api/webhooks/github/summary"),
+    enabled: webhookEnabled,
+  });
+  const webhookTimeseries = useQuery({
+    queryKey: ["webhook-timeseries", webhookWindow.from, webhookWindow.to, "day"],
+    queryFn: () => api<WebhookTimeseriesResponse>(webhookTimeseriesPath(webhookWindow.from, webhookWindow.to)),
+    enabled: webhookEnabled && webhookQuery.timeseries,
+  });
+  const webhookHooks = useQuery({
+    queryKey: ["webhook-hooks"],
+    queryFn: () => api<WebhookHooksResponse>("/api/webhooks/github/hooks"),
+    enabled: webhookEnabled && webhookQuery.hooks,
+  });
+  const webhookDeliveries = useQuery({
+    queryKey: ["webhook-deliveries", webhookDeliveryCursor],
+    queryFn: () => api<WebhookDeliveriesResponse>(webhookDeliveriesPath(50, webhookDeliveryCursor)),
+    enabled: webhookEnabled && webhookQuery.deliveries,
   });
   const knowledge = useQuery({
     queryKey: ["knowledge", knowledgeRepo, knowledgeStatus],
@@ -1071,6 +1130,7 @@ function App() {
 
   React.useEffect(() => {
     const syncFromPath = () => {
+      if (isWebhooksPath(window.location.pathname)) setWebhookWindow(webhookMonitoringWindow());
       setPathname(window.location.pathname);
     };
     window.addEventListener("popstate", syncFromPath);
@@ -1105,6 +1165,7 @@ function App() {
   }, []);
   const navigateDashboard = React.useCallback((path: string) => {
     window.history.pushState({}, "", path);
+    if (isWebhooksPath(path)) setWebhookWindow(webhookMonitoringWindow());
     setPathname(window.location.pathname);
   }, []);
 
@@ -1127,6 +1188,14 @@ function App() {
   const hasLiveJob = jobRows.some((job) => job.status === "running" || job.status === "pending") || selectedJob?.status === "running" || selectedJob?.status === "pending" || Boolean(processes.data?.running_jobs.length);
   const now = useNow(hasLiveJob);
   const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} now={now} />;
+  const webhookSectionLoading = webhookSection === "overview" ? webhookTimeseries.isLoading : webhookSection === "hooks" ? webhookHooks.isLoading : webhookDeliveries.isLoading;
+  const webhookSectionError = webhookSection === "overview" ? webhookTimeseries.error : webhookSection === "hooks" ? webhookHooks.error : webhookDeliveries.error;
+  const refreshWebhooks = () => {
+    webhookSummary.refetch();
+    if (webhookSection === "overview") setWebhookWindow(webhookMonitoringWindow());
+    if (webhookSection === "hooks") webhookHooks.refetch();
+    if (webhookSection === "deliveries") webhookDeliveries.refetch();
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -1196,7 +1265,22 @@ function App() {
             onRefresh={() => mcpTokens.refetch()}
           />
         ) : isWebhooksRoute ? (
-          <WebhookPage status={webhookStatus.data} loading={webhookStatus.isLoading} error={webhookStatus.error} onRefresh={() => webhookStatus.refetch()} />
+          <WebhookPage
+            summary={webhookSummary.data}
+            timeseries={webhookTimeseries.data?.points}
+            hooks={webhookHooks.data?.hooks}
+            deliveries={webhookDeliveries.data?.deliveries}
+            nextDeliveryCursor={webhookDeliveries.data?.next_cursor}
+            deliveryCursor={webhookDeliveryCursor}
+            section={webhookSection}
+            summaryLoading={webhookSummary.isLoading}
+            sectionLoading={webhookSectionLoading}
+            error={webhookSummary.error ?? webhookSectionError}
+            onSectionChange={setWebhookSection}
+            onOlderDeliveries={setWebhookDeliveryCursor}
+            onNewestDeliveries={() => setWebhookDeliveryCursor(null)}
+            onRefresh={refreshWebhooks}
+          />
         ) : isSystemRoute ? (
           <SystemPage
             processes={processes.data}
@@ -1525,40 +1609,75 @@ function SectionNav({
   );
 }
 
-function WebhookPage({ status, loading, error, onRefresh }: { status: WebhookStatus | undefined; loading: boolean; error: Error | null; onRefresh: () => void }) {
-  const observed = Object.values(status?.receipts ?? {}).reduce((total, count) => total + count, 0);
-  const [section, setSection] = React.useState<"overview" | "hooks" | "deliveries">("overview");
+type WebhookPageProps = {
+  summary?: WebhookSummary;
+  timeseries?: WebhookTimeseriesPoint[];
+  hooks?: WebhookHook[];
+  deliveries?: WebhookDelivery[];
+  nextDeliveryCursor?: string | null;
+  deliveryCursor?: string | null;
+  section: WebhookSection;
+  summaryLoading: boolean;
+  sectionLoading: boolean;
+  error: Error | null;
+  onSectionChange: (section: WebhookSection) => void;
+  onOlderDeliveries: (cursor: string) => void;
+  onNewestDeliveries: () => void;
+  onRefresh: () => void;
+};
+
+function WebhookLoadingState({ text }: { text: string }) {
+  return <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted"><RefreshCw className="h-4 w-4 animate-spin" aria-hidden />{text}</div>;
+}
+
+function WebhookPage({
+  summary,
+  timeseries,
+  hooks,
+  deliveries,
+  nextDeliveryCursor,
+  deliveryCursor,
+  section,
+  summaryLoading,
+  sectionLoading,
+  error,
+  onSectionChange,
+  onOlderDeliveries,
+  onNewestDeliveries,
+  onRefresh,
+}: WebhookPageProps) {
+  const observed = Object.values(summary?.receipts ?? {}).reduce((total, count) => total + count, 0);
   const sections = [
     { id: "overview" as const, label: "Overview" },
-    { id: "hooks" as const, label: "Hooks", count: status?.hooks?.length },
-    { id: "deliveries" as const, label: "Deliveries", count: status?.recent_deliveries?.length },
+    { id: "hooks" as const, label: "Hooks", count: hooks?.length },
+    { id: "deliveries" as const, label: "Deliveries", count: deliveries?.length },
   ];
   return (
     <section className="grid gap-4">
       <PageTitle icon={<Activity className="h-5 w-5 text-muted" aria-hidden />} title="GitHub webhooks" subtitle="Shadow ingestion health. Deliveries are observed but do not create jobs." action={<RefreshButton onClick={onRefresh} />} />
       {error ? <Banner tone="error" text={error.message} /> : null}
       <div className="flex max-w-full flex-wrap rounded-md border border-border bg-white p-1" role="tablist" aria-label="Webhook dashboard section">
-        {sections.map((item) => <button key={item.id} type="button" role="tab" aria-selected={section === item.id} className={cn("inline-flex h-8 items-center gap-2 rounded px-3 text-sm font-semibold", section === item.id ? "bg-primary text-white" : "text-muted hover:bg-slate-50 hover:text-foreground")} onClick={() => setSection(item.id)}>{item.label}{item.count !== undefined ? <span className="rounded border border-current/30 px-1 font-mono text-[10px]">{item.count}</span> : null}</button>)}
+        {sections.map((item) => <button key={item.id} type="button" role="tab" aria-selected={section === item.id} className={cn("inline-flex h-8 items-center gap-2 rounded px-3 text-sm font-semibold", section === item.id ? "bg-primary text-white" : "text-muted hover:bg-slate-50 hover:text-foreground")} onClick={() => onSectionChange(item.id)}>{item.label}{item.count !== undefined ? <span className="rounded border border-current/30 px-1 font-mono text-[10px]">{item.count}</span> : null}</button>)}
       </div>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Webhook status">
         <Metric title="Receipts" value={observed} icon={<Activity className="h-5 w-5" />} />
-        <Metric title="Duplicates" value={status?.duplicate_deliveries ?? 0} icon={<RefreshCw className="h-5 w-5" />} />
-        <Metric title="Cross-source matches" value={status?.cross_source_matches ?? 0} icon={<Link className="h-5 w-5" />} />
-        <Metric title="Mode" value={loading ? "…" : status?.mode ?? "unknown"} icon={<Eye className="h-5 w-5" />} />
+        <Metric title="Duplicates" value={summary?.duplicate_deliveries ?? 0} icon={<RefreshCw className="h-5 w-5" />} />
+        <Metric title="Cross-source matches" value={summary?.cross_source_matches ?? 0} icon={<Link className="h-5 w-5" />} />
+        <Metric title="Mode" value={summaryLoading ? "…" : summary?.mode ?? "unknown"} icon={<Eye className="h-5 w-5" />} />
       </div>
       {section === "overview" ? <>
         <Panel title="Delivery activity">
-          {status?.timeseries?.length ? <div className="h-72" aria-label="Webhook deliveries over time"><ResponsiveContainer width="100%" height="100%"><BarChart data={status.timeseries}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="bucket" /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="observed" stackId="deliveries" fill="#2563eb" /><Bar dataKey="duplicate" stackId="deliveries" fill="#f59e0b" /><Bar dataKey="unsupported" stackId="deliveries" fill="#94a3b8" /></BarChart></ResponsiveContainer></div> : <EmptyState text="Time-series data is not available yet. Receipt totals remain visible below." />}
+          {sectionLoading ? <WebhookLoadingState text="Loading delivery activity…" /> : timeseries?.length ? <div className="h-72" aria-label="Webhook deliveries over time"><ResponsiveContainer width="100%" height="100%"><BarChart data={timeseries}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="bucket" /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="observed" stackId="deliveries" fill="#2563eb" /><Bar dataKey="duplicate" stackId="deliveries" fill="#f59e0b" /><Bar dataKey="unsupported" stackId="deliveries" fill="#94a3b8" /></BarChart></ResponsiveContainer></div> : <EmptyState text="No webhook activity in the selected 30-day window." />}
         </Panel>
         <Panel title="Receipt states">
-          {loading ? <EmptyState text="Loading webhook status..." /> : Object.keys(status?.receipts ?? {}).length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(status?.receipts ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => <MiniStat key={state} label={state} value={count} />)}</div> : <EmptyState text="No webhook deliveries observed yet." />}
+          {summaryLoading ? <WebhookLoadingState text="Loading webhook summary…" /> : Object.keys(summary?.receipts ?? {}).length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(summary?.receipts ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => <MiniStat key={state} label={state} value={count} />)}</div> : <EmptyState text="No webhook deliveries observed yet." />}
         </Panel>
       </> : null}
       {section === "hooks" ? <Panel title="Hook inventory">
-        {status?.hooks?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Target</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Events</th><th className="px-3 py-2">Last ping</th><th className="px-3 py-2">Last delivery</th></tr></thead><tbody>{status.hooks.map((hook) => <tr key={hook.id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3"><div className="font-semibold">{hook.target}</div><div className="font-mono text-xs text-muted">{hook.target_type} · #{hook.id}</div></td><td className="px-3 py-3"><span className={cn("rounded border px-2 py-1 text-xs font-semibold", hook.status === "receiving" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : hook.status === "inactive" ? "border-red-200 bg-red-50 text-red-700" : "border-slate-200 bg-slate-50 text-slate-600")}>{hook.status}</span></td><td className="max-w-xs px-3 py-3 text-xs text-muted">{hook.events.join(", ") || "All events"}</td><td className="px-3 py-3 font-mono text-xs text-muted">{hook.last_ping_at ?? "Never"}</td><td className="px-3 py-3 font-mono text-xs text-muted">{hook.last_event_at ?? "Never"}</td></tr>)}</tbody></table></div> : <EmptyState text="No hook inventory is available. A signed ping is required before a hook can appear here." />}
+        {sectionLoading ? <WebhookLoadingState text="Loading hook inventory…" /> : hooks?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Target</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Events</th><th className="px-3 py-2">Last ping</th><th className="px-3 py-2">Last delivery</th></tr></thead><tbody>{hooks.map((hook) => <tr key={hook.id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3"><div className="font-semibold">{hook.target}</div><div className="font-mono text-xs text-muted">{hook.target_type} · #{hook.id}</div></td><td className="px-3 py-3"><span className={cn("rounded border px-2 py-1 text-xs font-semibold", hook.status === "receiving" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : hook.status === "inactive" ? "border-red-200 bg-red-50 text-red-700" : "border-slate-200 bg-slate-50 text-slate-600")}>{hook.status}</span></td><td className="max-w-xs px-3 py-3 text-xs text-muted">{hook.events.join(", ") || "All events"}</td><td className="px-3 py-3 font-mono text-xs text-muted">{hook.last_ping_at ?? "Never"}</td><td className="px-3 py-3 font-mono text-xs text-muted">{hook.last_event_at ?? "Never"}</td></tr>)}</tbody></table></div> : <EmptyState text="No hook inventory is available. A signed ping is required before a hook can appear here." />}
       </Panel> : null}
       {section === "deliveries" ? <Panel title="Recent deliveries">
-        {status?.recent_deliveries?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{status.recent_deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3 font-mono text-xs text-muted">{delivery.created_at}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span></td><td className="max-w-[14rem] truncate px-3 py-3 font-mono text-xs text-muted" title={delivery.delivery_id}>{delivery.delivery_id}</td></tr>)}</tbody></table></div> : <EmptyState text="No delivery details are available for this window." />}
+        {sectionLoading ? <WebhookLoadingState text="Loading deliveries…" /> : deliveries?.length ? <><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3 font-mono text-xs text-muted">{delivery.created_at}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span></td><td className="max-w-[14rem] truncate px-3 py-3 font-mono text-xs text-muted" title={delivery.delivery_id}>{delivery.delivery_id}</td></tr>)}</tbody></table></div><div className="flex justify-end gap-2 border-t border-border px-3 py-3">{deliveryCursor ? <button type="button" className="rounded border border-border px-3 py-1.5 text-sm font-semibold hover:bg-slate-50" onClick={onNewestDeliveries}>Newest</button> : null}{nextDeliveryCursor ? <button type="button" className="rounded border border-border px-3 py-1.5 text-sm font-semibold hover:bg-slate-50" onClick={() => onOlderDeliveries(nextDeliveryCursor)}>Older deliveries</button> : null}</div></> : <EmptyState text="No delivery details are available for this window." />}
       </Panel> : null}
     </section>
   );
@@ -4172,6 +4291,9 @@ export {
   selectedJobIdFromPath,
   shouldRefreshJobForSessionEvent,
   urlBase64ToUint8Array,
+  webhookDeliveriesPath,
+  webhookQuerySelection,
+  webhookTimeseriesPath,
   WebhookPage,
 };
 

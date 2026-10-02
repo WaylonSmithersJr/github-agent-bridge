@@ -4,12 +4,14 @@ import argparse
 import asyncio
 import base64
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime, timedelta
 import json
 import os
 import secrets
 import shlex
 import sqlite3
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -68,6 +70,8 @@ GITHUB_USER_URL = "https://api.github.com/user"
 GITHUB_TEAMS_URL = "https://api.github.com/user/teams"
 PROJECT_REPOSITORY_URL = "https://github.com/gisce/github-agent-bridge"
 SESSION_VERSION = 1
+WEBHOOK_TIMESERIES_MAX_DAYS = 366
+WEBHOOK_TIMESERIES_MAX_HOURLY_DAYS = 31
 
 
 def _knowledge_actor(item: dict[str, Any]) -> str:
@@ -96,6 +100,43 @@ def _mark_manageable_knowledge(items: list[dict[str, Any]], profile: dict[str, A
         return [{**item, "can_manage": True} for item in items]
     login = str(profile.get("login") or "")
     return [{**item, "can_manage": _knowledge_item_owned_by(item, login)} for item in items]
+
+
+def _parse_webhook_datetime(value: str, parameter: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid_{parameter}_datetime",
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _webhook_datetime_value(value: datetime) -> str:
+    return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _encode_webhook_delivery_cursor(created_at: str, delivery_id: str) -> str:
+    payload = json.dumps([created_at, delivery_id], separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_webhook_delivery_cursor(cursor: str) -> tuple[str, str]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_cursor") from exc
+    if not (
+        isinstance(payload, list)
+        and len(payload) == 2
+        and all(isinstance(value, str) and value for value in payload)
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_cursor")
+    return payload[0], payload[1]
 
 
 class DashboardConfig:
@@ -537,6 +578,18 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     app = FastAPI(title="GitHub Agent Bridge Dashboard API", lifespan=lifespan)
     app.state.dashboard_config = config
     app.state.dashboard_shutdown_event = shutdown_event
+    webhook_schema_lock = threading.Lock()
+    webhook_schema_ready = False
+
+    def ensure_webhook_schema() -> None:
+        nonlocal webhook_schema_ready
+        if webhook_schema_ready:
+            return
+        with webhook_schema_lock:
+            if not webhook_schema_ready:
+                JobQueue(config.db)
+                webhook_schema_ready = True
+
     assets_dir = config.static_dir / "assets"
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="dashboard-assets")
@@ -636,7 +689,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             webhook_secrets = config.webhook_secrets
         if not verify_signature(raw_payload, signature, webhook_secrets):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_signature")
-        JobQueue(config.db)
+        ensure_webhook_schema()
         receipt = persist_shadow_delivery(
             config.db,
             delivery_id=delivery_id,
@@ -648,55 +701,124 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         return {"mode": "shadow", "status": receipt.status, "event_key": receipt.event_key}
 
     @app.get("/api/webhooks/github/status")
-    def github_webhook_shadow_status(_: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
-        JobQueue(config.db)
+    @app.get("/api/webhooks/github/summary")
+    def github_webhook_shadow_summary(_: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
+        ensure_webhook_schema()
         with sqlite3.connect(config.db) as con:
-            rows = con.execute(
-                "SELECT status,COUNT(*) FROM webhook_shadow_receipts GROUP BY status"
-            ).fetchall()
-            cross_source = con.execute(
-                "SELECT COUNT(DISTINCT w.event_key) FROM webhook_shadow_receipts w "
-                "JOIN ingest_receipts i ON i.event_key=w.event_key WHERE w.event_key IS NOT NULL"
-            ).fetchone()[0]
-            duplicate_deliveries = con.execute(
-                "SELECT COALESCE(SUM(duplicate_count),0) FROM webhook_shadow_receipts"
-            ).fetchone()[0]
-            timeseries_rows = con.execute(
-                "SELECT substr(created_at,1,10), "
-                "SUM(CASE WHEN status='observed' THEN 1 ELSE 0 END), "
-                "SUM(duplicate_count), SUM(CASE WHEN status='unsupported' THEN 1 ELSE 0 END) "
-                "FROM webhook_shadow_receipts GROUP BY substr(created_at,1,10) ORDER BY 1"
-            ).fetchall()
-            delivery_rows = con.execute(
-                "SELECT delivery_id,hook_id,event_name,action,event_key,repository,status,created_at "
-                "FROM webhook_shadow_receipts ORDER BY created_at DESC LIMIT 100"
-            ).fetchall()
-            hook_rows = con.execute(
-                "SELECT hook_id,target,target_type,active,events_json,last_ping_at,last_event_at,updated_at "
-                "FROM webhook_hooks ORDER BY target_type,target,hook_id"
-            ).fetchall()
-        counts = {row[0]: row[1] for row in rows}
+            row = con.execute(
+                "WITH receipt_summary AS ("
+                " SELECT SUM(CASE WHEN status='observed' THEN 1 ELSE 0 END) observed,"
+                " SUM(CASE WHEN status='unsupported' THEN 1 ELSE 0 END) unsupported,"
+                " COALESCE(SUM(duplicate_count),0) duplicate_deliveries"
+                " FROM webhook_shadow_receipts"
+                "), cross_source AS ("
+                " SELECT COUNT(DISTINCT w.event_key) matches FROM webhook_shadow_receipts w"
+                " WHERE w.event_key IS NOT NULL AND EXISTS ("
+                "  SELECT 1 FROM ingest_receipts i WHERE i.event_key=w.event_key"
+                " )"
+                ") SELECT COALESCE(observed,0),COALESCE(unsupported,0),"
+                "duplicate_deliveries,matches FROM receipt_summary CROSS JOIN cross_source"
+            ).fetchone()
+        counts = {
+            name: count
+            for name, count in (("observed", row[0]), ("unsupported", row[1]))
+            if count
+        }
         return {
             "mode": "shadow",
             "configured": bool(config.webhook_secrets or config.webhook_secrets_by_owner),
             "receipts": counts,
-            "duplicate_deliveries": duplicate_deliveries,
-            "cross_source_matches": cross_source,
-            "timeseries": [
+            "duplicate_deliveries": row[2],
+            "cross_source_matches": row[3],
+        }
+
+    @app.get("/api/webhooks/github/timeseries")
+    def github_webhook_shadow_timeseries(
+        from_value: str | None = Query(None, alias="from"),
+        to_value: str | None = Query(None, alias="to"),
+        bucket: str = Query("day", pattern="^(hour|day)$"),
+        _: dict[str, Any] = Depends(current_admin_profile),
+    ) -> dict[str, Any]:
+        ensure_webhook_schema()
+        end = _parse_webhook_datetime(to_value, "to") if to_value else datetime.now(UTC)
+        default_days = min(config.webhook_retention_days, WEBHOOK_TIMESERIES_MAX_DAYS)
+        start = _parse_webhook_datetime(from_value, "from") if from_value else end - timedelta(days=default_days)
+        maximum = WEBHOOK_TIMESERIES_MAX_HOURLY_DAYS if bucket == "hour" else WEBHOOK_TIMESERIES_MAX_DAYS
+        if start >= end:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_time_range")
+        if end - start > timedelta(days=maximum):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="time_range_too_large")
+        start_value = _webhook_datetime_value(start)
+        end_value = _webhook_datetime_value(end)
+        bucket_expression = "substr(created_at,1,13) || ':00:00Z'" if bucket == "hour" else "substr(created_at,1,10)"
+        with sqlite3.connect(config.db) as con:
+            rows = con.execute(
+                f"SELECT {bucket_expression}, "
+                "SUM(CASE WHEN status='observed' THEN 1 ELSE 0 END), "
+                "SUM(duplicate_count), SUM(CASE WHEN status='unsupported' THEN 1 ELSE 0 END) "
+                "FROM webhook_shadow_receipts WHERE created_at>=? AND created_at<? "
+                "GROUP BY 1 ORDER BY 1",
+                (start_value, end_value),
+            ).fetchall()
+        return {
+            "from": start_value,
+            "to": end_value,
+            "bucket": bucket,
+            "points": [
                 {"bucket": row[0], "observed": row[1], "duplicate": row[2], "unsupported": row[3]}
-                for row in timeseries_rows
+                for row in rows
             ],
+        }
+
+    @app.get("/api/webhooks/github/hooks")
+    def github_webhook_shadow_hooks(_: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
+        ensure_webhook_schema()
+        with sqlite3.connect(config.db) as con:
+            hook_rows = con.execute(
+                "SELECT hook_id,target,target_type,active,events_json,last_ping_at,last_event_at "
+                "FROM webhook_hooks ORDER BY target_type,target,hook_id"
+            ).fetchall()
+        return {
             "hooks": [
                 {"id": row[0], "target": row[1], "target_type": row[2], "active": bool(row[3]),
                  "events": json.loads(row[4]), "last_ping_at": row[5], "last_event_at": row[6],
                  "status": ("inactive" if not row[3] else "receiving" if row[6] else "never_seen")}
                 for row in hook_rows
             ],
-            "recent_deliveries": [
+        }
+
+    @app.get("/api/webhooks/github/deliveries")
+    def github_webhook_shadow_deliveries(
+        limit: int = Query(50, ge=1, le=100),
+        cursor: str | None = Query(None),
+        _: dict[str, Any] = Depends(current_admin_profile),
+    ) -> dict[str, Any]:
+        ensure_webhook_schema()
+        where = ""
+        parameters: list[Any] = []
+        if cursor:
+            cursor_created_at, cursor_delivery_id = _decode_webhook_delivery_cursor(cursor)
+            where = "WHERE created_at<? OR (created_at=? AND delivery_id<?)"
+            parameters.extend((cursor_created_at, cursor_created_at, cursor_delivery_id))
+        parameters.append(limit + 1)
+        with sqlite3.connect(config.db) as con:
+            delivery_rows = con.execute(
+                "SELECT delivery_id,hook_id,event_name,action,event_key,repository,status,created_at "
+                f"FROM webhook_shadow_receipts {where} "
+                "ORDER BY created_at DESC,delivery_id DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+        page = delivery_rows[:limit]
+        next_cursor = None
+        if len(delivery_rows) > limit and page:
+            next_cursor = _encode_webhook_delivery_cursor(page[-1][7], page[-1][0])
+        return {
+            "deliveries": [
                 {"delivery_id": row[0], "hook_id": row[1], "event_name": row[2], "action": row[3],
                  "event_key": row[4], "repository": row[5], "status": row[6], "created_at": row[7]}
-                for row in delivery_rows
+                for row in page
             ],
+            "next_cursor": next_cursor,
         }
 
     def dashboard_index() -> FileResponse:

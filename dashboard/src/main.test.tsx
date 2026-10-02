@@ -35,6 +35,9 @@ import {
   selectedJobIdFromPath,
   shouldRefreshJobForSessionEvent,
   urlBase64ToUint8Array,
+  webhookDeliveriesPath,
+  webhookQuerySelection,
+  webhookTimeseriesPath,
 } from "./main";
 
 describe("dashboard routing and API query helpers", () => {
@@ -79,6 +82,16 @@ describe("dashboard routing and API query helpers", () => {
     expect(isWebhooksPath("/webhooks/github")).toBe(false);
   });
 
+  it("loads only the active webhook dataset and builds bounded queries", () => {
+    expect(webhookQuerySelection("overview")).toEqual({ timeseries: true, hooks: false, deliveries: false });
+    expect(webhookQuerySelection("hooks")).toEqual({ timeseries: false, hooks: true, deliveries: false });
+    expect(webhookQuerySelection("deliveries")).toEqual({ timeseries: false, hooks: false, deliveries: true });
+    expect(webhookTimeseriesPath("2026-09-01T00:00:00Z", "2026-10-01T00:00:00Z"))
+      .toBe("/api/webhooks/github/timeseries?from=2026-09-01T00%3A00%3A00Z&to=2026-10-01T00%3A00%3A00Z&bucket=day");
+    expect(webhookDeliveriesPath(50, "next page"))
+      .toBe("/api/webhooks/github/deliveries?limit=50&cursor=next+page");
+  });
+
   it("recognizes only canonical job detail routes", () => {
     expect(selectedJobIdFromPath("/jobs/45")).toBe(45);
     expect(selectedJobIdFromPath("/jobs/45/")).toBe(45);
@@ -114,7 +127,7 @@ describe("dashboard routing and API query helpers", () => {
   });
 
   it("renders the webhook status exported by the backend", () => {
-    render(<WebhookPage status={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3 }} loading={false} error={null} onRefresh={vi.fn()} />);
+    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3 }} timeseries={[]} section="overview" summaryLoading={false} sectionLoading={false} error={null} onSectionChange={vi.fn()} onOlderDeliveries={vi.fn()} onNewestDeliveries={vi.fn()} onRefresh={vi.fn()} />);
 
     expect(screen.getByRole("heading", { name: "GitHub webhooks" })).toBeInTheDocument();
     expect(screen.getByText("shadow")).toBeInTheDocument();
@@ -124,13 +137,22 @@ describe("dashboard routing and API query helpers", () => {
 
   it("navigates webhook hook inventory and delivery details", async () => {
     const user = userEvent.setup();
-    render(<WebhookPage status={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, hooks: [{ id: "42", target: "gisce", target_type: "organization", active: true, events: ["issue_comment"], status: "receiving", last_ping_at: "2026-10-02T10:00:00Z", last_event_at: "2026-10-02T10:05:00Z" }], recent_deliveries: [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }] }} loading={false} error={null} onRefresh={vi.fn()} />);
+    const onSectionChange = vi.fn();
+    const summary = { mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3 };
+    const hooks = [{ id: "42", target: "gisce", target_type: "organization" as const, active: true, events: ["issue_comment"], status: "receiving" as const, last_ping_at: "2026-10-02T10:00:00Z", last_event_at: "2026-10-02T10:05:00Z" }];
+    const deliveries = [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }];
+    const common = { summary, summaryLoading: false, sectionLoading: false, error: null, onSectionChange, onOlderDeliveries: vi.fn(), onNewestDeliveries: vi.fn(), onRefresh: vi.fn() };
+    const { rerender } = render(<WebhookPage {...common} section="overview" />);
 
     await user.click(screen.getByRole("tab", { name: /Hooks/ }));
+    expect(onSectionChange).toHaveBeenCalledWith("hooks");
+    rerender(<WebhookPage {...common} hooks={hooks} section="hooks" />);
     expect(screen.getByText("organization · #42")).toBeInTheDocument();
     expect(screen.getByText("receiving")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /Deliveries/ }));
+    expect(onSectionChange).toHaveBeenCalledWith("deliveries");
+    rerender(<WebhookPage {...common} deliveries={deliveries} section="deliveries" />);
     expect(screen.getByText("issue_comment · created")).toBeInTheDocument();
     expect(screen.getByText("gisce/github-agent-bridge")).toBeInTheDocument();
   });

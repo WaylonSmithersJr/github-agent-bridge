@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS webhook_shadow_receipts (
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_shadow_event_key ON webhook_shadow_receipts(event_key);
 CREATE INDEX IF NOT EXISTS idx_webhook_shadow_created ON webhook_shadow_receipts(created_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_shadow_delivery_page ON webhook_shadow_receipts(created_at DESC, delivery_id DESC);
 CREATE TABLE IF NOT EXISTS webhook_hooks (
   hook_id TEXT PRIMARY KEY,
   target TEXT NOT NULL,

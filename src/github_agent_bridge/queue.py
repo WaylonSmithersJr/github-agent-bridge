@@ -815,6 +815,10 @@ class JobQueue:
                     con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _ensure_indexes(self, con: sqlite3.Connection) -> None:
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='webhook_shadow_receipts'").fetchone() is not None:
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_webhook_shadow_delivery_page ON webhook_shadow_receipts(created_at DESC, delivery_id DESC)"
+            )
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mcp_tokens'").fetchone() is not None:
             con.execute(
                 "CREATE INDEX IF NOT EXISTS idx_mcp_tokens_user ON mcp_tokens(user_login, revoked_at, created_at)"

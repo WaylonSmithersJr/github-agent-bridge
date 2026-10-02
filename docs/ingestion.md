@@ -84,13 +84,25 @@ GitHub's `X-GitHub-Hook-ID` header keeps their inventory and activity separate.
 
 The endpoint stores only routing metadata, a SHA-256 payload hash, and the
 canonical event key in `webhook_shadow_receipts`; it deliberately stores no raw
-payload and never creates a queue job. Authenticated operators can inspect
-counts, a daily activity series, hook inventory, recent deliveries, duplicate
-deliveries, and cross-source event-key matches at
-`GET /api/webhooks/github/status`. Here “operators” means users authorized as
-dashboard administrators through `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS`
-or `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS`; other authenticated dashboard
-users receive HTTP 403 and unauthenticated requests receive HTTP 401.
+payload and never creates a queue job. The monitoring API is split so opening
+the overview does not load hook inventory or delivery history:
+
+- `GET /api/webhooks/github/summary` returns mode, receipt counts, retries, and
+  cross-source matches. The previous `/status` path remains a summary-only
+  compatibility alias.
+- `GET /api/webhooks/github/timeseries?from=<iso>&to=<iso>&bucket=day|hour`
+  returns only the requested interval. Daily ranges are capped at 366 days and
+  hourly ranges at 31 days; omitted bounds default to the configured retention
+  window ending now, capped at the daily maximum.
+- `GET /api/webhooks/github/hooks` returns the per-hook inventory.
+- `GET /api/webhooks/github/deliveries?limit=<1-100>&cursor=<opaque>` returns a
+  cursor-paginated delivery page.
+
+The dashboard loads these resources lazily per tab and caches them separately.
+Here “operators” means users authorized as dashboard administrators through
+`GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS` or
+`GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS`; every monitoring endpoint returns
+HTTP 403 to other authenticated users and HTTP 401 to unauthenticated users.
 Receipt details are retained for 30 days by default and pruned during ingestion;
 set `GITHUB_AGENT_BRIDGE_WEBHOOK_RETENTION_DAYS` to change that window. Raw
 payloads are never retained.

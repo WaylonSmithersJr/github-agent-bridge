@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.62.1 (2026-10-02)
+
+### Bug Fixes
+
+- Compose model route overrides
+  ([`83b3a28`](https://github.com/gisce/github-agent-bridge/commit/83b3a2848a43275e2ebb1b2eee89e4809ff155e2))
+
+
 ## v0.62.0 (2026-10-02)
 
 ### Bug Fixes

@@ -168,6 +168,7 @@ describe("dashboard routing and API query helpers", () => {
     expect(onSectionChange).toHaveBeenCalledWith("hooks");
     rerender(<WebhookPage {...common} hooks={hooks} section="hooks" />);
     expect(screen.getByRole("tab", { name: "Hooks (101 total)" })).toBeInTheDocument();
+    expect(screen.getByTestId("lazy-scroll-hooks")).toHaveClass("max-h-[640px]", "overflow-auto");
     expect(screen.getByText("organization · #42")).toBeInTheDocument();
     expect(screen.getByText("receiving")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "gisce" }));
@@ -176,6 +177,7 @@ describe("dashboard routing and API query helpers", () => {
     await user.click(screen.getByRole("tab", { name: /Deliveries/ }));
     expect(onSectionChange).toHaveBeenCalledWith("deliveries");
     rerender(<WebhookPage {...common} deliveries={deliveries} section="deliveries" />);
+    expect(screen.getByTestId("lazy-scroll-deliveries")).toHaveClass("max-h-[640px]", "overflow-auto");
     expect(screen.getAllByText("issue_comment · created").length).toBeGreaterThan(0);
     expect(screen.getByText("gisce/github-agent-bridge")).toBeInTheDocument();
     expect(screen.getByText("#42")).toBeInTheDocument();
@@ -516,6 +518,7 @@ describe("status badges", () => {
     );
 
     expect(screen.getByRole("columnheader", { name: "Status" }).parentElement).toHaveClass("sticky", "top-0", "z-10");
+    expect(screen.getByTestId("lazy-scroll-jobs")).toHaveClass("max-h-[640px]", "overflow-auto");
     expect(screen.getByRole("columnheader", { name: "Job" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Model" })).not.toBeInTheDocument();
     expect(screen.queryByText("openai/gpt-5.4-mini · medium")).not.toBeInTheDocument();

@@ -1798,11 +1798,11 @@ function WebhookPage({
         </Panel>
       </> : null}
       {section === "hooks" ? <Panel title="Hook inventory">
-        {sectionLoading ? <WebhookLoadingState text="Loading hook inventory…" /> : hooks?.length ? <><div className="overflow-x-auto"><table className="w-full min-w-[920px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Target</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Configuration</th><th className="px-3 py-2">Last delivery</th><th className="px-3 py-2">Last ping</th></tr></thead><tbody>{hooks.map((hook) => <tr key={hook.id} className="cursor-pointer border-b border-border/70 last:border-0 hover:bg-slate-50" onClick={() => onViewHook(hook.id)}><td className="px-3 py-3"><button type="button" className="text-left font-semibold text-primary hover:underline" onClick={(event) => { event.stopPropagation(); onViewHook(hook.id); }}>{hook.target}</button><div className="font-mono text-xs text-muted">{hook.target_type} · #{hook.id}</div></td><td className="px-3 py-3"><span className={cn("rounded border px-2 py-1 text-xs font-semibold", hook.status === "receiving" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : hook.status === "inactive" ? "border-red-200 bg-red-50 text-red-700" : "border-slate-200 bg-slate-50 text-slate-600")}>{hook.status}</span></td><td className="max-w-sm px-3 py-3 text-xs"><div>{hook.events.join(", ") || "No event snapshot"}</div><div className="mt-1 font-mono text-muted">{hook.content_type ?? "content type unknown"} · SSL {hook.ssl_verify === null || hook.ssl_verify === undefined ? "unknown" : hook.ssl_verify ? "verified" : "disabled"}</div></td><td className="px-3 py-3 text-xs"><div className="font-semibold">{hook.last_event_name ?? "Never"}{hook.last_action ? ` · ${hook.last_action}` : ""}</div><div className="mt-1 font-mono text-muted">{hook.last_repository ?? hook.last_event_at ?? "No delivery observed"}</div></td><td className="px-3 py-3 font-mono text-xs text-muted">{hook.last_ping_at ?? "Never"}</td></tr>)}</tbody></table></div><IncrementalLoadControls kind="hooks" hasMore={hasMore} loading={loadingMore} onLoadMore={onLoadMore} /></> : <EmptyState text="No hook inventory is available. Redeliver a signed ping from GitHub to create the sanitized configuration snapshot." />}
+        {sectionLoading ? <WebhookLoadingState text="Loading hook inventory…" /> : hooks?.length ? <LazyScrollFrame noun="hooks" hasMore={hasMore} loading={loadingMore} onLoadMore={onLoadMore}><table className="w-full min-w-[920px] text-left text-sm"><thead><tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted"><th className="px-3 py-2">Target</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Configuration</th><th className="px-3 py-2">Last delivery</th><th className="px-3 py-2">Last ping</th></tr></thead><tbody>{hooks.map((hook) => <tr key={hook.id} className="cursor-pointer border-b border-border/70 last:border-0 hover:bg-slate-50" onClick={() => onViewHook(hook.id)}><td className="px-3 py-3"><button type="button" className="text-left font-semibold text-primary hover:underline" onClick={(event) => { event.stopPropagation(); onViewHook(hook.id); }}>{hook.target}</button><div className="font-mono text-xs text-muted">{hook.target_type} · #{hook.id}</div></td><td className="px-3 py-3"><span className={cn("rounded border px-2 py-1 text-xs font-semibold", hook.status === "receiving" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : hook.status === "inactive" ? "border-red-200 bg-red-50 text-red-700" : "border-slate-200 bg-slate-50 text-slate-600")}>{hook.status}</span></td><td className="max-w-sm px-3 py-3 text-xs"><div>{hook.events.join(", ") || "No event snapshot"}</div><div className="mt-1 font-mono text-muted">{hook.content_type ?? "content type unknown"} · SSL {hook.ssl_verify === null || hook.ssl_verify === undefined ? "unknown" : hook.ssl_verify ? "verified" : "disabled"}</div></td><td className="px-3 py-3 text-xs"><div className="font-semibold">{hook.last_event_name ?? "Never"}{hook.last_action ? ` · ${hook.last_action}` : ""}</div><div className="mt-1 font-mono text-muted">{hook.last_repository ?? hook.last_event_at ?? "No delivery observed"}</div></td><td className="px-3 py-3 font-mono text-xs text-muted">{hook.last_ping_at ?? "Never"}</td></tr>)}</tbody></table></LazyScrollFrame> : <EmptyState text="No hook inventory is available. Redeliver a signed ping from GitHub to create the sanitized configuration snapshot." />}
       </Panel> : null}
       {section === "deliveries" ? <Panel title="Recent deliveries">
         <WebhookDeliveryFiltersForm filters={deliveryFilters} onChange={onDeliveryFiltersChange} />
-        {sectionLoading ? <WebhookLoadingState text="Loading deliveries…" /> : deliveries?.length ? <><WebhookDeliveriesTable deliveries={deliveries} onViewHook={onViewHook} /><IncrementalLoadControls kind="deliveries" hasMore={hasMore} loading={loadingMore} onLoadMore={onLoadMore} /></> : <EmptyState text="No deliveries match the current filters." />}
+        {sectionLoading ? <WebhookLoadingState text="Loading deliveries…" /> : deliveries?.length ? <LazyScrollFrame noun="deliveries" hasMore={hasMore} loading={loadingMore} onLoadMore={onLoadMore}><WebhookDeliveriesTable deliveries={deliveries} onViewHook={onViewHook} /></LazyScrollFrame> : <EmptyState text="No deliveries match the current filters." />}
       </Panel> : null}
     </section>
   );
@@ -1819,24 +1819,39 @@ function WebhookDeliveryFiltersForm({ filters, onChange }: { filters: WebhookDel
 }
 
 function WebhookDeliveriesTable({ deliveries, onViewHook }: { deliveries: WebhookDelivery[]; onViewHook: (hookId: string) => void }) {
-  return <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Received</th><th className="px-3 py-2">Hook</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3 font-mono text-xs text-muted">{delivery.created_at}</td><td className="px-3 py-3">{delivery.hook_id ? <button type="button" className="text-left text-primary hover:underline" onClick={() => onViewHook(delivery.hook_id!)}><span className="block font-semibold">{delivery.hook?.target ?? `Hook #${delivery.hook_id}`}</span><span className="font-mono text-xs">#{delivery.hook_id}</span></button> : <span className="text-xs text-muted">Unknown (legacy)</span>}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span>{delivery.duplicate_count ? <span className="ml-2 font-mono text-xs text-muted">{delivery.duplicate_count} retries</span> : null}</td><td className="max-w-[14rem] truncate px-3 py-3 font-mono text-xs text-muted" title={delivery.delivery_id}>{delivery.delivery_id}</td></tr>)}</tbody></table></div>;
+  return <table className="w-full min-w-[980px] text-left text-sm"><thead><tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted"><th className="px-3 py-2">Received</th><th className="px-3 py-2">Hook</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3 font-mono text-xs text-muted">{delivery.created_at}</td><td className="px-3 py-3">{delivery.hook_id ? <button type="button" className="text-left text-primary hover:underline" onClick={() => onViewHook(delivery.hook_id!)}><span className="block font-semibold">{delivery.hook?.target ?? `Hook #${delivery.hook_id}`}</span><span className="font-mono text-xs">#{delivery.hook_id}</span></button> : <span className="text-xs text-muted">Unknown (legacy)</span>}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span>{delivery.duplicate_count ? <span className="ml-2 font-mono text-xs text-muted">{delivery.duplicate_count} retries</span> : null}</td><td className="max-w-[14rem] truncate px-3 py-3 font-mono text-xs text-muted" title={delivery.delivery_id}>{delivery.delivery_id}</td></tr>)}</tbody></table>;
 }
 
-function IncrementalLoadControls({ kind, hasMore, loading, onLoadMore }: { kind: "hooks" | "deliveries"; hasMore: boolean; loading: boolean; onLoadMore: () => void }) {
+function LazyScrollFrame({ noun, hasMore, loading, onLoadMore, children, className }: { noun: string; hasMore: boolean; loading: boolean; onLoadMore?: () => void; children: React.ReactNode; className?: string }) {
+  return <div data-testid={`lazy-scroll-${noun}`} className={cn("max-h-[640px] overflow-auto rounded-md border border-border", className)}>{children}<LazyLoadSentinel noun={noun} hasMore={hasMore} loading={loading} onLoadMore={onLoadMore} /></div>;
+}
+
+function LazyLoadSentinel({ noun, hasMore, loading, onLoadMore }: { noun: string; hasMore: boolean; loading: boolean; onLoadMore?: () => void }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
+  const requested = React.useRef(false);
+  React.useEffect(() => {
+    if (!loading) requested.current = false;
+  }, [loading]);
   React.useEffect(() => {
     const node = ref.current;
-    if (!node || !hasMore || loading) return;
-    if (!("IntersectionObserver" in window)) return;
+    if (!node || !hasMore || loading || !onLoadMore) return;
+    const requestMore = () => {
+      if (requested.current) return;
+      requested.current = true;
+      onLoadMore();
+    };
+    if (!("IntersectionObserver" in window)) {
+      requestMore();
+      return;
+    }
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) onLoadMore();
+      if (entries.some((entry) => entry.isIntersecting)) requestMore();
     }, { rootMargin: "240px 0px" });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [hasMore, kind, loading, onLoadMore]);
+  }, [hasMore, loading, noun, onLoadMore]);
   if (!hasMore && !loading) return null;
-  const noun = kind === "hooks" ? "hooks" : "deliveries";
-  return <div ref={ref} className="flex min-h-12 items-center justify-center border-t border-border p-3"><button type="button" className="rounded-md border border-border px-3 py-1.5 text-sm font-semibold hover:bg-slate-50 disabled:opacity-60" disabled={loading || !hasMore} onClick={onLoadMore}>{loading ? `Loading more ${noun}…` : `Load more ${noun}`}</button></div>;
+  return <div ref={ref} className="flex min-h-10 items-center justify-center border-t border-border px-3 py-2 text-xs font-medium text-muted" aria-live="polite">{loading ? `Loading more ${noun}...` : `Scroll for more ${noun}`}</div>;
 }
 
 function WebhookHookDetailPage({ data, loading, error, onBack, onRefresh, onViewHook }: { data?: WebhookHookDetailResponse; loading: boolean; error: Error | null; onBack: () => void; onRefresh: () => void; onViewHook: (hookId: string) => void }) {
@@ -3269,7 +3284,7 @@ function JobsList({
         ))}
         <MobileLoadMoreJobs hasMore={hasMore} loading={loadingMore} onLoadMore={requestMoreJobs} />
       </div>
-      <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
+      <LazyScrollFrame noun="jobs" hasMore={hasMore} loading={loadingMore} onLoadMore={requestMoreJobs} className="hidden md:block">
         <table className="min-w-[1080px] table-fixed border-collapse text-sm">
           <thead>
             <tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted">
@@ -3302,8 +3317,7 @@ function JobsList({
             ))}
           </tbody>
         </table>
-        <JobsLoadSentinel hasMore={hasMore} loading={loadingMore} onLoadMore={requestMoreJobs} />
-      </div>
+      </LazyScrollFrame>
     </>
   );
 }
@@ -3403,30 +3417,6 @@ function MobileLoadMoreJobs({ hasMore, loading, onLoadMore }: { hasMore: boolean
       <ChevronDown className="h-4 w-4" aria-hidden />
       {loading ? "Loading more jobs..." : "Load more jobs"}
     </button>
-  );
-}
-
-function JobsLoadSentinel({ hasMore, loading, onLoadMore }: { hasMore: boolean; loading: boolean; onLoadMore?: () => void }) {
-  const ref = React.useRef<HTMLDivElement | null>(null);
-  React.useEffect(() => {
-    const node = ref.current;
-    if (!node || !hasMore || loading || !onLoadMore) return;
-    if (!("IntersectionObserver" in window)) {
-      onLoadMore();
-      return;
-    }
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) onLoadMore();
-    }, { rootMargin: "240px 0px" });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [hasMore, loading, onLoadMore]);
-
-  if (!hasMore && !loading) return null;
-  return (
-    <div ref={ref} className="flex min-h-10 items-center justify-center px-3 py-2 text-xs font-medium text-muted" aria-live="polite">
-      {loading ? "Loading more jobs..." : "Scroll for more jobs"}
-    </div>
   );
 }
 

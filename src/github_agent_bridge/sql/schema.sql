@@ -81,12 +81,27 @@ CREATE TABLE IF NOT EXISTS webhook_hooks (
   hook_id TEXT PRIMARY KEY,
   target TEXT NOT NULL,
   target_type TEXT NOT NULL CHECK(target_type IN ('organization','repository')),
+  name TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   events_json TEXT NOT NULL DEFAULT '[]',
+  content_type TEXT,
+  insecure_ssl INTEGER,
+  delivery_url TEXT,
+  github_api_url TEXT,
+  ping_url TEXT,
+  deliveries_url TEXT,
+  github_created_at TEXT,
+  github_updated_at TEXT,
   last_ping_at TEXT,
   last_event_at TEXT,
+  last_delivery_id TEXT,
+  last_event_name TEXT,
+  last_action TEXT,
+  last_repository TEXT,
+  last_result TEXT,
   updated_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_webhook_hooks_page ON webhook_hooks(updated_at DESC, hook_id DESC);
 CREATE TABLE IF NOT EXISTS coalesced_notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

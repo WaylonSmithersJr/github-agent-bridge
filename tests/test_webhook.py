@@ -152,10 +152,13 @@ def test_webhook_status_requires_dashboard_admin(tmp_path):
         "/api/webhooks/github/deliveries",
     )
     assert {client.get(path).status_code for path in paths} == {401}
+    assert client.get("/api/webhooks/github/hooks/42").status_code == 401
     client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "alice"})))
     assert {client.get(path).status_code for path in paths} == {403}
+    assert client.get("/api/webhooks/github/hooks/42").status_code == 403
     client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "operator"}, is_admin=True)))
     assert {client.get(path).status_code for path in paths} == {200}
+    assert client.get("/api/webhooks/github/hooks/42").status_code == 404
     assert client.get("/api/status").json()["webhook_configured"] is True
 
 
@@ -170,7 +173,19 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
     client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
     ping = json.dumps({
         "zen": "Keep it logically awesome.",
-        "hook": {"id": 42, "active": True, "events": ["issue_comment", "pull_request_review"]},
+        "hook": {
+            "id": 42, "name": "web", "active": True,
+            "events": ["issue_comment", "pull_request_review"],
+            "config": {
+                "content_type": "json", "insecure_ssl": "0",
+                "secret": "********", "url": "https://gab.gisce.net/api/webhooks/github",
+            },
+            "created_at": "2026-10-02T11:07:17Z",
+            "updated_at": "2026-10-02T11:07:17Z",
+            "url": "https://api.github.com/orgs/gisce/hooks/42",
+            "ping_url": "https://api.github.com/orgs/gisce/hooks/42/pings",
+            "deliveries_url": "https://api.github.com/orgs/gisce/hooks/42/deliveries",
+        },
         "organization": {"login": "gisce"},
     }).encode()
     delivery = issue_comment_payload()
@@ -185,15 +200,34 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
     }
     assert client.get("/api/webhooks/github/status").json() == summary
 
-    hooks = client.get("/api/webhooks/github/hooks").json()["hooks"]
-    assert hooks == [{
-        "id": "42", "target": "gisce", "target_type": "organization",
-        "active": True, "events": ["issue_comment", "pull_request_review"],
-        "last_ping_at": hooks[0]["last_ping_at"],
-        "last_event_at": hooks[0]["last_event_at"], "status": "receiving",
-    }]
+    hooks_response = client.get("/api/webhooks/github/hooks").json()
+    assert hooks_response["next_cursor"] is None
+    hooks = hooks_response["hooks"]
+    assert len(hooks) == 1
+    assert hooks[0]["id"] == "42"
+    assert hooks[0]["target"] == "gisce"
+    assert hooks[0]["target_type"] == "organization"
+    assert hooks[0]["name"] == "web"
+    assert hooks[0]["active"] is True
+    assert hooks[0]["events"] == ["issue_comment", "pull_request_review"]
+    assert hooks[0]["content_type"] == "json"
+    assert hooks[0]["ssl_verify"] is True
+    assert hooks[0]["delivery_url"] == "https://gab.gisce.net/api/webhooks/github"
+    assert hooks[0]["admin_url"] == "https://github.com/organizations/gisce/settings/hooks/42"
     assert hooks[0]["last_ping_at"]
     assert hooks[0]["last_event_at"]
+    assert hooks[0]["last_delivery_id"] == "delivery-1"
+    assert hooks[0]["last_event_name"] == "issue_comment"
+    assert hooks[0]["last_action"] == "created"
+    assert hooks[0]["last_repository"] == "gisce/github-agent-bridge"
+    assert hooks[0]["last_result"] == "observed"
+    assert hooks[0]["status"] == "receiving"
+
+    detail = client.get("/api/webhooks/github/hooks/42").json()
+    assert detail["hook"] == hooks[0]
+    assert detail["stats"] == {"deliveries": 2, "duplicates": 0, "unsupported": 1}
+    assert {item["delivery_id"] for item in detail["recent_deliveries"]} == {"ping-1", "delivery-1"}
+    assert "secret" not in json.dumps(detail)
 
     first_page = client.get("/api/webhooks/github/deliveries", params={"limit": 1}).json()
     assert len(first_page["deliveries"]) == 1
@@ -205,7 +239,17 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
     deliveries = first_page["deliveries"] + second_page["deliveries"]
     assert {item["delivery_id"] for item in deliveries} == {"ping-1", "delivery-1"}
     assert next(item for item in deliveries if item["delivery_id"] == "delivery-1")["hook_id"] == "42"
+    assert next(item for item in deliveries if item["delivery_id"] == "delivery-1")["hook"] == {
+        "id": "42", "target": "gisce", "target_type": "organization",
+        "admin_url": "https://github.com/organizations/gisce/settings/hooks/42",
+    }
     assert second_page["next_cursor"] is None
+
+    filtered = client.get("/api/webhooks/github/deliveries", params={
+        "hook_id": "42", "event_name": "issue_comment", "repository": "gisce/github-agent-bridge",
+        "result": "observed",
+    }).json()
+    assert [item["delivery_id"] for item in filtered["deliveries"]] == ["delivery-1"]
 
     now = datetime.now(UTC)
     timeseries = client.get("/api/webhooks/github/timeseries", params={
@@ -229,6 +273,33 @@ def test_webhook_monitoring_rejects_unbounded_ranges_and_invalid_cursors(tmp_pat
     assert response.status_code == 400
     assert response.json()["detail"] == "time_range_too_large"
     assert client.get("/api/webhooks/github/deliveries", params={"cursor": "invalid"}).status_code == 400
+    assert client.get("/api/webhooks/github/hooks", params={"cursor": "invalid"}).status_code == 400
+
+
+def test_webhook_hook_inventory_uses_stable_cursor_pagination(tmp_path):
+    client = TestClient(create_app(DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False, webhook_secrets=(SECRET,),
+    )))
+    for hook_id in ("41", "42", "43"):
+        payload = json.dumps({
+            "hook": {"id": int(hook_id), "active": True, "events": ["issue_comment"]},
+            "organization": {"login": "gisce"},
+        }).encode()
+        assert client.post(
+            "/api/webhooks/github", content=payload,
+            headers=hook_headers(payload, delivery=f"ping-{hook_id}", event="ping", hook_id=hook_id),
+        ).status_code == 200
+
+    first = client.get("/api/webhooks/github/hooks", params={"limit": 2}).json()
+    second = client.get("/api/webhooks/github/hooks", params={
+        "limit": 2, "cursor": first["next_cursor"],
+    }).json()
+
+    assert len(first["hooks"]) == 2
+    assert first["next_cursor"]
+    assert len(second["hooks"]) == 1
+    assert second["next_cursor"] is None
+    assert {hook["id"] for hook in first["hooks"] + second["hooks"]} == {"41", "42", "43"}
 
 
 def test_webhook_monitoring_initializes_schema_once_per_app(tmp_path, monkeypatch):
@@ -292,7 +363,9 @@ def test_existing_webhook_receipt_schema_is_migrated_for_hook_inventory(tmp_path
     assert client.get("/api/webhooks/github/hooks").json()["hooks"][0]["id"] == "84"
     with sqlite3.connect(db) as con:
         indexes = {row[1] for row in con.execute("PRAGMA index_list(webhook_shadow_receipts)")}
+        hook_columns = {row[1] for row in con.execute("PRAGMA table_info(webhook_hooks)")}
     assert "idx_webhook_shadow_delivery_page" in indexes
+    assert {"delivery_url", "last_delivery_id", "last_result"} <= hook_columns
 
 
 def test_submitted_review_uses_same_canonical_key_as_email_ingestion(tmp_path):

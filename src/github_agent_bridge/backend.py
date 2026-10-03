@@ -139,6 +139,82 @@ def _decode_webhook_delivery_cursor(cursor: str) -> tuple[str, str]:
     return payload[0], payload[1]
 
 
+def _webhook_admin_url(target_type: str, target: str, hook_id: str) -> str | None:
+    if target_type == "organization" and target and target != "unknown":
+        return f"https://github.com/organizations/{urllib.parse.quote(target, safe='')}/settings/hooks/{urllib.parse.quote(hook_id, safe='')}"
+    if target_type == "repository" and "/" in target:
+        owner, repository = target.split("/", 1)
+        return (
+            f"https://github.com/{urllib.parse.quote(owner, safe='')}/"
+            f"{urllib.parse.quote(repository, safe='')}/settings/hooks/{urllib.parse.quote(hook_id, safe='')}"
+        )
+    return None
+
+
+def _webhook_hook_status(row: sqlite3.Row) -> str:
+    if not row["active"]:
+        return "inactive"
+    if row["last_event_at"]:
+        return "receiving"
+    if row["last_ping_at"]:
+        return "quiet"
+    return "never_seen"
+
+
+def _webhook_hook_payload(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["hook_id"],
+        "target": row["target"],
+        "target_type": row["target_type"],
+        "name": row["name"],
+        "active": bool(row["active"]),
+        "events": json.loads(row["events_json"] or "[]"),
+        "content_type": row["content_type"],
+        "ssl_verify": None if row["insecure_ssl"] is None else not bool(row["insecure_ssl"]),
+        "delivery_url": row["delivery_url"],
+        "github_api_url": row["github_api_url"],
+        "ping_url": row["ping_url"],
+        "deliveries_url": row["deliveries_url"],
+        "github_created_at": row["github_created_at"],
+        "github_updated_at": row["github_updated_at"],
+        "last_ping_at": row["last_ping_at"],
+        "last_event_at": row["last_event_at"],
+        "last_delivery_id": row["last_delivery_id"],
+        "last_event_name": row["last_event_name"],
+        "last_action": row["last_action"],
+        "last_repository": row["last_repository"],
+        "last_result": row["last_result"],
+        "status": _webhook_hook_status(row),
+        "admin_url": _webhook_admin_url(row["target_type"], row["target"], row["hook_id"]),
+    }
+
+
+def _webhook_delivery_payload(row: sqlite3.Row) -> dict[str, Any]:
+    hook = None
+    if row["hook_id"]:
+        hook = {
+            "id": row["hook_id"],
+            "target": row["hook_target"],
+            "target_type": row["hook_target_type"],
+            "admin_url": (
+                _webhook_admin_url(row["hook_target_type"], row["hook_target"], row["hook_id"])
+                if row["hook_target"] and row["hook_target_type"] else None
+            ),
+        }
+    return {
+        "delivery_id": row["delivery_id"],
+        "hook_id": row["hook_id"],
+        "hook": hook,
+        "event_name": row["event_name"],
+        "action": row["action"],
+        "event_key": row["event_key"],
+        "repository": row["repository"],
+        "status": row["status"],
+        "duplicate_count": row["duplicate_count"],
+        "created_at": row["created_at"],
+    }
+
+
 class DashboardConfig:
     def __init__(
         self,
@@ -771,24 +847,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         }
 
     @app.get("/api/webhooks/github/hooks")
-    def github_webhook_shadow_hooks(_: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
-        ensure_webhook_schema()
-        with sqlite3.connect(config.db) as con:
-            hook_rows = con.execute(
-                "SELECT hook_id,target,target_type,active,events_json,last_ping_at,last_event_at "
-                "FROM webhook_hooks ORDER BY target_type,target,hook_id"
-            ).fetchall()
-        return {
-            "hooks": [
-                {"id": row[0], "target": row[1], "target_type": row[2], "active": bool(row[3]),
-                 "events": json.loads(row[4]), "last_ping_at": row[5], "last_event_at": row[6],
-                 "status": ("inactive" if not row[3] else "receiving" if row[6] else "never_seen")}
-                for row in hook_rows
-            ],
-        }
-
-    @app.get("/api/webhooks/github/deliveries")
-    def github_webhook_shadow_deliveries(
+    def github_webhook_shadow_hooks(
         limit: int = Query(50, ge=1, le=100),
         cursor: str | None = Query(None),
         _: dict[str, Any] = Depends(current_admin_profile),
@@ -797,27 +856,111 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         where = ""
         parameters: list[Any] = []
         if cursor:
-            cursor_created_at, cursor_delivery_id = _decode_webhook_delivery_cursor(cursor)
-            where = "WHERE created_at<? OR (created_at=? AND delivery_id<?)"
-            parameters.extend((cursor_created_at, cursor_created_at, cursor_delivery_id))
+            cursor_updated_at, cursor_hook_id = _decode_webhook_delivery_cursor(cursor)
+            where = "WHERE updated_at<? OR (updated_at=? AND hook_id<?)"
+            parameters.extend((cursor_updated_at, cursor_updated_at, cursor_hook_id))
         parameters.append(limit + 1)
         with sqlite3.connect(config.db) as con:
+            con.row_factory = sqlite3.Row
+            hook_rows = con.execute(
+                "SELECT hook_id,target,target_type,name,active,events_json,content_type,insecure_ssl,delivery_url,"
+                "github_api_url,ping_url,deliveries_url,github_created_at,github_updated_at,last_ping_at,last_event_at,"
+                "last_delivery_id,last_event_name,last_action,last_repository,last_result,updated_at "
+                f"FROM webhook_hooks {where} ORDER BY updated_at DESC,hook_id DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+        page = hook_rows[:limit]
+        next_cursor = None
+        if len(hook_rows) > limit and page:
+            next_cursor = _encode_webhook_delivery_cursor(page[-1]["updated_at"], page[-1]["hook_id"])
+        return {
+            "hooks": [_webhook_hook_payload(row) for row in page],
+            "next_cursor": next_cursor,
+        }
+
+    @app.get("/api/webhooks/github/hooks/{hook_id}")
+    def github_webhook_shadow_hook_detail(
+        hook_id: str,
+        _: dict[str, Any] = Depends(current_admin_profile),
+    ) -> dict[str, Any]:
+        ensure_webhook_schema()
+        with sqlite3.connect(config.db) as con:
+            con.row_factory = sqlite3.Row
+            hook = con.execute(
+                "SELECT hook_id,target,target_type,name,active,events_json,content_type,insecure_ssl,delivery_url,"
+                "github_api_url,ping_url,deliveries_url,github_created_at,github_updated_at,last_ping_at,last_event_at,"
+                "last_delivery_id,last_event_name,last_action,last_repository,last_result,updated_at "
+                "FROM webhook_hooks WHERE hook_id=?",
+                (hook_id,),
+            ).fetchone()
+            if hook is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webhook_hook_not_found")
+            stats = con.execute(
+                "SELECT COUNT(*) deliveries,COALESCE(SUM(duplicate_count),0) duplicates,"
+                "SUM(CASE WHEN status='unsupported' THEN 1 ELSE 0 END) unsupported "
+                "FROM webhook_shadow_receipts WHERE hook_id=?",
+                (hook_id,),
+            ).fetchone()
+            recent = con.execute(
+                "SELECT r.delivery_id,r.hook_id,r.event_name,r.action,r.event_key,r.repository,r.status,"
+                "r.duplicate_count,r.created_at,h.target hook_target,h.target_type hook_target_type "
+                "FROM webhook_shadow_receipts r LEFT JOIN webhook_hooks h ON h.hook_id=r.hook_id "
+                "WHERE r.hook_id=? ORDER BY r.created_at DESC,r.delivery_id DESC LIMIT 20",
+                (hook_id,),
+            ).fetchall()
+        return {
+            "hook": _webhook_hook_payload(hook),
+            "stats": {
+                "deliveries": stats["deliveries"],
+                "duplicates": stats["duplicates"],
+                "unsupported": stats["unsupported"] or 0,
+            },
+            "recent_deliveries": [_webhook_delivery_payload(row) for row in recent],
+        }
+
+    @app.get("/api/webhooks/github/deliveries")
+    def github_webhook_shadow_deliveries(
+        limit: int = Query(50, ge=1, le=100),
+        cursor: str | None = Query(None),
+        hook_id: str | None = Query(None),
+        event_name: str | None = Query(None),
+        repository: str | None = Query(None),
+        result: str | None = Query(None),
+        _: dict[str, Any] = Depends(current_admin_profile),
+    ) -> dict[str, Any]:
+        ensure_webhook_schema()
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        if cursor:
+            cursor_created_at, cursor_delivery_id = _decode_webhook_delivery_cursor(cursor)
+            clauses.append("(r.created_at<? OR (r.created_at=? AND r.delivery_id<?))")
+            parameters.extend((cursor_created_at, cursor_created_at, cursor_delivery_id))
+        for column, value in (
+            ("r.hook_id", hook_id),
+            ("r.event_name", event_name),
+            ("r.repository", repository),
+            ("r.status", result),
+        ):
+            if value:
+                clauses.append(f"{column}=?")
+                parameters.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(limit + 1)
+        with sqlite3.connect(config.db) as con:
+            con.row_factory = sqlite3.Row
             delivery_rows = con.execute(
-                "SELECT delivery_id,hook_id,event_name,action,event_key,repository,status,created_at "
-                f"FROM webhook_shadow_receipts {where} "
-                "ORDER BY created_at DESC,delivery_id DESC LIMIT ?",
+                "SELECT r.delivery_id,r.hook_id,r.event_name,r.action,r.event_key,r.repository,r.status,"
+                "r.duplicate_count,r.created_at,h.target hook_target,h.target_type hook_target_type "
+                f"FROM webhook_shadow_receipts r LEFT JOIN webhook_hooks h ON h.hook_id=r.hook_id {where} "
+                "ORDER BY r.created_at DESC,r.delivery_id DESC LIMIT ?",
                 parameters,
             ).fetchall()
         page = delivery_rows[:limit]
         next_cursor = None
         if len(delivery_rows) > limit and page:
-            next_cursor = _encode_webhook_delivery_cursor(page[-1][7], page[-1][0])
+            next_cursor = _encode_webhook_delivery_cursor(page[-1]["created_at"], page[-1]["delivery_id"])
         return {
-            "deliveries": [
-                {"delivery_id": row[0], "hook_id": row[1], "event_name": row[2], "action": row[3],
-                 "event_key": row[4], "repository": row[5], "status": row[6], "created_at": row[7]}
-                for row in page
-            ],
+            "deliveries": [_webhook_delivery_payload(row) for row in page],
             "next_cursor": next_cursor,
         }
 

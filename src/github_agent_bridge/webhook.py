@@ -83,6 +83,18 @@ def persist_shadow_delivery(
             "DELETE FROM webhook_shadow_receipts WHERE julianday(created_at) < julianday('now', ?)",
             (f"-{retention_days} days",),
         )
+        try:
+            con.execute(
+                "INSERT INTO webhook_shadow_receipts(delivery_id,hook_id,event_name,action,event_key,repository,payload_hash,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (delivery_id, hook_id, event_name, action, event_key, repo, payload_hash, status, now),
+            )
+        except sqlite3.IntegrityError:
+            con.rollback()
+            con.execute(
+                "UPDATE webhook_shadow_receipts SET duplicate_count=duplicate_count+1 WHERE delivery_id=?",
+                (delivery_id,),
+            )
+            status = "duplicate"
         if hook_id:
             hook = payload.get("hook") if isinstance(payload, dict) else None
             organization = payload.get("organization") if isinstance(payload, dict) else None
@@ -92,34 +104,46 @@ def persist_shadow_delivery(
                 else repository.get("full_name") if isinstance(repository, dict)
                 else None
             ) or "unknown"
-            active = bool(hook.get("active", True)) if isinstance(hook, dict) else True
-            events = hook.get("events", []) if isinstance(hook, dict) else []
-            con.execute(
-                "INSERT INTO webhook_hooks(hook_id,target,target_type,active,events_json,last_ping_at,last_event_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(hook_id) DO UPDATE SET "
-                "target=CASE WHEN excluded.events_json='[]' THEN webhook_hooks.target ELSE excluded.target END,"
-                "target_type=CASE WHEN excluded.events_json='[]' THEN webhook_hooks.target_type ELSE excluded.target_type END,"
-                "active=CASE WHEN excluded.events_json='[]' THEN webhook_hooks.active ELSE excluded.active END,"
-                "events_json=CASE WHEN excluded.events_json='[]' THEN webhook_hooks.events_json ELSE excluded.events_json END,"
-                "last_ping_at=COALESCE(excluded.last_ping_at,webhook_hooks.last_ping_at),"
-                "last_event_at=COALESCE(excluded.last_event_at,webhook_hooks.last_event_at),updated_at=excluded.updated_at",
-                (hook_id, target, target_type, int(active), json.dumps(events), now if event_name == "ping" else None,
-                 now if event_name != "ping" else None, now),
-            )
-        try:
-            con.execute(
-                "INSERT INTO webhook_shadow_receipts(delivery_id,hook_id,event_name,action,event_key,repository,payload_hash,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                (delivery_id, hook_id, event_name, action, event_key, repo, payload_hash, status, now),
-            )
-            con.commit()
-        except sqlite3.IntegrityError:
-            con.rollback()
-            con.execute(
-                "UPDATE webhook_shadow_receipts SET duplicate_count=duplicate_count+1 WHERE delivery_id=?",
-                (delivery_id,),
-            )
-            con.commit()
-            status = "duplicate"
+            if event_name == "ping" and isinstance(hook, dict):
+                config = hook.get("config") if isinstance(hook.get("config"), dict) else {}
+                events = hook.get("events") if isinstance(hook.get("events"), list) else []
+                insecure_ssl = config.get("insecure_ssl")
+                insecure_ssl_value = None if insecure_ssl is None else int(str(insecure_ssl) == "1")
+                con.execute(
+                    "INSERT INTO webhook_hooks("
+                    "hook_id,target,target_type,name,active,events_json,content_type,insecure_ssl,delivery_url,"
+                    "github_api_url,ping_url,deliveries_url,github_created_at,github_updated_at,last_ping_at,updated_at"
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(hook_id) DO UPDATE SET "
+                    "target=excluded.target,target_type=excluded.target_type,name=excluded.name,active=excluded.active,"
+                    "events_json=excluded.events_json,content_type=excluded.content_type,insecure_ssl=excluded.insecure_ssl,"
+                    "delivery_url=excluded.delivery_url,github_api_url=excluded.github_api_url,ping_url=excluded.ping_url,"
+                    "deliveries_url=excluded.deliveries_url,github_created_at=excluded.github_created_at,"
+                    "github_updated_at=excluded.github_updated_at,last_ping_at=excluded.last_ping_at,updated_at=excluded.updated_at",
+                    (
+                        hook_id, target, target_type, str(hook.get("name") or "") or None,
+                        int(bool(hook.get("active", True))), json.dumps(events),
+                        str(config.get("content_type") or "") or None, insecure_ssl_value,
+                        str(config.get("url") or "") or None, str(hook.get("url") or "") or None,
+                        str(hook.get("ping_url") or "") or None, str(hook.get("deliveries_url") or "") or None,
+                        str(hook.get("created_at") or "") or None, str(hook.get("updated_at") or "") or None,
+                        now, now,
+                    ),
+                )
+            else:
+                con.execute(
+                    "INSERT INTO webhook_hooks("
+                    "hook_id,target,target_type,active,events_json,last_event_at,last_delivery_id,last_event_name,"
+                    "last_action,last_repository,last_result,updated_at"
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(hook_id) DO UPDATE SET "
+                    "last_event_at=excluded.last_event_at,last_delivery_id=excluded.last_delivery_id,"
+                    "last_event_name=excluded.last_event_name,last_action=excluded.last_action,"
+                    "last_repository=excluded.last_repository,last_result=excluded.last_result,updated_at=excluded.updated_at",
+                    (
+                        hook_id, target, target_type, 1, "[]", now, delivery_id, event_name,
+                        action, repo, status, now,
+                    ),
+                )
+        con.commit()
     finally:
         con.close()
     return ShadowReceipt(delivery_id, event_name, action, event_key, repo, status)

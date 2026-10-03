@@ -150,6 +150,7 @@ def test_webhook_status_requires_dashboard_admin(tmp_path):
         "/api/webhooks/github/timeseries",
         "/api/webhooks/github/hooks",
         "/api/webhooks/github/deliveries",
+        "/api/webhooks/github/exceptions",
     )
     assert {client.get(path).status_code for path in paths} == {401}
     assert client.get("/api/webhooks/github/hooks/42").status_code == 401
@@ -197,6 +198,11 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
         "mode": "shadow", "configured": True,
         "receipts": {"observed": 1, "unsupported": 1},
         "duplicate_deliveries": 0, "cross_source_matches": 0,
+        "totals": {"hooks": 1, "deliveries": 2},
+        "coverage": {
+            "both": 0, "imap_only": 0, "webhook_only": 1,
+            "imap_eligible": 0, "ratio": None, "mean_match_delay_ms": None,
+        },
     }
     assert client.get("/api/webhooks/github/status").json() == summary
 
@@ -260,6 +266,10 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
     assert timeseries["bucket"] == "hour"
     assert timeseries["points"][0]["observed"] == 1
     assert timeseries["points"][0]["unsupported"] == 1
+    exceptions = client.get("/api/webhooks/github/exceptions").json()["exceptions"]
+    assert {(item["kind"], item["reference"]) for item in exceptions} == {
+        ("unmatchable", "ping-1"), ("webhook_only", "delivery-1"),
+    }
 
 
 def test_webhook_monitoring_rejects_unbounded_ranges_and_invalid_cursors(tmp_path):

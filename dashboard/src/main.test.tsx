@@ -142,27 +142,33 @@ describe("dashboard routing and API query helpers", () => {
   });
 
   it("renders the webhook status exported by the backend", () => {
-    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3 }} timeseries={[]} section="overview" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore={false} deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={vi.fn()} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
+    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, totals: { hooks: 143, deliveries: 912 } }} timeseries={[]} section="overview" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore={false} deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={vi.fn()} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
 
     expect(screen.getByRole("heading", { name: "GitHub webhooks" })).toBeInTheDocument();
     expect(screen.getByText("shadow")).toBeInTheDocument();
     expect(screen.getByText("observed")).toBeInTheDocument();
     expect(screen.getAllByText("7").length).toBeGreaterThan(0);
+    expect(screen.getByRole("tab", { name: "Hooks (143 total)" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Deliveries (912 total)" })).toBeInTheDocument();
   });
 
   it("navigates webhook hook inventory and delivery details", async () => {
     const user = userEvent.setup();
     const onSectionChange = vi.fn();
     const onViewHook = vi.fn();
-    const summary = { mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3 };
+    const summary = { mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, totals: { hooks: 101, deliveries: 912 } };
     const hooks = [{ id: "42", target: "gisce", target_type: "organization" as const, active: true, events: ["issue_comment"], status: "receiving" as const, last_ping_at: "2026-10-02T10:00:00Z", last_event_at: "2026-10-02T10:05:00Z" }];
     const deliveries = [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", hook_id: "42", hook: { id: "42", target: "gisce", target_type: "organization" as const }, event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }];
     const common = { summary, summaryLoading: false, sectionLoading: false, loadingMore: false, hasMore: false, deliveryFilters: { hook_id: "", event_name: "", repository: "", result: "" }, error: null, onSectionChange, onLoadMore: vi.fn(), onDeliveryFiltersChange: vi.fn(), onViewHook, onRefresh: vi.fn() };
     const { rerender } = render(<WebhookPage {...common} section="overview" />);
 
+    expect(screen.getByRole("tab", { name: "Hooks (101 total)" })).toBeInTheDocument();
+
     await user.click(screen.getByRole("tab", { name: /Hooks/ }));
     expect(onSectionChange).toHaveBeenCalledWith("hooks");
     rerender(<WebhookPage {...common} hooks={hooks} section="hooks" />);
+    expect(screen.getByRole("tab", { name: "Hooks (101 total)" })).toBeInTheDocument();
+    expect(screen.getByTestId("lazy-scroll-hooks")).toHaveClass("max-h-[640px]", "overflow-auto");
     expect(screen.getByText("organization · #42")).toBeInTheDocument();
     expect(screen.getByText("receiving")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "gisce" }));
@@ -171,6 +177,7 @@ describe("dashboard routing and API query helpers", () => {
     await user.click(screen.getByRole("tab", { name: /Deliveries/ }));
     expect(onSectionChange).toHaveBeenCalledWith("deliveries");
     rerender(<WebhookPage {...common} deliveries={deliveries} section="deliveries" />);
+    expect(screen.getByTestId("lazy-scroll-deliveries")).toHaveClass("max-h-[640px]", "overflow-auto");
     expect(screen.getAllByText("issue_comment · created").length).toBeGreaterThan(0);
     expect(screen.getByText("gisce/github-agent-bridge")).toBeInTheDocument();
     expect(screen.getByText("#42")).toBeInTheDocument();
@@ -511,6 +518,7 @@ describe("status badges", () => {
     );
 
     expect(screen.getByRole("columnheader", { name: "Status" }).parentElement).toHaveClass("sticky", "top-0", "z-10");
+    expect(screen.getByTestId("lazy-scroll-jobs")).toHaveClass("max-h-[640px]", "overflow-auto");
     expect(screen.getByRole("columnheader", { name: "Job" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Model" })).not.toBeInTheDocument();
     expect(screen.queryByText("openai/gpt-5.4-mini · medium")).not.toBeInTheDocument();

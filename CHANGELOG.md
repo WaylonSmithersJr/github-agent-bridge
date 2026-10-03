@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.63.1 (2026-10-03)
+
+### Bug Fixes
+
+- Make webhook monitoring operational
+  ([`85ade3d`](https://github.com/gisce/github-agent-bridge/commit/85ade3d4ebe26cc951f07ac6913c10a718d602ba))
+
+
 ## v0.63.0 (2026-10-02)
 
 ### Features

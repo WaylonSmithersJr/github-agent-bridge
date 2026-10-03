@@ -792,8 +792,17 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
                 " WHERE w.event_key IS NOT NULL AND EXISTS ("
                 "  SELECT 1 FROM ingest_receipts i WHERE i.event_key=w.event_key"
                 " )"
+                "), coverage AS ("
+                " SELECT "
+                "  (SELECT COUNT(DISTINCT event_key) FROM ingest_receipts WHERE source='email' AND event_key IS NOT NULL) imap_events,"
+                "  (SELECT COUNT(DISTINCT event_key) FROM webhook_shadow_receipts WHERE event_key IS NOT NULL) webhook_events,"
+                "  COUNT(DISTINCT i.event_key) both_events,"
+                "  AVG(ABS((julianday(w.created_at)-julianday(i.created_at))*86400000.0)) match_delay_ms"
+                " FROM ingest_receipts i JOIN webhook_shadow_receipts w ON w.event_key=i.event_key"
+                " WHERE i.source='email'"
                 ") SELECT COALESCE(observed,0),COALESCE(unsupported,0),"
-                "duplicate_deliveries,matches FROM receipt_summary CROSS JOIN cross_source"
+                "duplicate_deliveries,matches,imap_events,webhook_events,both_events,match_delay_ms "
+                "FROM receipt_summary CROSS JOIN cross_source CROSS JOIN coverage"
             ).fetchone()
         counts = {
             name: count
@@ -806,7 +815,42 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "receipts": counts,
             "duplicate_deliveries": row[2],
             "cross_source_matches": row[3],
+            "coverage": {
+                "both": row[6],
+                "imap_only": max(row[4] - row[6], 0),
+                "webhook_only": max(row[5] - row[6], 0),
+                "imap_eligible": row[4],
+                "ratio": (row[6] / row[4]) if row[4] else None,
+                "mean_match_delay_ms": round(row[7], 1) if row[7] is not None else None,
+            },
         }
+
+    @app.get("/api/webhooks/github/exceptions")
+    def github_webhook_shadow_exceptions(
+        limit: int = Query(50, ge=1, le=100),
+        _: dict[str, Any] = Depends(current_admin_profile),
+    ) -> dict[str, Any]:
+        """Return bounded, actionable shadow divergences without loading all receipts."""
+        ensure_webhook_schema()
+        with sqlite3.connect(config.db) as con:
+            con.row_factory = sqlite3.Row
+            rows = con.execute(
+                "WITH candidates AS ("
+                " SELECT 'imap_only' kind,i.event_key,i.source_key reference,i.created_at,NULL repository "
+                " FROM ingest_receipts i WHERE i.event_key IS NOT NULL AND i.source='email' AND NOT EXISTS ("
+                "  SELECT 1 FROM webhook_shadow_receipts w WHERE w.event_key=i.event_key"
+                " ) UNION ALL "
+                " SELECT 'webhook_only',w.event_key,w.delivery_id,w.created_at,w.repository "
+                " FROM webhook_shadow_receipts w WHERE w.event_key IS NOT NULL AND NOT EXISTS ("
+                "  SELECT 1 FROM ingest_receipts i WHERE i.event_key=w.event_key"
+                " ) UNION ALL "
+                " SELECT 'unmatchable',NULL,w.delivery_id,w.created_at,w.repository "
+                " FROM webhook_shadow_receipts w WHERE w.event_key IS NULL"
+                ") SELECT kind,event_key,reference,created_at,repository FROM candidates "
+                "ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return {"exceptions": [dict(row) for row in rows]}
 
     @app.get("/api/webhooks/github/timeseries")
     def github_webhook_shadow_timeseries(

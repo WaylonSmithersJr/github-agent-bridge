@@ -88,8 +88,12 @@ payload and never creates a queue job. The monitoring API is split so opening
 the overview does not load hook inventory or delivery history:
 
 - `GET /api/webhooks/github/summary` returns mode, receipt counts, retries, and
-  cross-source matches. The previous `/status` path remains a summary-only
-  compatibility alias.
+  cross-source coverage (`both`, `imap_only`, `webhook_only`) with an explicit
+  IMAP denominator and mean matching delay. The previous `/status` path remains
+  a summary-only compatibility alias.
+- `GET /api/webhooks/github/exceptions` returns a bounded operator queue for
+  IMAP-only, webhook-only, and unmatchable retained events. It never returns raw
+  payload or comment bodies.
 - `GET /api/webhooks/github/timeseries?from=<iso>&to=<iso>&bucket=day|hour`
   returns only the requested interval. Daily ranges are capped at 366 days and
   hourly ranges at 31 days; omitted bounds default to the configured retention

@@ -75,7 +75,25 @@ type WebhookSummary = {
   receipts: Record<string, number>;
   duplicate_deliveries: number;
   cross_source_matches: number;
+  coverage?: {
+    both: number;
+    imap_only: number;
+    webhook_only: number;
+    imap_eligible: number;
+    ratio?: number | null;
+    mean_match_delay_ms?: number | null;
+  };
 };
+
+type WebhookException = {
+  kind: "imap_only" | "webhook_only" | "unmatchable";
+  event_key?: string | null;
+  reference: string;
+  created_at: string;
+  repository?: string | null;
+};
+
+type WebhookExceptionsResponse = { exceptions: WebhookException[] };
 
 type WebhookSection = "overview" | "hooks" | "deliveries";
 
@@ -992,6 +1010,11 @@ function App() {
     queryFn: () => api<WebhookTimeseriesResponse>(webhookTimeseriesPath(webhookWindow.from, webhookWindow.to)),
     enabled: webhookEnabled && webhookQuery.timeseries,
   });
+  const webhookExceptions = useQuery({
+    queryKey: ["webhook-exceptions"],
+    queryFn: () => api<WebhookExceptionsResponse>("/api/webhooks/github/exceptions"),
+    enabled: webhookEnabled && webhookQuery.timeseries,
+  });
   const webhookHooks = useInfiniteQuery({
     queryKey: ["webhook-hooks"],
     queryFn: ({ pageParam }) => api<WebhookHooksResponse>(webhookHooksPath(50, pageParam)),
@@ -1257,6 +1280,7 @@ function App() {
   const webhookSectionError = webhookSection === "overview" ? webhookTimeseries.error : webhookSection === "hooks" ? webhookHooks.error : webhookDeliveries.error;
   const refreshWebhooks = () => {
     webhookSummary.refetch();
+    if (webhookSection === "overview") webhookExceptions.refetch();
     if (webhookSection === "overview") setWebhookWindow(webhookMonitoringWindow());
     if (webhookSection === "hooks") webhookHooks.refetch();
     if (webhookSection === "deliveries") webhookDeliveries.refetch();
@@ -1346,6 +1370,7 @@ function App() {
             <WebhookPage
               summary={webhookSummary.data}
               timeseries={webhookTimeseries.data?.points}
+              exceptions={webhookExceptions.data?.exceptions}
               hooks={webhookHookRows}
               deliveries={webhookDeliveryRows}
               section={webhookSection}
@@ -1693,6 +1718,7 @@ function SectionNav({
 type WebhookPageProps = {
   summary?: WebhookSummary;
   timeseries?: WebhookTimeseriesPoint[];
+  exceptions?: WebhookException[];
   hooks?: WebhookHook[];
   deliveries?: WebhookDelivery[];
   section: WebhookSection;
@@ -1716,6 +1742,7 @@ function WebhookLoadingState({ text }: { text: string }) {
 function WebhookPage({
   summary,
   timeseries,
+  exceptions,
   hooks,
   deliveries,
   section,
@@ -1756,6 +1783,17 @@ function WebhookPage({
         </Panel>
         <Panel title="Receipt states">
           {summaryLoading ? <WebhookLoadingState text="Loading webhook summary…" /> : Object.keys(summary?.receipts ?? {}).length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(summary?.receipts ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => <MiniStat key={state} label={state} value={count} />)}</div> : <EmptyState text="No webhook deliveries observed yet." />}
+        </Panel>
+        <Panel title="Cross-source coverage">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <MiniStat label="Both sources" value={summary?.coverage?.both ?? 0} />
+            <MiniStat label="IMAP only" value={summary?.coverage?.imap_only ?? 0} />
+            <MiniStat label="Webhook only" value={summary?.coverage?.webhook_only ?? 0} />
+            <MiniStat label="Coverage" value={summary?.coverage?.ratio == null ? "not measurable" : `${Math.round(summary.coverage.ratio * 100)}%`} />
+          </div>
+        </Panel>
+        <Panel title="Exceptions requiring review">
+          {exceptions?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Type</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Reference</th><th className="px-3 py-2">Observed</th></tr></thead><tbody>{exceptions.map((item) => <tr key={`${item.kind}:${item.reference}`} className="border-b border-border/70 last:border-0"><td className="px-3 py-2 font-semibold">{item.kind}</td><td className="px-3 py-2 font-mono text-xs">{item.repository ?? "unknown"}</td><td className="px-3 py-2 font-mono text-xs">{item.event_key ?? item.reference}</td><td className="px-3 py-2 font-mono text-xs text-muted">{item.created_at}</td></tr>)}</tbody></table></div> : <EmptyState text="No cross-source exceptions in retained data." />}
         </Panel>
       </> : null}
       {section === "hooks" ? <Panel title="Hook inventory">

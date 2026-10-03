@@ -147,5 +147,26 @@ outside `enabledRepos` remain observational only. For `workflow_run.completed`,
 only runs with `conclusion: failure` enqueue work; successful and other
 conclusions remain observational.
 
+## Primary webhook with stable IMAP fallback
+
+After the dashboard gate has no unexplained IMAP-only actionable events, set
+both `GITHUB_AGENT_BRIDGE_WEBHOOK_MODE=primary` and
+`GITHUB_AGENT_BRIDGE_WEBHOOK_PRIMARY_ACK=true`. The second switch is a deliberate
+operator acknowledgement; `primary` fails closed without it. The configured
+policy remains authoritative for trust, action and routing decisions.
+
+Primary changes which source is expected to win, not the idempotency model.
+Keep the IMAP reader enabled during the stable fallback phase. If webhook
+delivery is late or unavailable, email still creates the canonical event and
+job; if both arrive, the unique event key links the second receipt to the first
+job. Rollback is configuration-only: return the endpoint to `shadow`, leave the
+IMAP reader running, and inspect the exception queue before trying primary
+again. Do not enable `--mark-seen` merely because primary mode is active.
+
+This implementation does not add an arbitrary sleep to IMAP. Delaying the
+reader would also delay genuine webhook gaps and complicate its durable UID
+cursor. The first-source metrics make the actual winner visible, while the
+shared transaction guarantees correctness independently of arrival order.
+
 Webhook enqueueing must not be enabled until recovery of persisted-but-
 unprocessed receipts and divergence metrics have been validated in production.

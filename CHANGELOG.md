@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v0.64.0 (2026-10-03)
+
+### Bug Fixes
+
+- Report stable webhook inventory totals
+  ([`524f0e3`](https://github.com/gisce/github-agent-bridge/commit/524f0e336b9072e90cc372133b1abf166fb165f8))
+
+### Features
+
+- Add webhook coverage gate observability
+  ([`7d7386e`](https://github.com/gisce/github-agent-bridge/commit/7d7386e9d4648b644e83e06683805579bf3151d1))
+
+### Refactoring
+
+- Share lazy scroll tables across dashboard
+  ([`f94a2d6`](https://github.com/gisce/github-agent-bridge/commit/f94a2d6a12f9c9271f0c8f3206ff228a1c8b0c70))
+
+
 ## v0.63.1 (2026-10-03)
 
 ### Bug Fixes

@@ -198,6 +198,7 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
         "mode": "shadow", "configured": True,
         "receipts": {"observed": 1, "unsupported": 1},
         "duplicate_deliveries": 0, "cross_source_matches": 0,
+        "totals": {"hooks": 1, "deliveries": 2},
         "coverage": {
             "both": 0, "imap_only": 0, "webhook_only": 1,
             "imap_eligible": 0, "ratio": None, "mean_match_delay_ms": None,

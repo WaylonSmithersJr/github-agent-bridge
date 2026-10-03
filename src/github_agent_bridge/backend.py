@@ -800,9 +800,12 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
                 "  AVG(ABS((julianday(w.created_at)-julianday(i.created_at))*86400000.0)) match_delay_ms"
                 " FROM ingest_receipts i JOIN webhook_shadow_receipts w ON w.event_key=i.event_key"
                 " WHERE i.source='email'"
+                "), inventory AS ("
+                " SELECT (SELECT COUNT(*) FROM webhook_hooks) hooks,"
+                "        (SELECT COUNT(*) FROM webhook_shadow_receipts) deliveries"
                 ") SELECT COALESCE(observed,0),COALESCE(unsupported,0),"
-                "duplicate_deliveries,matches,imap_events,webhook_events,both_events,match_delay_ms "
-                "FROM receipt_summary CROSS JOIN cross_source CROSS JOIN coverage"
+                "duplicate_deliveries,matches,imap_events,webhook_events,both_events,match_delay_ms,hooks,deliveries "
+                "FROM receipt_summary CROSS JOIN cross_source CROSS JOIN coverage CROSS JOIN inventory"
             ).fetchone()
         counts = {
             name: count
@@ -815,6 +818,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "receipts": counts,
             "duplicate_deliveries": row[2],
             "cross_source_matches": row[3],
+            "totals": {"hooks": row[8], "deliveries": row[9]},
             "coverage": {
                 "both": row[6],
                 "imap_only": max(row[4] - row[6], 0),

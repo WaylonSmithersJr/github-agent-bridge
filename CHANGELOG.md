@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.65.0 (2026-10-05)
+
+### Features
+
+- **queue**: Persist per-attempt job runs
+  ([`57abdaa`](https://github.com/gisce/github-agent-bridge/commit/57abdaa173473652be4d837f78c0e76c2933a794))
+
+
 ## v0.64.0 (2026-10-03)
 
 ### Bug Fixes

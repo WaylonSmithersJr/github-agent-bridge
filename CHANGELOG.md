@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.68.1 (2026-10-05)
+
+### Bug Fixes
+
+- Harden webhook review request handling
+  ([`abe67a3`](https://github.com/gisce/github-agent-bridge/commit/abe67a35ed2989bed8430599175c9e1dce036ba0))
+
+- Support webhook review requests
+  ([`4ac8bea`](https://github.com/gisce/github-agent-bridge/commit/4ac8bea7e8c2752bd8917df12866d2a75d39246e))
+
+
 ## v0.68.0 (2026-10-05)
 
 

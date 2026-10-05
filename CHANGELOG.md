@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.67.1 (2026-10-05)
+
+### Bug Fixes
+
+- **dashboard**: Move update controls to system tab
+  ([`1abc43f`](https://github.com/gisce/github-agent-bridge/commit/1abc43f5bf8d87bef12796e8760444fa388c2344))
+
+
 ## v0.67.0 (2026-10-05)
 
 ### Bug Fixes

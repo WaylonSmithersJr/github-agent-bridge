@@ -76,7 +76,12 @@ def non_actionable_issue_comment_payload(*, comment_id: int = 5948901951) -> byt
     }).encode()
 
 
-def pull_request_review_payload(*, state: str, review_id: int = 4815162342) -> bytes:
+def pull_request_review_payload(
+    *,
+    state: str,
+    review_id: int = 4815162342,
+    sender: str = "pilipilisbot",
+) -> bytes:
     return json.dumps({
         "action": "submitted",
         "repository": {"full_name": "gisce/github-agent-bridge"},
@@ -91,7 +96,26 @@ def pull_request_review_payload(*, state: str, review_id: int = 4815162342) -> b
             "body": "Please address this.",
             "html_url": f"https://github.com/gisce/github-agent-bridge/pull/233#pullrequestreview-{review_id}",
         },
-        "sender": {"login": "pilipilisbot"},
+        "sender": {"login": sender},
+    }).encode()
+
+
+def commit_comment_payload(*, comment_id: int = 778899) -> bytes:
+    return json.dumps({
+        "action": "created",
+        "repository": {
+            "full_name": "gisce/github-agent-bridge",
+            "html_url": "https://github.com/gisce/github-agent-bridge",
+        },
+        "comment": {
+            "id": comment_id,
+            "body": "@giscebot investigate this",
+            "html_url": (
+                "https://github.com/gisce/github-agent-bridge/commit/abcdef123456"
+                f"#commitcomment-{comment_id}"
+            ),
+        },
+        "sender": {"login": "ecarreras"},
     }).encode()
 
 
@@ -113,7 +137,7 @@ def canary_policy(tmp_path):
     path = tmp_path / "policy.json"
     path.write_text(json.dumps({
         "trustedOrgs": ["gisce"],
-        "enabledRepos": ["gisce/github-agent-bridge"],
+        "webhookCanaryRepos": ["gisce/github-agent-bridge"],
         "botLogins": ["giscebot"],
         "actions": {"trustedAuto": ["reply_comment", "workflow_run_failed"]},
     }))
@@ -206,6 +230,9 @@ def test_webhook_canary_enqueues_enabled_actionable_repository_once(tmp_path):
             "issue_comment:created:gisce/github-agent-bridge:5948901951",
             "accepted",
         )
+        assert con.execute(
+            "SELECT enqueue_status,job_id FROM webhook_shadow_receipts"
+        ).fetchone() == ("enqueued", first.json()["job_id"])
 
 
 def test_webhook_canary_does_not_claim_non_actionable_comment_before_email(tmp_path, monkeypatch):
@@ -255,9 +282,12 @@ def test_webhook_canary_does_not_claim_non_actionable_comment_before_email(tmp_p
         ).fetchone()[0] == "email"
 
 
-def test_webhook_canary_ignores_repo_outside_enabled_repos(tmp_path):
+def test_webhook_canary_ignores_repo_outside_webhook_canary_repos(tmp_path):
     policy = canary_policy(tmp_path)
-    policy.write_text(json.dumps({"trustedOrgs": ["gisce"], "enabledRepos": ["gisce/other"]}))
+    policy.write_text(json.dumps({
+        "trustedOrgs": ["gisce"],
+        "webhookCanaryRepos": ["gisce/other"],
+    }))
     payload = actionable_issue_comment_payload()
     config = DashboardConfig(
         db=tmp_path / "bridge.sqlite3", require_auth=False,
@@ -271,6 +301,31 @@ def test_webhook_canary_ignores_repo_outside_enabled_repos(tmp_path):
     assert response.json()["enqueue_status"] == "outside_canary"
     with sqlite3.connect(config.db) as con:
         assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        assert con.execute(
+            "SELECT enqueue_status FROM webhook_shadow_receipts"
+        ).fetchone()[0] == "outside_canary"
+
+
+def test_webhook_canary_ignores_events_created_by_configured_bot(tmp_path):
+    payload = pull_request_review_payload(state="commented", sender="giscebot")
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False,
+        webhook_secrets=(SECRET,), webhook_mode="canary",
+        webhook_policy=canary_policy(tmp_path),
+    )
+
+    response = TestClient(create_app(config)).post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="review-by-bot", event="pull_request_review"),
+    )
+
+    assert response.json()["enqueue_status"] == "ignored_bot"
+    with sqlite3.connect(config.db) as con:
+        assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        assert con.execute(
+            "SELECT enqueue_status,job_id FROM webhook_shadow_receipts"
+        ).fetchone() == ("ignored_bot", None)
 
 
 def test_webhook_canary_enqueues_failed_workflow_run(tmp_path):
@@ -288,6 +343,9 @@ def test_webhook_canary_enqueues_failed_workflow_run(tmp_path):
     )
 
     assert response.json()["enqueue_status"] == "enqueued"
+    assert response.json()["event_key"] == (
+        "workflow_run:workflow_run_failed:gisce/github-agent-bridge:33123456789"
+    )
     with sqlite3.connect(config.db) as con:
         assert con.execute("SELECT action,work_key FROM jobs").fetchone() == (
             "workflow_run_failed",
@@ -312,6 +370,53 @@ def test_webhook_canary_ignores_successful_workflow_run(tmp_path):
     assert response.json()["enqueue_status"] == "ignored"
     with sqlite3.connect(config.db) as con:
         assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+
+
+def test_webhook_commit_comment_keeps_cross_source_identity(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "github_agent_bridge.queue.trigger_actor_details_for_enqueue",
+        lambda notification, ctx: None,
+    )
+    comment_id = 778899
+    payload = commit_comment_payload(comment_id=comment_id)
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False,
+        webhook_secrets=(SECRET,), webhook_mode="canary",
+        webhook_policy=canary_policy(tmp_path),
+    )
+    client = TestClient(create_app(config))
+
+    webhook = client.post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="commit-webhook", event="commit_comment"),
+    )
+    email_job, email_status = JobQueue(config.db).enqueue(
+        Notification(
+            uid=100,
+            message_id="<commit-email@github.com>",
+            subject="Re: commit comment",
+            from_addr="ecarreras <notifications@github.com>",
+            body=(
+                "@giscebot investigate this\n\n"
+                "https://github.com/gisce/github-agent-bridge/commit/abcdef123456"
+                f"#commitcomment-{comment_id}"
+            ),
+            auth={"spf": True, "dkim": True, "dmarc": True},
+        ),
+        Policy.from_file(config.webhook_policy),
+    )
+
+    expected = f"commit_comment:created:gisce/github-agent-bridge:{comment_id}"
+    assert webhook.json()["event_key"] == expected
+    assert webhook.json()["enqueue_status"] == "enqueued"
+    assert email_status == "duplicate"
+    assert email_job is not None
+    with sqlite3.connect(config.db) as con:
+        assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+        assert con.execute(
+            "SELECT event_key FROM ingest_receipts WHERE source='webhook'"
+        ).fetchone()[0] == expected
 
 
 def test_webhook_canary_ignores_approved_pull_request_reviews(tmp_path):
@@ -446,7 +551,12 @@ def test_dashboard_status_hides_webhook_tab_when_not_configured(tmp_path):
 
 def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tmp_path):
     db = tmp_path / "bridge.sqlite3"
-    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+    client = TestClient(create_app(DashboardConfig(
+        db=db,
+        require_auth=False,
+        webhook_secrets=(SECRET,),
+        webhook_coverage_grace_seconds=0,
+    )))
     ping = json.dumps({
         "zen": "Keep it logically awesome.",
         "hook": {
@@ -469,16 +579,26 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
     assert client.post("/api/webhooks/github", content=ping, headers=hook_headers(ping, delivery="ping-1", event="ping", hook_id="42")).status_code == 200
     assert client.post("/api/webhooks/github", content=delivery, headers=hook_headers(delivery, delivery="delivery-1", event="issue_comment", hook_id="42")).status_code == 200
     summary = client.get("/api/webhooks/github/summary").json()
-    assert summary == {
-        "mode": "shadow", "configured": True,
-        "receipts": {"observed": 1, "unsupported": 1},
-        "duplicate_deliveries": 0, "cross_source_matches": 0,
-        "totals": {"hooks": 1, "deliveries": 2},
-        "coverage": {
-            "both": 0, "imap_only": 0, "webhook_only": 1,
-            "imap_eligible": 0, "ratio": None, "mean_match_delay_ms": None,
-        },
+    assert summary["mode"] == "shadow"
+    assert summary["configured"] is True
+    assert summary["receipts"] == {"observed": 1, "unsupported": 1}
+    assert summary["duplicate_deliveries"] == 0
+    assert summary["cross_source_matches"] == 0
+    assert summary["enqueue"] == {}
+    assert summary["totals"] == {"hooks": 1, "deliveries": 2}
+    assert {
+        key: summary["coverage"][key]
+        for key in (
+            "both", "imap_only", "webhook_only", "imap_eligible", "ratio",
+            "mean_match_delay_ms", "grace_seconds",
+        )
+    } == {
+        "both": 0, "imap_only": 0, "webhook_only": 1,
+        "imap_eligible": 0, "ratio": None, "mean_match_delay_ms": None,
+        "grace_seconds": 0,
     }
+    assert summary["coverage"]["window_start"]
+    assert summary["coverage"]["window_end"]
     assert client.get("/api/webhooks/github/status").json() == summary
 
     hooks_response = client.get("/api/webhooks/github/hooks").json()
@@ -544,6 +664,73 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
     exceptions = client.get("/api/webhooks/github/exceptions").json()["exceptions"]
     assert {(item["kind"], item["reference"]) for item in exceptions} == {
         ("unmatchable", "ping-1"), ("webhook_only", "delivery-1"),
+    }
+
+
+def test_webhook_coverage_uses_comparable_window_keys_and_grace(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    now = datetime.now(UTC)
+    within_window = (now - timedelta(minutes=20)).isoformat()
+    rollout_start = (now - timedelta(hours=1)).isoformat()
+    too_recent = (now - timedelta(minutes=1)).isoformat()
+    too_old = (now - timedelta(days=40)).isoformat()
+    rows = [
+        ("matched", "issue_comment:created:gisce/repo:1", rollout_start),
+        ("webhook-only", "issue_comment:created:gisce/repo:2", within_window),
+        ("successful-workflow", "workflow_run:completed:gisce/repo:3", within_window),
+    ]
+    with sqlite3.connect(db) as con:
+        con.executemany(
+            "INSERT INTO webhook_shadow_receipts("
+            "delivery_id,event_name,action,event_key,repository,payload_hash,status,created_at"
+            ") VALUES(?,?,?,?,?,?,?,?)",
+            [
+                (
+                    delivery_id,
+                    "workflow_run" if delivery_id == "successful-workflow" else "issue_comment",
+                    "completed" if delivery_id == "successful-workflow" else "created",
+                    event_key, "gisce/repo", delivery_id, "observed", created_at,
+                )
+                for delivery_id, event_key, created_at in rows
+            ],
+        )
+        con.executemany(
+            "INSERT INTO ingest_receipts("
+            "source,source_key,payload_hash,event_key,status,created_at,updated_at"
+            ") VALUES('email',?,?,?,?,?,?)",
+            [
+                ("email-matched", "hash-1", "issue_comment:created:gisce/repo:1", "accepted", within_window, within_window),
+                ("email-only", "hash-2", "issue_comment:created:gisce/repo:4", "accepted", within_window, within_window),
+                ("email-recent", "hash-3", "issue_comment:created:gisce/repo:5", "accepted", too_recent, too_recent),
+                ("email-old", "hash-4", "issue_comment:created:gisce/repo:6", "accepted", too_old, too_old),
+                ("email-fallback", "hash-5", "email:<fallback@github.com>", "accepted", within_window, within_window),
+            ],
+        )
+    client = TestClient(create_app(DashboardConfig(
+        db=db,
+        require_auth=False,
+        webhook_secrets=(SECRET,),
+        webhook_coverage_grace_seconds=600,
+    )))
+
+    summary = client.get("/api/webhooks/github/summary").json()
+    exceptions = client.get("/api/webhooks/github/exceptions").json()
+
+    assert {
+        key: summary["coverage"][key]
+        for key in (
+            "both", "imap_only", "webhook_only", "imap_eligible", "ratio",
+            "grace_seconds",
+        )
+    } == {
+        "both": 1, "imap_only": 1, "webhook_only": 1,
+        "imap_eligible": 2, "ratio": 0.5,
+        "grace_seconds": 600,
+    }
+    assert {(item["kind"], item["event_key"]) for item in exceptions["exceptions"]} == {
+        ("imap_only", "issue_comment:created:gisce/repo:4"),
+        ("webhook_only", "issue_comment:created:gisce/repo:2"),
     }
 
 

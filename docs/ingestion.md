@@ -36,7 +36,7 @@ accepts a possible duplicate rather than risk dropping a legitimate action.
 2. **Shadow webhook (implemented):** verify signatures and persist shadow
    receipts, but do not create jobs or claim canonical events. Compare coverage
    and canonical keys with IMAP.
-3. **Canary dual ingest:** allow webhook enqueue only for `enabledRepos`.
+3. **Canary dual ingest:** allow webhook enqueue only for `webhookCanaryRepos`.
    The unique event key guarantees that the first source wins.
 4. **Webhook primary:** keep IMAP as a delayed fallback until a complete
    operational cycle has no unexplained IMAP-only actionable events.
@@ -133,19 +133,32 @@ any non-`created` action can enqueue a job.
 Set `GITHUB_AGENT_BRIDGE_WEBHOOK_MODE=canary` and point
 `GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY` at the reader/executor policy file. Canary
 mode converts only supported actionable deliveries into the common queue and
-requires their repository to be explicitly listed in `enabledRepos`; an empty
-allowlist enqueues nothing. IMAP continues unchanged. Both transports use the
-same canonical event key, so the first committed receipt wins and the second is
-recorded as a duplicate of the same job.
+requires their repository to be explicitly listed in `webhookCanaryRepos`; an
+empty allowlist enqueues nothing. This allowlist is deliberately separate from
+`enabledRepos`, which remains the hard scope for every transport, so narrowing
+the webhook canary does not deny IMAP work for other repositories. IMAP
+continues unchanged. Both transports use the same canonical event key, so the
+first committed receipt wins and the second is recorded as a duplicate of the
+same job.
 
 For enqueueing, the common queue transaction commits before the monitoring
-receipt. A crash in that narrow gap cannot lose work: GitHub retries the
+receipt. The receipt records the enqueue decision and linked job so canary
+behavior is auditable in the delivery explorer. A crash in that narrow gap
+cannot lose work: GitHub retries the
 delivery, the durable `ingest_receipts(source='webhook', source_key=<delivery>)`
 row makes the queue operation idempotent, and the retry repairs the monitoring
-receipt. `edited` comments/reviews, unsupported families, and repositories
-outside `enabledRepos` remain observational only. For `workflow_run.completed`,
+receipt. Events sent by a configured `botLogins` identity, `edited`
+comments/reviews, unsupported families, and repositories outside
+`webhookCanaryRepos` remain observational only. For `workflow_run.completed`,
 only runs with `conclusion: failure` enqueue work; successful and other
 conclusions remain observational.
+
+Coverage compares only canonical event families shared by both transports,
+starting at the first retained webhook receipt and ending before a configurable
+grace period. It excludes source-specific `email:*` fallbacks and historical
+IMAP receipts from before webhook observation began. Set
+`GITHUB_AGENT_BRIDGE_WEBHOOK_COVERAGE_GRACE_SECONDS` to change the default
+ten-minute grace period.
 
 Webhook enqueueing must not be enabled until recovery of persisted-but-
 unprocessed receipts and divergence metrics have been validated in production.

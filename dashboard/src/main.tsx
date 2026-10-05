@@ -78,6 +78,7 @@ type WebhookSummary = {
   receipts: Record<string, number>;
   duplicate_deliveries: number;
   cross_source_matches: number;
+  enqueue?: Record<string, number>;
   totals?: { hooks: number; deliveries: number };
   coverage?: {
     both: number;
@@ -86,6 +87,9 @@ type WebhookSummary = {
     imap_eligible: number;
     ratio?: number | null;
     mean_match_delay_ms?: number | null;
+    window_start?: string;
+    window_end?: string;
+    grace_seconds?: number;
   };
 };
 
@@ -162,6 +166,7 @@ type WebhookDeliveryFilters = {
   event_name: string;
   repository: string;
   result: string;
+  enqueue_status: string;
 };
 
 type WebhookDelivery = {
@@ -172,6 +177,8 @@ type WebhookDelivery = {
   action?: string | null;
   repository?: string | null;
   status: string;
+  enqueue_status?: string | null;
+  job_id?: number | null;
   event_key?: string | null;
   duplicate_count?: number;
   hook?: {
@@ -971,7 +978,7 @@ function App() {
   const [knowledgeStatus, setKnowledgeStatus] = React.useState("proposed");
   const [webhookSection, setWebhookSection] = React.useState<WebhookSection>("overview");
   const [webhookDeliveryFilters, setWebhookDeliveryFilters] = React.useState<WebhookDeliveryFilters>({
-    hook_id: "", event_name: "", repository: "", result: "",
+    hook_id: "", event_name: "", repository: "", result: "", enqueue_status: "",
   });
   const [webhookWindow, setWebhookWindow] = React.useState(() => webhookMonitoringWindow());
   const [autoupdateAction, setAutoupdateAction] = React.useState<"refresh" | "apply" | "complete" | null>(null);
@@ -1790,7 +1797,7 @@ function WebhookPage({
   ];
   return (
     <section className="grid gap-4">
-      <PageTitle icon={<Activity className="h-5 w-5 text-muted" aria-hidden />} title="GitHub webhooks" subtitle={summary?.mode === "canary" ? "Canary ingestion health. Only enabled repositories may create jobs." : "Shadow ingestion health. Deliveries are observed but do not create jobs."} action={<RefreshButton onClick={onRefresh} />} />
+      <PageTitle icon={<Activity className="h-5 w-5 text-muted" aria-hidden />} title="GitHub webhooks" subtitle={summary?.mode === "canary" ? "Canary ingestion health. Only the webhook canary allowlist may create jobs." : "Shadow ingestion health. Deliveries are observed but do not create jobs."} action={<RefreshButton onClick={onRefresh} />} />
       {error ? <Banner tone="error" text={error.message} /> : null}
       <div className="flex max-w-full flex-wrap rounded-md border border-border bg-white p-1" role="tablist" aria-label="Webhook dashboard section">
         {sections.map((item) => <button key={item.id} type="button" role="tab" aria-label={item.count === undefined ? item.label : `${item.label} (${item.count} total)`} aria-selected={section === item.id} className={cn("inline-flex h-8 items-center gap-2 rounded px-3 text-sm font-semibold", section === item.id ? "bg-primary text-white" : "text-muted hover:bg-slate-50 hover:text-foreground")} onClick={() => onSectionChange(item.id)}>{item.label}{item.count !== undefined ? <span className="rounded border border-current/30 px-1 font-mono text-[10px]">{item.count}</span> : null}</button>)}
@@ -1815,7 +1822,9 @@ function WebhookPage({
             <MiniStat label="Webhook only" value={summary?.coverage?.webhook_only ?? 0} />
             <MiniStat label="Coverage" value={summary?.coverage?.ratio == null ? "not measurable" : `${Math.round(summary.coverage.ratio * 100)}%`} />
           </div>
+          {summary?.coverage?.window_start && summary.coverage.window_end ? <p className="mt-3 font-mono text-xs text-muted">Comparable canonical events from {summary.coverage.window_start} to {summary.coverage.window_end}; newest {summary.coverage.grace_seconds ?? 0}s excluded.</p> : null}
         </Panel>
+        {Object.keys(summary?.enqueue ?? {}).length ? <Panel title="Canary ingestion decisions"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{Object.entries(summary?.enqueue ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => <MiniStat key={state} label={state} value={count} />)}</div></Panel> : null}
         <Panel title="Exceptions requiring review">
           {exceptions?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Type</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Reference</th><th className="px-3 py-2">Observed</th></tr></thead><tbody>{exceptions.map((item) => <tr key={`${item.kind}:${item.reference}`} className="border-b border-border/70 last:border-0"><td className="px-3 py-2 font-semibold">{item.kind}</td><td className="px-3 py-2 font-mono text-xs">{item.repository ?? "unknown"}</td><td className="px-3 py-2 font-mono text-xs">{item.event_key ?? item.reference}</td><td className="px-3 py-2 font-mono text-xs text-muted">{item.created_at}</td></tr>)}</tbody></table></div> : <EmptyState text="No cross-source exceptions in retained data." />}
         </Panel>
@@ -1837,12 +1846,13 @@ function WebhookDeliveryFiltersForm({ filters, onChange }: { filters: WebhookDel
     { key: "event_name", label: "Event", placeholder: "issue_comment" },
     { key: "repository", label: "Repository", placeholder: "gisce/repository" },
     { key: "result", label: "Result", placeholder: "observed" },
+    { key: "enqueue_status", label: "Ingestion", placeholder: "enqueued" },
   ];
-  return <div className="grid gap-2 border-b border-border p-3 sm:grid-cols-2 xl:grid-cols-4">{fields.map((field) => <label key={field.key} className="grid gap-1 text-xs font-semibold text-muted">{field.label}<input className="h-9 rounded-md border border-border bg-white px-2 font-mono text-xs text-foreground" value={filters[field.key]} placeholder={field.placeholder} onChange={(event) => onChange({ ...filters, [field.key]: event.target.value })} /></label>)}</div>;
+  return <div className="grid gap-2 border-b border-border p-3 sm:grid-cols-2 xl:grid-cols-5">{fields.map((field) => <label key={field.key} className="grid gap-1 text-xs font-semibold text-muted">{field.label}<input className="h-9 rounded-md border border-border bg-white px-2 font-mono text-xs text-foreground" value={filters[field.key]} placeholder={field.placeholder} onChange={(event) => onChange({ ...filters, [field.key]: event.target.value })} /></label>)}</div>;
 }
 
 function WebhookDeliveriesTable({ deliveries, onViewHook }: { deliveries: WebhookDelivery[]; onViewHook: (hookId: string) => void }) {
-  return <table className="w-full min-w-[980px] text-left text-sm"><thead><tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted"><th className="px-3 py-2">Received</th><th className="px-3 py-2">Hook</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3 font-mono text-xs text-muted">{delivery.created_at}</td><td className="px-3 py-3">{delivery.hook_id ? <button type="button" className="text-left text-primary hover:underline" onClick={() => onViewHook(delivery.hook_id!)}><span className="block font-semibold">{delivery.hook?.target ?? `Hook #${delivery.hook_id}`}</span><span className="font-mono text-xs">#{delivery.hook_id}</span></button> : <span className="text-xs text-muted">Unknown (legacy)</span>}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span>{delivery.duplicate_count ? <span className="ml-2 font-mono text-xs text-muted">{delivery.duplicate_count} retries</span> : null}</td><td className="max-w-[14rem] truncate px-3 py-3 font-mono text-xs text-muted" title={delivery.delivery_id}>{delivery.delivery_id}</td></tr>)}</tbody></table>;
+  return <table className="w-full min-w-[1120px] text-left text-sm"><thead><tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted"><th className="px-3 py-2">Received</th><th className="px-3 py-2">Hook</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Ingestion</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3 font-mono text-xs text-muted">{delivery.created_at}</td><td className="px-3 py-3">{delivery.hook_id ? <button type="button" className="text-left text-primary hover:underline" onClick={() => onViewHook(delivery.hook_id!)}><span className="block font-semibold">{delivery.hook?.target ?? `Hook #${delivery.hook_id}`}</span><span className="font-mono text-xs">#{delivery.hook_id}</span></button> : <span className="text-xs text-muted">Unknown (legacy)</span>}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span>{delivery.duplicate_count ? <span className="ml-2 font-mono text-xs text-muted">{delivery.duplicate_count} retries</span> : null}</td><td className="px-3 py-3">{delivery.enqueue_status ? <><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.enqueue_status}</span>{delivery.job_id ? <a className="ml-2 font-mono text-xs font-semibold text-primary hover:underline" href={`/jobs/${delivery.job_id}`}>Job #{delivery.job_id}</a> : null}</> : <span className="text-xs text-muted">shadow</span>}</td><td className="max-w-[14rem] truncate px-3 py-3 font-mono text-xs text-muted" title={delivery.delivery_id}>{delivery.delivery_id}</td></tr>)}</tbody></table>;
 }
 
 function LazyScrollFrame({ noun, hasMore, loading, onLoadMore, children, className }: { noun: string; hasMore: boolean; loading: boolean; onLoadMore?: () => void; children: React.ReactNode; className?: string }) {

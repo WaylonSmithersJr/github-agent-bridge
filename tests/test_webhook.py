@@ -100,6 +100,26 @@ def pull_request_review_payload(
     }).encode()
 
 
+def pull_request_review_requested_payload(
+    *,
+    pr_id: int = 1829195123,
+    requested_reviewer: str = "giscebot",
+    sender: str = "ecarreras",
+) -> bytes:
+    return json.dumps({
+        "action": "review_requested",
+        "repository": {"full_name": "gisce/github-agent-bridge"},
+        "pull_request": {
+            "id": pr_id,
+            "number": 233,
+            "title": "feat: enable guarded webhook canary ingestion",
+            "html_url": "https://github.com/gisce/github-agent-bridge/pull/233",
+        },
+        "requested_reviewer": {"login": requested_reviewer},
+        "sender": {"login": sender},
+    }).encode()
+
+
 def commit_comment_payload(*, comment_id: int = 778899) -> bytes:
     return json.dumps({
         "action": "created",
@@ -201,6 +221,24 @@ def test_webhook_shadow_accepts_previous_rotation_secret(tmp_path):
     )))
 
     assert client.post("/api/webhooks/github", content=payload, headers=signed_headers(payload)).status_code == 200
+
+
+def test_webhook_shadow_records_pull_request_review_requested_as_supported(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    payload = pull_request_review_requested_payload()
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+
+    response = client.post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="review-requested", event="pull_request"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "observed"
+    assert response.json()["event_key"] == (
+        "pull_request:review_requested:gisce/github-agent-bridge:1829195123:giscebot"
+    )
 
 
 def test_webhook_canary_enqueues_enabled_actionable_repository_once(tmp_path):
@@ -326,6 +364,68 @@ def test_webhook_canary_ignores_events_created_by_configured_bot(tmp_path):
         assert con.execute(
             "SELECT enqueue_status,job_id FROM webhook_shadow_receipts"
         ).fetchone() == ("ignored_bot", None)
+
+
+def test_webhook_canary_enqueues_pull_request_review_requested_for_configured_bot(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "github_agent_bridge.queue.trigger_actor_details_for_enqueue",
+        lambda notification, ctx: None,
+    )
+    policy = canary_policy(tmp_path)
+    policy.write_text(json.dumps({
+        "trustedOrgs": ["gisce"],
+        "webhookCanaryRepos": ["gisce/github-agent-bridge"],
+        "botLogins": ["giscebot"],
+        "actions": {"trustedAuto": ["submit_review"]},
+    }))
+    payload = pull_request_review_requested_payload()
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False,
+        webhook_secrets=(SECRET,), webhook_mode="canary",
+        webhook_policy=policy,
+    )
+
+    response = TestClient(create_app(config)).post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="review-requested", event="pull_request"),
+    )
+
+    assert response.json()["enqueue_status"] == "enqueued"
+    assert response.json()["job_id"]
+    with sqlite3.connect(config.db) as con:
+        assert con.execute("SELECT action,work_intent,work_key FROM jobs").fetchone() == (
+            "submit_review",
+            "review_only",
+            "gisce/github-agent-bridge#233",
+        )
+
+
+def test_webhook_canary_ignores_pull_request_review_requested_for_other_reviewer(tmp_path):
+    policy = canary_policy(tmp_path)
+    policy.write_text(json.dumps({
+        "trustedOrgs": ["gisce"],
+        "webhookCanaryRepos": ["gisce/github-agent-bridge"],
+        "botLogins": ["giscebot"],
+        "actions": {"trustedAuto": ["submit_review"]},
+    }))
+    payload = pull_request_review_requested_payload(requested_reviewer="someone-else")
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False,
+        webhook_secrets=(SECRET,), webhook_mode="canary",
+        webhook_policy=policy,
+    )
+
+    response = TestClient(create_app(config)).post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="review-requested-other", event="pull_request"),
+    )
+
+    assert response.json()["status"] == "observed"
+    assert response.json()["enqueue_status"] == "ignored"
+    with sqlite3.connect(config.db) as con:
+        assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
 
 
 def test_webhook_canary_enqueues_failed_workflow_run(tmp_path):

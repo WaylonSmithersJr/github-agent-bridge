@@ -143,7 +143,9 @@ receipt. A crash in that narrow gap cannot lose work: GitHub retries the
 delivery, the durable `ingest_receipts(source='webhook', source_key=<delivery>)`
 row makes the queue operation idempotent, and the retry repairs the monitoring
 receipt. `edited` comments/reviews, unsupported families, and repositories
-outside `enabledRepos` remain observational only.
+outside `enabledRepos` remain observational only. For `workflow_run.completed`,
+only runs with `conclusion: failure` enqueue work; successful and other
+conclusions remain observational.
 
 Webhook enqueueing must not be enabled until recovery of persisted-but-
 unprocessed receipts and divergence metrics have been validated in production.

@@ -28,6 +28,7 @@ import {
   formatRuntimeUsageSeconds,
   groupSessionEvents,
   groupTranscriptEntries,
+  hasActionableAutoupdate,
   isKnowledgePath,
   isMcpPath,
   isRetryableStatus,
@@ -116,9 +117,10 @@ describe("dashboard routing and API query helpers", () => {
 
   it("shows a knowledge badge when proposed rules need moderation", () => {
     const onNavigate = vi.fn();
-    const { rerender } = render(<SectionNav isDashboardRoute={true} isSystemRoute={false} isKnowledgeRoute={false} isMcpRoute={false} knowledgeBadgeCount={2} />);
+    const { rerender } = render(<SectionNav isDashboardRoute={true} isSystemRoute={false} isKnowledgeRoute={false} isMcpRoute={false} knowledgeBadgeCount={2} systemUpdateAvailable />);
 
     expect(screen.getByRole("link", { name: /Knowledge/i })).toContainElement(screen.getByLabelText("2 proposed knowledge items"));
+    expect(screen.getByRole("link", { name: /System/i })).toContainElement(screen.getByLabelText("System update available"));
     expect(screen.getByRole("link", { name: /Jobs/i })).toHaveClass("bg-primary");
     expect(screen.getByRole("link", { name: /System/i })).not.toHaveClass("bg-primary");
     expect(screen.getByRole("link", { name: /MCP/i })).not.toHaveClass("bg-primary");
@@ -1111,6 +1113,64 @@ describe("autoupdate notice", () => {
     classification: { risk: "executor_or_queue", migration_files: [], risky_files: ["src/github_agent_bridge/queue.py"] },
     warnings: [],
   };
+
+  it("treats only non-noop releases as actionable", () => {
+    expect(hasActionableAutoupdate(updateState)).toBe(true);
+    expect(hasActionableAutoupdate({ ...updateState, decision: "noop" })).toBe(false);
+    expect(hasActionableAutoupdate({ ...updateState, target: undefined })).toBe(false);
+  });
+
+  it("keeps update attention on System and renders update controls only there", async () => {
+    window.history.replaceState({}, "", "/");
+    class ResizeObserverMock {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    const jsonResponse = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+    const emptyMetrics = {
+      db_exists: true,
+      status_counts: {},
+      by_repo: {},
+      by_action: {},
+      by_intent: {},
+      by_created_day: {},
+      runtime_usage: { day: [], month: [] },
+      runtime_seconds: { median: null, p90: null, p99: null },
+      queue_wait_seconds: { median: null, p90: null, p99: null },
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/metrics/summary")) return jsonResponse({ metrics: emptyMetrics });
+      if (path === "/api/status") return jsonResponse({ service: "github-agent-bridge-dashboard", read_only: false, admin_actions: [], autoupdate: updateState });
+      if (path === "/api/me") return jsonResponse({ user: { login: "operator", avatar_url: "", html_url: "", is_admin: true } });
+      if (path === "/api/about") return jsonResponse({ service: "github-agent-bridge", version: "0.67.0", repository_url: "https://github.com/gisce/github-agent-bridge" });
+      if (path === "/api/web-push/config") return jsonResponse({ configured: false, public_key: "", status: { enabled: false, subscriptions: [] } });
+      if (path === "/api/jobs/actors") return jsonResponse({ actors: [] });
+      if (path.startsWith("/api/jobs?")) return jsonResponse({ jobs: [] });
+      if (path === "/api/processes") return jsonResponse({ running_jobs: [], executor: { service: "bridge", pid: null, children: [] }, signals: { live_process: { state: "idle", child_count: 0 }, process_activity: { state: "idle", idle_seconds: null, sample_ts: null }, semantic_progress: [], visible_progress: [] }, alerts: [], samples: [], detail: "" });
+      if (path === "/api/systemd") return jsonResponse({ available: true, units: [], errors: [] });
+      if (path === "/api/alerts") return jsonResponse({ alerts: [] });
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
+
+    const systemLink = await screen.findByRole("link", { name: /System/ });
+    expect(systemLink).toContainElement(await screen.findByLabelText("System update available"));
+    expect(screen.queryByLabelText("Update available")).not.toBeInTheDocument();
+
+    await user.click(systemLink);
+
+    expect(await screen.findByLabelText("Update available")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /apply update/i })).toBeInTheDocument();
+
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllGlobals();
+  });
 
   it("shows release impact only to admins", () => {
     const { rerender } = render(<AutoupdateNotice state={updateState} isAdmin={false} />);

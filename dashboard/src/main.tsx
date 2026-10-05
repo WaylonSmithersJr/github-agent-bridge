@@ -1261,6 +1261,7 @@ function App() {
 
   const counts = metrics.data?.metrics.status_counts ?? {};
   const jobRows = jobs.data?.jobs ?? [];
+  const systemUpdateAvailable = Boolean(me.data?.user?.is_admin && hasActionableAutoupdate(dashboardStatus.data?.autoupdate));
   const applyFilters = React.useCallback((nextFilters: JobFilters) => {
     setFilters(nextFilters);
     setJobLimit(initialJobLimit);
@@ -1306,7 +1307,7 @@ function App() {
       </header>
 
       <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-3 py-4 sm:px-4 md:px-6 md:py-5">
-        <SectionNav isDashboardRoute={isDashboardRoute} isSystemRoute={isSystemRoute} isKnowledgeRoute={isKnowledgeRoute} isMcpRoute={isMcpRoute} isWebhooksRoute={isWebhooksRoute} showWebhooks={Boolean(me.data?.user?.is_admin && dashboardStatus.data?.webhook_configured)} knowledgeBadgeCount={dashboardStatus.data?.metrics?.knowledge?.proposed ?? 0} onNavigate={navigateDashboard} />
+        <SectionNav isDashboardRoute={isDashboardRoute} isSystemRoute={isSystemRoute} isKnowledgeRoute={isKnowledgeRoute} isMcpRoute={isMcpRoute} isWebhooksRoute={isWebhooksRoute} showWebhooks={Boolean(me.data?.user?.is_admin && dashboardStatus.data?.webhook_configured)} knowledgeBadgeCount={dashboardStatus.data?.metrics?.knowledge?.proposed ?? 0} systemUpdateAvailable={systemUpdateAvailable} onNavigate={navigateDashboard} />
         <WebPushToast notification={inAppPush} onDismiss={() => setInAppPush(null)} onNavigate={navigateDashboard} />
         {jobRouteId !== null ? (
           <JobDetailPage
@@ -1392,25 +1393,7 @@ function App() {
             />
           )
         ) : isSystemRoute ? (
-          <SystemPage
-            processes={processes.data}
-            processesLoading={processes.isLoading}
-            processesError={processes.error}
-            systemd={systemd.data}
-            systemdLoading={systemd.isLoading}
-            systemdError={systemd.error}
-            alerts={alerts.data?.alerts}
-            alertsLoading={alerts.isLoading}
-            alertsError={alerts.error}
-            now={now}
-            onRefreshProcesses={() => processes.refetch()}
-            onRefreshSystemd={() => systemd.refetch()}
-            onRefreshAlerts={() => alerts.refetch()}
-          />
-        ) : (
           <>
-            {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
-            {dashboardStatus.error ? <Banner tone="error" text={dashboardStatus.error.message} /> : null}
             <AutoupdateNotice
               state={dashboardStatus.data?.autoupdate}
               isAdmin={Boolean(me.data?.user?.is_admin)}
@@ -1420,6 +1403,26 @@ function App() {
               onApply={() => runAutoupdateAction("apply")}
               onCompletePending={() => runAutoupdateAction("complete")}
             />
+            <SystemPage
+              processes={processes.data}
+              processesLoading={processes.isLoading}
+              processesError={processes.error}
+              systemd={systemd.data}
+              systemdLoading={systemd.isLoading}
+              systemdError={systemd.error}
+              alerts={alerts.data?.alerts}
+              alertsLoading={alerts.isLoading}
+              alertsError={alerts.error}
+              now={now}
+              onRefreshProcesses={() => processes.refetch()}
+              onRefreshSystemd={() => systemd.refetch()}
+              onRefreshAlerts={() => alerts.refetch()}
+            />
+          </>
+        ) : (
+          <>
+            {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
+            {dashboardStatus.error ? <Banner tone="error" text={dashboardStatus.error.message} /> : null}
             <section className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Summary metrics">
               <Metric title="Pending" value={counts.pending ?? 0} icon={<Clock3 className="h-5 w-5" />} />
               <Metric title="Running" value={counts.running ?? 0} icon={<Activity className="h-5 w-5" />} />
@@ -1485,6 +1488,10 @@ function ProductMeta({ about }: { about: About | undefined }) {
   );
 }
 
+function hasActionableAutoupdate(state: AutoupdateState | undefined) {
+  return Boolean(state?.target?.tag_name?.trim() && state.decision !== "noop");
+}
+
 function AutoupdateNotice({
   state,
   isAdmin,
@@ -1502,9 +1509,9 @@ function AutoupdateNotice({
   onApply?: () => Promise<void> | void;
   onCompletePending?: () => Promise<void> | void;
 }) {
-  if (!state) return null;
+  if (!state || !hasActionableAutoupdate(state)) return null;
   const targetTag = state?.target?.tag_name?.trim();
-  if (!isAdmin || !targetTag || state?.decision === "noop") return null;
+  if (!isAdmin || !targetTag) return null;
   const decision = autoupdateDecisionLabel(state.decision);
   const activeTotal = state.queue?.active_total ?? 0;
   const risk = autoupdateRiskLabel(state.classification?.risk);
@@ -1669,6 +1676,7 @@ function SectionNav({
   isWebhooksRoute = false,
   showWebhooks = false,
   knowledgeBadgeCount = 0,
+  systemUpdateAvailable = false,
   onNavigate,
 }: {
   isDashboardRoute: boolean;
@@ -1678,6 +1686,7 @@ function SectionNav({
   isWebhooksRoute?: boolean;
   showWebhooks?: boolean;
   knowledgeBadgeCount?: number;
+  systemUpdateAvailable?: boolean;
   onNavigate?: (path: string) => void;
 }) {
   return (
@@ -1689,6 +1698,17 @@ function SectionNav({
       <SectionLink href="/system" active={isSystemRoute} onNavigate={onNavigate}>
         <Gauge className="h-4 w-4" aria-hidden />
         <span>System</span>
+        {systemUpdateAvailable ? (
+          <span
+            className={cn(
+              "inline-flex h-5 min-w-5 items-center justify-center rounded-full border px-1 font-mono text-[11px] leading-none",
+              isSystemRoute ? "border-white/40 bg-white/15 text-white" : "border-amber-200 bg-amber-100 text-amber-800",
+            )}
+            aria-label="System update available"
+          >
+            !
+          </span>
+        ) : null}
       </SectionLink>
       {showWebhooks ? (
         <SectionLink href="/webhooks" active={isWebhooksRoute} onNavigate={onNavigate}>
@@ -4437,6 +4457,7 @@ export {
   buildJobQuery,
   buildKnowledgeQuery,
   changelogMarkdown,
+  hasActionableAutoupdate,
   isKnowledgePath,
   isMcpPath,
   isSystemPath,

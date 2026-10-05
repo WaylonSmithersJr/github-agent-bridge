@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.67.0 (2026-10-05)
+
+### Bug Fixes
+
+- Classify failed webhook workflow runs
+  ([`e715f26`](https://github.com/gisce/github-agent-bridge/commit/e715f2644834916749b546d6f0edd7ccf0166d59))
+
+### Features
+
+- Enable guarded webhook canary ingestion
+  ([`095baaa`](https://github.com/gisce/github-agent-bridge/commit/095baaa5482fa73cfc4fb39052414fcdeb99478f))
+
+
 ## v0.66.0 (2026-10-05)
 
 ### Features

@@ -82,10 +82,11 @@ Multiple organizations and multiple hooks may use the same endpoint when each
 owner has its own entry in `GITHUB_AGENT_BRIDGE_WEBHOOK_SECRETS_BY_OWNER`.
 GitHub's `X-GitHub-Hook-ID` header keeps their inventory and activity separate.
 
-The endpoint stores only routing metadata, a SHA-256 payload hash, and the
-canonical event key in `webhook_shadow_receipts`; it deliberately stores no raw
-payload and never creates a queue job. The monitoring API is split so opening
-the overview does not load hook inventory or delivery history:
+The endpoint stores routing metadata, a SHA-256 payload hash, the canonical
+event key, and the verified JSON payload in `webhook_shadow_receipts`. The
+payload follows the same bounded retention as its receipt and is exposed only
+through the administrator-only delivery detail endpoint. The monitoring API is
+split so opening the overview does not load hook inventory or delivery history:
 
 - `GET /api/webhooks/github/summary` returns mode, receipt counts, retries, and
   cross-source coverage (`both`, `imap_only`, `webhook_only`) with an explicit
@@ -108,10 +109,15 @@ the overview does not load hook inventory or delivery history:
   cursor-paginated delivery page. Optional `hook_id`, `event_name`, `repository`,
   and `result` filters are applied server-side; every row includes the known
   hook identity so operators can navigate directly to its detail.
+- `GET /api/webhooks/github/deliveries/{delivery_id}` returns the retained full
+  JSON payload, its SHA-256 hash, delivery metadata, and the linked job summary
+  when ingestion created or coalesced into a job. Legacy receipts created before
+  payload retention return `payload: null`.
 
 The dashboard loads these resources lazily per tab, caches them separately, and
-appends cursor pages as the inventory or delivery list scrolls. Hook detail URLs
-are shareable under `/webhooks/hooks/{hook_id}` and link to GitHub's webhook
+appends cursor pages as the inventory or delivery list scrolls. Hook and
+delivery detail URLs are shareable under `/webhooks/hooks/{hook_id}` and
+`/webhooks/deliveries/{delivery_id}`; hook detail links to GitHub's webhook
 settings when the target is known.
 Here “operators” means users authorized as dashboard administrators through
 `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS` or
@@ -119,7 +125,7 @@ Here “operators” means users authorized as dashboard administrators through
 HTTP 403 to other authenticated users and HTTP 401 to unauthenticated users.
 Receipt details are retained for 30 days by default and pruned during ingestion;
 set `GITHUB_AGENT_BRIDGE_WEBHOOK_RETENTION_DAYS` to change that window. Raw
-payloads are never retained.
+payloads are pruned with their receipts.
 
 The maintained event inventory and support levels are in
 [`webhook-events.md`](webhook-events.md).

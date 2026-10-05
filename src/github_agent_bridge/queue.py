@@ -880,6 +880,7 @@ class JobQueue:
             "webhook_shadow_receipts": {
                 "duplicate_count": "INTEGER NOT NULL DEFAULT 0",
                 "hook_id": "TEXT",
+                "payload_json": "TEXT",
                 "enqueue_status": "TEXT",
                 "job_id": "INTEGER REFERENCES jobs(id) ON DELETE SET NULL",
             },

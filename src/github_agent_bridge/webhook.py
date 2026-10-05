@@ -180,10 +180,11 @@ def persist_shadow_delivery(
         )
         try:
             con.execute(
-                "INSERT INTO webhook_shadow_receipts(delivery_id,hook_id,event_name,action,event_key,repository,payload_hash,status,enqueue_status,job_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO webhook_shadow_receipts(delivery_id,hook_id,event_name,action,event_key,repository,payload_hash,payload_json,status,enqueue_status,job_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     delivery_id, hook_id, event_name, action, event_key, repo,
-                    payload_hash, status, enqueue_status, job_id, now,
+                    payload_hash, raw_payload.decode("utf-8"), status,
+                    enqueue_status, job_id, now,
                 ),
             )
         except sqlite3.IntegrityError:

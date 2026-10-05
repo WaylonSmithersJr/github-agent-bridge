@@ -11,7 +11,7 @@ from .parser import classify_github_action, classify_work_intent, extract_github
 from .policy import Policy
 from .session_correlation import session_id_for_job, session_id_for_job_attempt
 from . import feedback
-from .actors import trigger_actor_details_for_enqueue
+from .actors import trigger_actor_details_for_enqueue, trigger_actor_details_from_notification
 from .intent_classifier import ParserResult, classify_notification_with_llm, should_classify_with_llm
 
 SCHEMA_PACKAGE = "github_agent_bridge.sql"
@@ -167,7 +167,11 @@ class JobQueue:
         decision = policy.decision(n, ctx, action)
         status = {"auto": "done", "ask": "waiting_approval", "deny": "denied"}.get(decision, "pending")
         now = utc_now()
-        trigger_actor = trigger_actor_details_for_enqueue(n, ctx)
+        trigger_actor = (
+            trigger_actor_details_from_notification(n)
+            if source == "webhook"
+            else trigger_actor_details_for_enqueue(n, ctx)
+        )
         event_key = canonical_event_key(action, ctx, source, source_key)
         payload_hash = hashlib.sha256(n.body.encode("utf-8")).hexdigest()
         if trigger_actor and trigger_actor.user_id:

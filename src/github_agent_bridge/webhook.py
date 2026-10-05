@@ -55,6 +55,13 @@ def canonical_webhook_event_key(event_name: str, payload: dict[str, Any]) -> str
     if target_id and action:
         canonical_action = "created" if action in {"created", "submitted"} else action
         return f"{event_name}:{canonical_action}:{repo}:{target_id}"
+    if event_name == "pull_request" and action == "review_requested":
+        pull_request = payload.get("pull_request") or {}
+        pr_id = pull_request.get("id") if isinstance(pull_request, dict) else None
+        reviewer = payload.get("requested_reviewer") or {}
+        requested_login = str(reviewer.get("login") or "").lower() if isinstance(reviewer, dict) else ""
+        if pr_id and requested_login:
+            return f"pull_request:review_requested:{repo}:{pr_id}:{requested_login}"
     if event_name == "workflow_run":
         run = payload.get("workflow_run") or {}
         run_id = run.get("id")
@@ -81,6 +88,7 @@ def webhook_notification(
         ("issue_comment", "created"),
         ("pull_request_review_comment", "created"),
         ("pull_request_review", "submitted"),
+        ("pull_request", "review_requested"),
         ("commit_comment", "created"),
         ("workflow_run", "completed"),
     }:
@@ -92,10 +100,20 @@ def webhook_notification(
     subject = payload.get("pull_request") or payload.get("issue") or payload.get("workflow_run") or {}
     number = subject.get("number") if isinstance(subject, dict) else None
     source = (
-        payload.get("comment") or payload.get("review") or payload.get("workflow_run") or {}
+        payload.get("comment")
+        or payload.get("review")
+        or payload.get("workflow_run")
+        or (payload.get("pull_request") if event_name == "pull_request" else None)
+        or {}
     )
     if not isinstance(source, dict):
         return None
+    if event_name == "pull_request":
+        reviewer = payload.get("requested_reviewer") if isinstance(payload.get("requested_reviewer"), dict) else {}
+        requested_login = str(reviewer.get("login") or "").lower()
+        configured_logins = {login.lower().lstrip("@") for login in (bot_logins or set())}
+        if requested_login not in configured_logins:
+            return None
     if event_name == "workflow_run":
         conclusion = str(source.get("conclusion") or "").lower()
         if conclusion != "failure":
@@ -107,11 +125,12 @@ def webhook_notification(
     url = str(source.get("html_url") or subject.get("html_url") or repository.get("html_url") or "")
     if not url.startswith("https://github.com/"):
         return None
-    body = (
-        "Workflow run failed (conclusion: failure)."
-        if event_name == "workflow_run"
-        else str(source.get("body") or "")
-    )
+    if event_name == "workflow_run":
+        body = "Workflow run failed (conclusion: failure)."
+    elif event_name == "pull_request":
+        body = "Review requested."
+    else:
+        body = str(source.get("body") or "")
     sender = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
     login = str(sender.get("login") or "GitHub")
     title = str(subject.get("title") or subject.get("name") or event_name)

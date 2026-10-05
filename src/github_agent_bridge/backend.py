@@ -277,6 +277,7 @@ class DashboardConfig:
         webhook_coverage_grace_seconds: int | None = None,
         webhook_mode: str | None = None,
         webhook_policy: str | Path | None = None,
+        webhook_primary_ack: bool | None = None,
     ) -> None:
         self.db = Path(db).expanduser()
         self.secret_key = secret_key or os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_SECRET_KEY", "")
@@ -309,14 +310,21 @@ class DashboardConfig:
             ),
         )
         self.webhook_mode = (webhook_mode or os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_MODE", "shadow")).lower()
-        if self.webhook_mode not in {"shadow", "canary"}:
-            raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_MODE must be shadow or canary")
+        if self.webhook_mode not in {"shadow", "canary", "primary"}:
+            raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_MODE must be shadow, canary, or primary")
         policy_value = _expand_systemd_home_specifier(
             str(webhook_policy or os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY", ""))
         )
         self.webhook_policy = Path(policy_value).expanduser() if policy_value else None
-        if self.webhook_mode == "canary" and self.webhook_policy is None:
-            raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY is required in canary mode")
+        if self.webhook_mode in {"canary", "primary"} and self.webhook_policy is None:
+            raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY is required in canary or primary mode")
+        self.webhook_primary_ack = (
+            webhook_primary_ack
+            if webhook_primary_ack is not None
+            else os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_PRIMARY_ACK", "").lower() in {"1", "true", "yes"}
+        )
+        if self.webhook_mode == "primary" and not self.webhook_primary_ack:
+            raise ValueError("primary webhook mode requires GITHUB_AGENT_BRIDGE_WEBHOOK_PRIMARY_ACK=true")
 
     @property
     def oauth_ready(self) -> bool:
@@ -826,12 +834,12 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         ensure_webhook_schema()
         enqueue_status = None
         job_id = None
-        if config.webhook_mode == "canary":
+        if config.webhook_mode in {"canary", "primary"}:
             policy = Policy.from_file(config.webhook_policy)
             repo = str(full_name or "").lower()
             sender = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
             sender_login = str(sender.get("login") or "").lower()
-            if repo not in policy.webhook_canary_repos:
+            if config.webhook_mode == "canary" and repo not in policy.webhook_canary_repos:
                 enqueue_status = "outside_canary"
             elif sender_login in policy.bot_logins:
                 enqueue_status = "ignored_bot"

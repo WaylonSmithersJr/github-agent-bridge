@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Notification, utc_now
+from .parser import classify_github_action
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,8 @@ class ShadowReceipt:
     event_key: str | None
     repository: str | None
     status: str
+    enqueue_status: str | None
+    job_id: int | None
 
 
 def verify_signature(payload: bytes, signature: str, secrets: tuple[str, ...]) -> bool:
@@ -52,11 +55,23 @@ def canonical_webhook_event_key(event_name: str, payload: dict[str, Any]) -> str
     if target_id and action:
         canonical_action = "created" if action in {"created", "submitted"} else action
         return f"{event_name}:{canonical_action}:{repo}:{target_id}"
+    if event_name == "pull_request" and action == "review_requested":
+        pull_request = payload.get("pull_request") or {}
+        pr_id = pull_request.get("id") if isinstance(pull_request, dict) else None
+        reviewer = payload.get("requested_reviewer") or {}
+        requested_login = str(reviewer.get("login") or "").lower() if isinstance(reviewer, dict) else ""
+        if pr_id and requested_login:
+            return f"pull_request:review_requested:{repo}:{pr_id}:{requested_login}"
     if event_name == "workflow_run":
         run = payload.get("workflow_run") or {}
         run_id = run.get("id")
         if run_id and action:
-            return f"workflow_run:{action}:{repo}:{run_id}"
+            canonical_action = (
+                "workflow_run_failed"
+                if action == "completed" and str(run.get("conclusion") or "").lower() == "failure"
+                else action
+            )
+            return f"workflow_run:{canonical_action}:{repo}:{run_id}"
     return None
 
 
@@ -64,6 +79,8 @@ def webhook_notification(
     event_name: str,
     delivery_id: str,
     payload: dict[str, Any],
+    *,
+    bot_logins: set[str] | None = None,
 ) -> Notification | None:
     """Translate actionable webhook payloads into the transport-neutral queue input."""
     action = str(payload.get("action") or "")
@@ -71,6 +88,7 @@ def webhook_notification(
         ("issue_comment", "created"),
         ("pull_request_review_comment", "created"),
         ("pull_request_review", "submitted"),
+        ("pull_request", "review_requested"),
         ("commit_comment", "created"),
         ("workflow_run", "completed"),
     }:
@@ -82,27 +100,42 @@ def webhook_notification(
     subject = payload.get("pull_request") or payload.get("issue") or payload.get("workflow_run") or {}
     number = subject.get("number") if isinstance(subject, dict) else None
     source = (
-        payload.get("comment") or payload.get("review") or payload.get("workflow_run") or {}
+        payload.get("comment")
+        or payload.get("review")
+        or payload.get("workflow_run")
+        or (payload.get("pull_request") if event_name == "pull_request" else None)
+        or {}
     )
     if not isinstance(source, dict):
         return None
+    if event_name == "pull_request":
+        reviewer = payload.get("requested_reviewer") if isinstance(payload.get("requested_reviewer"), dict) else {}
+        requested_login = str(reviewer.get("login") or "").lower()
+        configured_logins = {login.lower().lstrip("@") for login in (bot_logins or set())}
+        if requested_login not in configured_logins:
+            return None
     if event_name == "workflow_run":
         conclusion = str(source.get("conclusion") or "").lower()
         if conclusion != "failure":
             return None
+    if event_name == "pull_request_review":
+        review_state = str(source.get("state") or "").lower()
+        if review_state not in {"changes_requested", "commented"}:
+            return None
     url = str(source.get("html_url") or subject.get("html_url") or repository.get("html_url") or "")
     if not url.startswith("https://github.com/"):
         return None
-    body = (
-        "Workflow run failed (conclusion: failure)."
-        if event_name == "workflow_run"
-        else str(source.get("body") or "")
-    )
+    if event_name == "workflow_run":
+        body = "Workflow run failed (conclusion: failure)."
+    elif event_name == "pull_request":
+        body = "Review requested."
+    else:
+        body = str(source.get("body") or "")
     sender = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
     login = str(sender.get("login") or "GitHub")
     title = str(subject.get("title") or subject.get("name") or event_name)
     suffix = f" (#{number})" if number else ""
-    return Notification(
+    notification = Notification(
         uid=None,
         message_id=f"<{delivery_id}@github.com>",
         subject=f"[{repo}] {title}{suffix}",
@@ -110,6 +143,14 @@ def webhook_notification(
         body=f"{body}\n\n{url}",
         auth={"spf": True, "dkim": True, "dmarc": True},
     )
+    if event_name != "workflow_run" and classify_github_action(
+        notification.subject,
+        notification.body,
+        bot_logins,
+        message_id=notification.message_id,
+    ) == "archive_notification":
+        return None
+    return notification
 
 
 def persist_shadow_delivery(
@@ -120,6 +161,8 @@ def persist_shadow_delivery(
     raw_payload: bytes,
     hook_id: str | None = None,
     retention_days: int = 30,
+    enqueue_status: str | None = None,
+    job_id: int | None = None,
 ) -> ShadowReceipt:
     payload = json.loads(raw_payload)
     action = str(payload.get("action") or "") or None
@@ -137,17 +180,19 @@ def persist_shadow_delivery(
         )
         try:
             con.execute(
-                "INSERT INTO webhook_shadow_receipts(delivery_id,hook_id,event_name,action,event_key,repository,payload_hash,payload_json,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO webhook_shadow_receipts(delivery_id,hook_id,event_name,action,event_key,repository,payload_hash,payload_json,status,enqueue_status,job_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     delivery_id, hook_id, event_name, action, event_key, repo,
-                    payload_hash, raw_payload.decode("utf-8"), status, now,
+                    payload_hash, raw_payload.decode("utf-8"), status,
+                    enqueue_status, job_id, now,
                 ),
             )
         except sqlite3.IntegrityError:
             con.rollback()
             con.execute(
-                "UPDATE webhook_shadow_receipts SET duplicate_count=duplicate_count+1 WHERE delivery_id=?",
-                (delivery_id,),
+                "UPDATE webhook_shadow_receipts SET duplicate_count=duplicate_count+1,"
+                "enqueue_status=COALESCE(enqueue_status,?),job_id=COALESCE(job_id,?) WHERE delivery_id=?",
+                (enqueue_status, job_id, delivery_id),
             )
             status = "duplicate"
         if hook_id:
@@ -201,4 +246,6 @@ def persist_shadow_delivery(
         con.commit()
     finally:
         con.close()
-    return ShadowReceipt(delivery_id, event_name, action, event_key, repo, status)
+    return ShadowReceipt(
+        delivery_id, event_name, action, event_key, repo, status, enqueue_status, job_id,
+    )

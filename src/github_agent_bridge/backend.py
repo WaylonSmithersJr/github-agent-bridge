@@ -73,6 +73,21 @@ PROJECT_REPOSITORY_URL = "https://github.com/gisce/github-agent-bridge"
 SESSION_VERSION = 1
 WEBHOOK_TIMESERIES_MAX_DAYS = 366
 WEBHOOK_TIMESERIES_MAX_HOURLY_DAYS = 31
+WEBHOOK_COVERAGE_EVENT_GLOBS = (
+    "issue_comment:created:*",
+    "pull_request_review_comment:created:*",
+    "pull_request_review:created:*",
+    "commit_comment:created:*",
+    "workflow_run:workflow_run_failed:*",
+)
+
+
+def _expand_systemd_home_specifier(value: str) -> str:
+    if value == "%h":
+        return str(Path.home())
+    if value.startswith("%h/"):
+        return str(Path.home() / value[3:])
+    return value
 
 
 def _knowledge_actor(item: dict[str, Any]) -> str:
@@ -118,6 +133,26 @@ def _parse_webhook_datetime(value: str, parameter: str) -> datetime:
 
 def _webhook_datetime_value(value: datetime) -> str:
     return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _webhook_coverage_predicate(column: str) -> str:
+    return "(" + " OR ".join(f"{column} GLOB '{pattern}'" for pattern in WEBHOOK_COVERAGE_EVENT_GLOBS) + ")"
+
+
+def _webhook_coverage_window(
+    con: sqlite3.Connection,
+    *,
+    retention_days: int,
+    grace_seconds: int,
+) -> tuple[str, str]:
+    end = datetime.now(UTC) - timedelta(seconds=grace_seconds)
+    start = end - timedelta(days=retention_days)
+    first = con.execute("SELECT MIN(created_at) FROM webhook_shadow_receipts").fetchone()[0]
+    if first:
+        start = max(start, _parse_webhook_datetime(str(first), "webhook_created_at"))
+    if start > end:
+        start = end
+    return _webhook_datetime_value(start), _webhook_datetime_value(end)
 
 
 def _encode_webhook_delivery_cursor(created_at: str, delivery_id: str) -> str:
@@ -211,6 +246,8 @@ def _webhook_delivery_payload(row: sqlite3.Row) -> dict[str, Any]:
         "event_key": row["event_key"],
         "repository": row["repository"],
         "status": row["status"],
+        "enqueue_status": row["enqueue_status"],
+        "job_id": row["job_id"],
         "duplicate_count": row["duplicate_count"],
         "created_at": row["created_at"],
     }
@@ -237,6 +274,7 @@ class DashboardConfig:
         webhook_secrets_by_owner: dict[str, tuple[str, ...]] | None = None,
         webhook_max_bytes: int | None = None,
         webhook_retention_days: int | None = None,
+        webhook_coverage_grace_seconds: int | None = None,
         webhook_mode: str | None = None,
         webhook_policy: str | Path | None = None,
         webhook_primary_ack: bool | None = None,
@@ -263,13 +301,23 @@ class DashboardConfig:
         self.webhook_secrets_by_owner = webhook_secrets_by_owner if webhook_secrets_by_owner is not None else _webhook_secrets_by_owner_env()
         self.webhook_max_bytes = webhook_max_bytes or int(os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_MAX_BYTES", "1048576"))
         self.webhook_retention_days = webhook_retention_days or int(os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_RETENTION_DAYS", "30"))
+        self.webhook_coverage_grace_seconds = max(
+            0,
+            (
+                webhook_coverage_grace_seconds
+                if webhook_coverage_grace_seconds is not None
+                else int(os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_COVERAGE_GRACE_SECONDS", "600"))
+            ),
+        )
         self.webhook_mode = (webhook_mode or os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_MODE", "shadow")).lower()
         if self.webhook_mode not in {"shadow", "canary", "primary"}:
             raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_MODE must be shadow, canary, or primary")
-        policy_value = webhook_policy or os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY", "")
+        policy_value = _expand_systemd_home_specifier(
+            str(webhook_policy or os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY", ""))
+        )
         self.webhook_policy = Path(policy_value).expanduser() if policy_value else None
-        if self.webhook_mode != "shadow" and self.webhook_policy is None:
-            raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY is required outside shadow mode")
+        if self.webhook_mode in {"canary", "primary"} and self.webhook_policy is None:
+            raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY is required in canary or primary mode")
         self.webhook_primary_ack = (
             webhook_primary_ack
             if webhook_primary_ack is not None
@@ -788,17 +836,27 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         job_id = None
         if config.webhook_mode in {"canary", "primary"}:
             policy = Policy.from_file(config.webhook_policy)
-            notification = webhook_notification(event_name, delivery_id, payload)
             repo = str(full_name or "").lower()
-            if notification is None:
-                enqueue_status = "ignored"
-            elif config.webhook_mode == "canary" and repo not in policy.enabled_repos:
+            sender = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
+            sender_login = str(sender.get("login") or "").lower()
+            if config.webhook_mode == "canary" and repo not in policy.webhook_canary_repos:
                 enqueue_status = "outside_canary"
+            elif sender_login in policy.bot_logins:
+                enqueue_status = "ignored_bot"
             else:
-                job, enqueue_status = JobQueue(config.db).ingest(
-                    notification, policy, source="webhook", source_key=delivery_id,
+                notification = webhook_notification(
+                    event_name,
+                    delivery_id,
+                    payload,
+                    bot_logins=policy.bot_logins,
                 )
-                job_id = job.id if job else None
+                if notification is None:
+                    enqueue_status = "ignored"
+                else:
+                    job, enqueue_status = JobQueue(config.db).ingest(
+                        notification, policy, source="webhook", source_key=delivery_id,
+                    )
+                    job_id = job.id if job else None
         receipt = persist_shadow_delivery(
             config.db,
             delivery_id=delivery_id,
@@ -806,6 +864,8 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             raw_payload=raw_payload,
             hook_id=hook_id,
             retention_days=config.webhook_retention_days,
+            enqueue_status=enqueue_status,
+            job_id=job_id,
         )
         response = {
             "mode": config.webhook_mode,
@@ -821,51 +881,74 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     def github_webhook_shadow_summary(_: dict[str, Any] = Depends(current_admin_profile)) -> dict[str, Any]:
         ensure_webhook_schema()
         with sqlite3.connect(config.db) as con:
-            row = con.execute(
-                "WITH receipt_summary AS ("
-                " SELECT SUM(CASE WHEN status='observed' THEN 1 ELSE 0 END) observed,"
-                " SUM(CASE WHEN status='unsupported' THEN 1 ELSE 0 END) unsupported,"
-                " COALESCE(SUM(duplicate_count),0) duplicate_deliveries"
-                " FROM webhook_shadow_receipts"
-                "), cross_source AS ("
-                " SELECT COUNT(DISTINCT w.event_key) matches FROM webhook_shadow_receipts w"
-                " WHERE w.event_key IS NOT NULL AND EXISTS ("
-                "  SELECT 1 FROM ingest_receipts i WHERE i.event_key=w.event_key"
-                " )"
-                "), coverage AS ("
-                " SELECT "
-                "  (SELECT COUNT(DISTINCT event_key) FROM ingest_receipts WHERE source='email' AND event_key IS NOT NULL) imap_events,"
-                "  (SELECT COUNT(DISTINCT event_key) FROM webhook_shadow_receipts WHERE event_key IS NOT NULL) webhook_events,"
-                "  COUNT(DISTINCT i.event_key) both_events,"
-                "  AVG(ABS((julianday(w.created_at)-julianday(i.created_at))*86400000.0)) match_delay_ms"
-                " FROM ingest_receipts i JOIN webhook_shadow_receipts w ON w.event_key=i.event_key"
-                " WHERE i.source='email'"
-                "), inventory AS ("
-                " SELECT (SELECT COUNT(*) FROM webhook_hooks) hooks,"
-                "        (SELECT COUNT(*) FROM webhook_shadow_receipts) deliveries"
-                ") SELECT COALESCE(observed,0),COALESCE(unsupported,0),"
-                "duplicate_deliveries,matches,imap_events,webhook_events,both_events,match_delay_ms,hooks,deliveries "
-                "FROM receipt_summary CROSS JOIN cross_source CROSS JOIN coverage CROSS JOIN inventory"
+            con.row_factory = sqlite3.Row
+            window_start, window_end = _webhook_coverage_window(
+                con,
+                retention_days=config.webhook_retention_days,
+                grace_seconds=config.webhook_coverage_grace_seconds,
+            )
+            receipt = con.execute(
+                "SELECT COALESCE(SUM(CASE WHEN status='observed' THEN 1 ELSE 0 END),0) observed,"
+                "COALESCE(SUM(CASE WHEN status='unsupported' THEN 1 ELSE 0 END),0) unsupported,"
+                "COALESCE(SUM(duplicate_count),0) duplicate_deliveries FROM webhook_shadow_receipts"
             ).fetchone()
+            coverage = con.execute(
+                "WITH email_events AS ("
+                " SELECT event_key,MIN(created_at) created_at FROM ingest_receipts"
+                f" WHERE source='email' AND julianday(created_at)>=julianday(?) AND julianday(created_at)<=julianday(?) AND {_webhook_coverage_predicate('event_key')}"
+                " GROUP BY event_key"
+                "), webhook_events AS ("
+                " SELECT event_key,MIN(created_at) created_at FROM webhook_shadow_receipts"
+                f" WHERE julianday(created_at)>=julianday(?) AND julianday(created_at)<=julianday(?) AND {_webhook_coverage_predicate('event_key')}"
+                " GROUP BY event_key"
+                ") SELECT"
+                " (SELECT COUNT(*) FROM email_events) imap_events,"
+                " (SELECT COUNT(*) FROM webhook_events) webhook_events,"
+                " (SELECT COUNT(*) FROM email_events JOIN webhook_events USING(event_key)) both_events,"
+                " (SELECT AVG(ABS((julianday(w.created_at)-julianday(i.created_at))*86400000.0))"
+                "  FROM email_events i JOIN webhook_events w USING(event_key)) match_delay_ms",
+                (window_start, window_end, window_start, window_end),
+            ).fetchone()
+            inventory = con.execute(
+                "SELECT (SELECT COUNT(*) FROM webhook_hooks) hooks,"
+                "(SELECT COUNT(*) FROM webhook_shadow_receipts) deliveries"
+            ).fetchone()
+            enqueue = {
+                str(row["enqueue_status"]): int(row["count"])
+                for row in con.execute(
+                    "SELECT enqueue_status,COUNT(*) count FROM webhook_shadow_receipts "
+                    "WHERE enqueue_status IS NOT NULL GROUP BY enqueue_status"
+                )
+            }
         counts = {
             name: count
-            for name, count in (("observed", row[0]), ("unsupported", row[1]))
+            for name, count in (("observed", receipt["observed"]), ("unsupported", receipt["unsupported"]))
             if count
         }
         return {
             "mode": config.webhook_mode,
             "configured": bool(config.webhook_secrets or config.webhook_secrets_by_owner),
             "receipts": counts,
-            "duplicate_deliveries": row[2],
-            "cross_source_matches": row[3],
-            "totals": {"hooks": row[8], "deliveries": row[9]},
+            "duplicate_deliveries": receipt["duplicate_deliveries"],
+            "cross_source_matches": coverage["both_events"],
+            "enqueue": enqueue,
+            "totals": {"hooks": inventory["hooks"], "deliveries": inventory["deliveries"]},
             "coverage": {
-                "both": row[6],
-                "imap_only": max(row[4] - row[6], 0),
-                "webhook_only": max(row[5] - row[6], 0),
-                "imap_eligible": row[4],
-                "ratio": (row[6] / row[4]) if row[4] else None,
-                "mean_match_delay_ms": round(row[7], 1) if row[7] is not None else None,
+                "both": coverage["both_events"],
+                "imap_only": max(coverage["imap_events"] - coverage["both_events"], 0),
+                "webhook_only": max(coverage["webhook_events"] - coverage["both_events"], 0),
+                "imap_eligible": coverage["imap_events"],
+                "ratio": (
+                    coverage["both_events"] / coverage["imap_events"]
+                    if coverage["imap_events"] else None
+                ),
+                "mean_match_delay_ms": (
+                    round(coverage["match_delay_ms"], 1)
+                    if coverage["match_delay_ms"] is not None else None
+                ),
+                "window_start": window_start,
+                "window_end": window_end,
+                "grace_seconds": config.webhook_coverage_grace_seconds,
             },
         }
 
@@ -878,23 +961,43 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         ensure_webhook_schema()
         with sqlite3.connect(config.db) as con:
             con.row_factory = sqlite3.Row
+            window_start, window_end = _webhook_coverage_window(
+                con,
+                retention_days=config.webhook_retention_days,
+                grace_seconds=config.webhook_coverage_grace_seconds,
+            )
             rows = con.execute(
-                "WITH candidates AS ("
+                "WITH email_events AS ("
+                " SELECT event_key,source_key,created_at FROM ingest_receipts"
+                f" WHERE source='email' AND julianday(created_at)>=julianday(?) AND julianday(created_at)<=julianday(?) AND {_webhook_coverage_predicate('event_key')}"
+                "), webhook_events AS ("
+                " SELECT event_key,delivery_id,created_at,repository FROM webhook_shadow_receipts"
+                f" WHERE julianday(created_at)>=julianday(?) AND julianday(created_at)<=julianday(?) AND {_webhook_coverage_predicate('event_key')}"
+                "), candidates AS ("
                 " SELECT 'imap_only' kind,i.event_key,i.source_key reference,i.created_at,NULL repository "
-                " FROM ingest_receipts i WHERE i.event_key IS NOT NULL AND i.source='email' AND NOT EXISTS ("
-                "  SELECT 1 FROM webhook_shadow_receipts w WHERE w.event_key=i.event_key"
+                " FROM email_events i WHERE NOT EXISTS ("
+                "  SELECT 1 FROM webhook_events w WHERE w.event_key=i.event_key"
                 " ) UNION ALL "
                 " SELECT 'webhook_only',w.event_key,w.delivery_id,w.created_at,w.repository "
-                " FROM webhook_shadow_receipts w WHERE w.event_key IS NOT NULL AND NOT EXISTS ("
-                "  SELECT 1 FROM ingest_receipts i WHERE i.event_key=w.event_key"
+                " FROM webhook_events w WHERE NOT EXISTS ("
+                "  SELECT 1 FROM email_events i WHERE i.event_key=w.event_key"
                 " ) UNION ALL "
                 " SELECT 'unmatchable',NULL,w.delivery_id,w.created_at,w.repository "
                 " FROM webhook_shadow_receipts w WHERE w.event_key IS NULL"
+                " AND julianday(w.created_at)>=julianday(?) AND julianday(w.created_at)<=julianday(?)"
                 ") SELECT kind,event_key,reference,created_at,repository FROM candidates "
                 "ORDER BY created_at DESC LIMIT ?",
-                (limit,),
+                (
+                    window_start, window_end, window_start, window_end,
+                    window_start, window_end, limit,
+                ),
             ).fetchall()
-        return {"exceptions": [dict(row) for row in rows]}
+        return {
+            "exceptions": [dict(row) for row in rows],
+            "window_start": window_start,
+            "window_end": window_end,
+            "grace_seconds": config.webhook_coverage_grace_seconds,
+        }
 
     @app.get("/api/webhooks/github/timeseries")
     def github_webhook_shadow_timeseries(
@@ -991,6 +1094,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             ).fetchone()
             recent = con.execute(
                 "SELECT r.delivery_id,r.hook_id,r.event_name,r.action,r.event_key,r.repository,r.status,"
+                "r.enqueue_status,r.job_id,"
                 "r.duplicate_count,r.created_at,h.target hook_target,h.target_type hook_target_type "
                 "FROM webhook_shadow_receipts r LEFT JOIN webhook_hooks h ON h.hook_id=r.hook_id "
                 "WHERE r.hook_id=? ORDER BY r.created_at DESC,r.delivery_id DESC LIMIT 20",
@@ -1014,6 +1118,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         event_name: str | None = Query(None),
         repository: str | None = Query(None),
         result: str | None = Query(None),
+        enqueue_status: str | None = Query(None),
         _: dict[str, Any] = Depends(current_admin_profile),
     ) -> dict[str, Any]:
         ensure_webhook_schema()
@@ -1028,6 +1133,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             ("r.event_name", event_name),
             ("r.repository", repository),
             ("r.status", result),
+            ("r.enqueue_status", enqueue_status),
         ):
             if value:
                 clauses.append(f"{column}=?")
@@ -1038,6 +1144,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             con.row_factory = sqlite3.Row
             delivery_rows = con.execute(
                 "SELECT r.delivery_id,r.hook_id,r.event_name,r.action,r.event_key,r.repository,r.status,"
+                "r.enqueue_status,r.job_id,"
                 "r.duplicate_count,r.created_at,h.target hook_target,h.target_type hook_target_type "
                 f"FROM webhook_shadow_receipts r LEFT JOIN webhook_hooks h ON h.hook_id=r.hook_id {where} "
                 "ORDER BY r.created_at DESC,r.delivery_id DESC LIMIT ?",
@@ -1062,14 +1169,14 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             con.row_factory = sqlite3.Row
             row = con.execute(
                 "SELECT r.delivery_id,r.hook_id,r.event_name,r.action,r.event_key,r.repository,r.status,"
-                "r.duplicate_count,r.created_at,r.payload_hash,r.payload_json,"
+                "r.enqueue_status,r.duplicate_count,r.created_at,r.payload_hash,r.payload_json,"
                 "h.target hook_target,h.target_type hook_target_type,"
                 "j.id job_id,j.work_key job_work_key,j.status job_status,j.action job_action,"
                 "j.decision job_decision,j.work_intent job_work_intent,j.updated_at job_updated_at "
                 "FROM webhook_shadow_receipts r "
                 "LEFT JOIN webhook_hooks h ON h.hook_id=r.hook_id "
                 "LEFT JOIN ingest_receipts i ON i.source='webhook' AND i.source_key=r.delivery_id "
-                "LEFT JOIN jobs j ON j.id=i.job_id WHERE r.delivery_id=?",
+                "LEFT JOIN jobs j ON j.id=COALESCE(r.job_id,i.job_id) WHERE r.delivery_id=?",
                 (delivery_id,),
             ).fetchone()
         if row is None:

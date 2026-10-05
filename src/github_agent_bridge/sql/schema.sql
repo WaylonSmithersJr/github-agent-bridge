@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS webhook_shadow_receipts (
   payload_hash TEXT NOT NULL,
   payload_json TEXT,
   status TEXT NOT NULL CHECK(status IN ('observed','duplicate','unsupported')),
+  enqueue_status TEXT,
+  job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
   duplicate_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );

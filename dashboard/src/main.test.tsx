@@ -28,6 +28,7 @@ import {
   formatRuntimeUsageSeconds,
   groupSessionEvents,
   groupTranscriptEntries,
+  hasActionableAutoupdate,
   isKnowledgePath,
   isMcpPath,
   isRetryableStatus,
@@ -124,9 +125,10 @@ describe("dashboard routing and API query helpers", () => {
 
   it("shows a knowledge badge when proposed rules need moderation", () => {
     const onNavigate = vi.fn();
-    const { rerender } = render(<SectionNav isDashboardRoute={true} isSystemRoute={false} isKnowledgeRoute={false} isMcpRoute={false} knowledgeBadgeCount={2} />);
+    const { rerender } = render(<SectionNav isDashboardRoute={true} isSystemRoute={false} isKnowledgeRoute={false} isMcpRoute={false} knowledgeBadgeCount={2} systemUpdateAvailable />);
 
     expect(screen.getByRole("link", { name: /Knowledge/i })).toContainElement(screen.getByLabelText("2 proposed knowledge items"));
+    expect(screen.getByRole("link", { name: /System/i })).toContainElement(screen.getByLabelText("System update available"));
     expect(screen.getByRole("link", { name: /Jobs/i })).toHaveClass("bg-primary");
     expect(screen.getByRole("link", { name: /System/i })).not.toHaveClass("bg-primary");
     expect(screen.getByRole("link", { name: /MCP/i })).not.toHaveClass("bg-primary");
@@ -150,7 +152,7 @@ describe("dashboard routing and API query helpers", () => {
   });
 
   it("renders the webhook status exported by the backend", () => {
-    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, totals: { hooks: 143, deliveries: 912 } }} timeseries={[]} section="overview" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore={false} deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={vi.fn()} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
+    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, totals: { hooks: 143, deliveries: 912 } }} timeseries={[]} section="overview" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore={false} deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "", enqueue_status: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={vi.fn()} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
 
     expect(screen.getByRole("heading", { name: "GitHub webhooks" })).toBeInTheDocument();
     expect(screen.getByText("shadow")).toBeInTheDocument();
@@ -166,8 +168,8 @@ describe("dashboard routing and API query helpers", () => {
     const onViewHook = vi.fn();
     const summary = { mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, totals: { hooks: 101, deliveries: 912 } };
     const hooks = [{ id: "42", target: "gisce", target_type: "organization" as const, active: true, events: ["issue_comment"], status: "receiving" as const, last_ping_at: "2026-10-02T10:00:00Z", last_event_at: "2026-10-02T10:05:00Z" }];
-    const deliveries = [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", hook_id: "42", hook: { id: "42", target: "gisce", target_type: "organization" as const }, event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }];
-    const common = { summary, summaryLoading: false, sectionLoading: false, loadingMore: false, hasMore: false, deliveryFilters: { hook_id: "", event_name: "", repository: "", result: "" }, error: null, onSectionChange, onLoadMore: vi.fn(), onDeliveryFiltersChange: vi.fn(), onViewHook, onRefresh: vi.fn() };
+    const deliveries = [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", hook_id: "42", hook: { id: "42", target: "gisce", target_type: "organization" as const }, event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed", enqueue_status: "enqueued", job_id: 81 }];
+    const common = { summary, summaryLoading: false, sectionLoading: false, loadingMore: false, hasMore: false, deliveryFilters: { hook_id: "", event_name: "", repository: "", result: "", enqueue_status: "" }, error: null, onSectionChange, onLoadMore: vi.fn(), onDeliveryFiltersChange: vi.fn(), onViewHook, onRefresh: vi.fn() };
     const { rerender } = render(<WebhookPage {...common} section="overview" />);
 
     expect(screen.getByRole("tab", { name: "Hooks (101 total)" })).toBeInTheDocument();
@@ -189,6 +191,8 @@ describe("dashboard routing and API query helpers", () => {
     expect(screen.getAllByText("issue_comment · created").length).toBeGreaterThan(0);
     expect(screen.getByText("gisce/github-agent-bridge")).toBeInTheDocument();
     expect(screen.getByText("#42")).toBeInTheDocument();
+    expect(screen.getByText("enqueued")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Job #81" })).toHaveAttribute("href", "/jobs/81");
   });
 
   it("shows sanitized hook configuration and recent delivery identity", () => {
@@ -223,7 +227,7 @@ describe("dashboard routing and API query helpers", () => {
       takeRecords() { return []; }
     }
     vi.stubGlobal("IntersectionObserver", ImmediateIntersectionObserver);
-    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: {}, duplicate_deliveries: 0, cross_source_matches: 0 }} hooks={[{ id: "42", target: "gisce", target_type: "organization", active: true, events: [], status: "quiet" }]} section="hooks" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={onLoadMore} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
+    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: {}, duplicate_deliveries: 0, cross_source_matches: 0 }} hooks={[{ id: "42", target: "gisce", target_type: "organization", active: true, events: [], status: "quiet" }]} section="hooks" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "", enqueue_status: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={onLoadMore} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
 
     await waitFor(() => expect(onLoadMore).toHaveBeenCalledTimes(1));
     vi.unstubAllGlobals();
@@ -1130,6 +1134,64 @@ describe("autoupdate notice", () => {
     classification: { risk: "executor_or_queue", migration_files: [], risky_files: ["src/github_agent_bridge/queue.py"] },
     warnings: [],
   };
+
+  it("treats only non-noop releases as actionable", () => {
+    expect(hasActionableAutoupdate(updateState)).toBe(true);
+    expect(hasActionableAutoupdate({ ...updateState, decision: "noop" })).toBe(false);
+    expect(hasActionableAutoupdate({ ...updateState, target: undefined })).toBe(false);
+  });
+
+  it("keeps update attention on System and renders update controls only there", async () => {
+    window.history.replaceState({}, "", "/");
+    class ResizeObserverMock {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    const jsonResponse = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+    const emptyMetrics = {
+      db_exists: true,
+      status_counts: {},
+      by_repo: {},
+      by_action: {},
+      by_intent: {},
+      by_created_day: {},
+      runtime_usage: { day: [], month: [] },
+      runtime_seconds: { median: null, p90: null, p99: null },
+      queue_wait_seconds: { median: null, p90: null, p99: null },
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/metrics/summary")) return jsonResponse({ metrics: emptyMetrics });
+      if (path === "/api/status") return jsonResponse({ service: "github-agent-bridge-dashboard", read_only: false, admin_actions: [], autoupdate: updateState });
+      if (path === "/api/me") return jsonResponse({ user: { login: "operator", avatar_url: "", html_url: "", is_admin: true } });
+      if (path === "/api/about") return jsonResponse({ service: "github-agent-bridge", version: "0.67.0", repository_url: "https://github.com/gisce/github-agent-bridge" });
+      if (path === "/api/web-push/config") return jsonResponse({ configured: false, public_key: "", status: { enabled: false, subscriptions: [] } });
+      if (path === "/api/jobs/actors") return jsonResponse({ actors: [] });
+      if (path.startsWith("/api/jobs?")) return jsonResponse({ jobs: [] });
+      if (path === "/api/processes") return jsonResponse({ running_jobs: [], executor: { service: "bridge", pid: null, children: [] }, signals: { live_process: { state: "idle", child_count: 0 }, process_activity: { state: "idle", idle_seconds: null, sample_ts: null }, semantic_progress: [], visible_progress: [] }, alerts: [], samples: [], detail: "" });
+      if (path === "/api/systemd") return jsonResponse({ available: true, units: [], errors: [] });
+      if (path === "/api/alerts") return jsonResponse({ alerts: [] });
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
+
+    const systemLink = await screen.findByRole("link", { name: /System/ });
+    expect(systemLink).toContainElement(await screen.findByLabelText("System update available"));
+    expect(screen.queryByLabelText("Update available")).not.toBeInTheDocument();
+
+    await user.click(systemLink);
+
+    expect(await screen.findByLabelText("Update available")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /apply update/i })).toBeInTheDocument();
+
+    window.history.replaceState({}, "", "/");
+    vi.unstubAllGlobals();
+  });
 
   it("shows release impact only to admins", () => {
     const { rerender } = render(<AutoupdateNotice state={updateState} isAdmin={false} />);

@@ -2,6 +2,60 @@
 
 <!-- version list -->
 
+## v0.68.1 (2026-10-05)
+
+### Bug Fixes
+
+- Harden webhook review request handling
+  ([`abe67a3`](https://github.com/gisce/github-agent-bridge/commit/abe67a35ed2989bed8430599175c9e1dce036ba0))
+
+- Support webhook review requests
+  ([`4ac8bea`](https://github.com/gisce/github-agent-bridge/commit/4ac8bea7e8c2752bd8917df12866d2a75d39246e))
+
+
+## v0.68.0 (2026-10-05)
+
+
+## v0.67.2 (2026-10-05)
+
+### Bug Fixes
+
+- Guard webhook canary enqueue semantics
+  ([`f6904d4`](https://github.com/gisce/github-agent-bridge/commit/f6904d4789c48b663054a55c5879f40c4133a420))
+
+- Harden webhook canary rollout gates
+  ([`3fae7bc`](https://github.com/gisce/github-agent-bridge/commit/3fae7bc0fd758c1552a983a3515e1476ffdd6e72))
+
+
+## v0.67.1 (2026-10-05)
+
+### Bug Fixes
+
+- **dashboard**: Move update controls to system tab
+  ([`1abc43f`](https://github.com/gisce/github-agent-bridge/commit/1abc43f5bf8d87bef12796e8760444fa388c2344))
+
+
+## v0.67.0 (2026-10-05)
+
+### Bug Fixes
+
+- Classify failed webhook workflow runs
+  ([`e715f26`](https://github.com/gisce/github-agent-bridge/commit/e715f2644834916749b546d6f0edd7ccf0166d59))
+
+### Features
+
+- Enable guarded webhook canary ingestion
+  ([`095baaa`](https://github.com/gisce/github-agent-bridge/commit/095baaa5482fa73cfc4fb39052414fcdeb99478f))
+
+
+## v0.66.0 (2026-10-05)
+
+### Features
+
+- **policy**: Publish and validate JSON schema
+  ([`6bc2619`](https://github.com/gisce/github-agent-bridge/commit/6bc26191a239f0b904c8ca25172da4be0cf2c54f))
+
+
 ## v0.65.0 (2026-10-05)
 
 ### Features

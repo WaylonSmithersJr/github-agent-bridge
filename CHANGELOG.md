@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.67.2 (2026-10-05)
+
+### Bug Fixes
+
+- Guard webhook canary enqueue semantics
+  ([`f6904d4`](https://github.com/gisce/github-agent-bridge/commit/f6904d4789c48b663054a55c5879f40c4133a420))
+
+- Harden webhook canary rollout gates
+  ([`3fae7bc`](https://github.com/gisce/github-agent-bridge/commit/3fae7bc0fd758c1552a983a3515e1476ffdd6e72))
+
+
 ## v0.67.1 (2026-10-05)
 
 ### Bug Fixes

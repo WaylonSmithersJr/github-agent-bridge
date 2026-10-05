@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.66.0 (2026-10-05)
+
+### Features
+
+- **policy**: Publish and validate JSON schema
+  ([`6bc2619`](https://github.com/gisce/github-agent-bridge/commit/6bc26191a239f0b904c8ca25172da4be0cf2c54f))
+
+
 ## v0.65.0 (2026-10-05)
 
 ### Features

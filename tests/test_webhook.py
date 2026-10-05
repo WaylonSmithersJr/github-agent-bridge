@@ -9,13 +9,29 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 
 from github_agent_bridge import backend
-from github_agent_bridge.backend import DashboardConfig, _encode_session, _sign, create_app
+from github_agent_bridge.backend import DashboardConfig, _encode_session, _sign, create_app, create_webhook_app
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
 
 
 SECRET = "test-secret"
+
+
+def test_dedicated_webhook_ingress_exposes_only_health_and_delivery(tmp_path):
+    client = TestClient(create_webhook_app(DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", webhook_secrets=(SECRET,),
+    )))
+    payload = issue_comment_payload()
+
+    assert client.get("/api/health").json() == {
+        "ok": True, "service": "github-agent-bridge-webhook-ingress",
+    }
+    assert client.post(
+        "/api/webhooks/github", content=payload, headers=signed_headers(payload),
+    ).json()["status"] == "observed"
+    assert client.get("/").status_code == 404
+    assert client.get("/api/webhooks/github/summary").status_code == 404
 
 
 def signed_headers(payload: bytes, *, delivery: str = "delivery-1", event: str = "issue_comment", secret: str = SECRET) -> dict[str, str]:

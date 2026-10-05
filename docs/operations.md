@@ -356,6 +356,16 @@ them in the viewer's local timezone from `Intl.DateTimeFormat`; hovering a
 rendered timestamp shows the UTC value.
 Production serves the static bundle from
 `src/github_agent_bridge/dashboard_static`.
+
+Public webhook ingestion should use the separate
+`github-agent-bridge-webhook.socket` and `github-agent-bridge-webhook.service`.
+The ingress app exposes only `GET /api/health` and
+`POST /api/webhooks/github`; dashboard, OAuth, monitoring and administration
+routes are deliberately absent. systemd owns `127.0.0.1:8766` and passes file
+descriptor 3 to Uvicorn, retaining queued TCP connections across short process
+restarts. Consequently a dashboard/UI deployment does not interrupt webhook
+delivery, and an ingress deployment has no connection-refused gap while the
+service is replaced.
 When VAPID keys are configured and the dashboard is exposed over HTTPS, signed-in
 users can enable the header bell control. The executor sends final `done` and
 `blocked` job notifications through those browser push subscriptions for the
@@ -509,6 +519,8 @@ restart errors so browser users see a short auto-refreshing maintenance page
 instead of nginx's generic "Bad Gateway" response while the dashboard service is
 restarting. A complete example is available in
 [`nginx-dashboard.conf`](nginx-dashboard.conf).
+The example routes the exact webhook path to the socket-activated ingress on
+port 8766 before the generic dashboard location.
 
 ```nginx
 location / {

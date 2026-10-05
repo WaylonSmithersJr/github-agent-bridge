@@ -7,6 +7,7 @@
   "properties": {
     "source": {"$ref": "#/$defs/source"}, "trustedRepos": {"$ref": "#/$defs/stringArray"},
     "trustedOrgs": {"$ref": "#/$defs/stringArray"}, "enabledRepos": {"$ref": "#/$defs/stringArray"},
+    "webhookCanaryRepos": {"$ref": "#/$defs/stringArray"},
     "botLogins": {"$ref": "#/$defs/stringArray"}, "repoRoutes": {"$ref": "#/$defs/routeMap"},
     "orgRoutes": {"$ref": "#/$defs/routeMap"}, "actions": {"$ref": "#/$defs/actions"},
     "repoRoles": {"$ref": "#/$defs/roleMap"}, "orgRoles": {"$ref": "#/$defs/roleMap"},

@@ -144,7 +144,7 @@ describe("dashboard routing and API query helpers", () => {
   });
 
   it("renders the webhook status exported by the backend", () => {
-    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, totals: { hooks: 143, deliveries: 912 } }} timeseries={[]} section="overview" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore={false} deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={vi.fn()} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
+    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, totals: { hooks: 143, deliveries: 912 } }} timeseries={[]} section="overview" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore={false} deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "", enqueue_status: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={vi.fn()} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
 
     expect(screen.getByRole("heading", { name: "GitHub webhooks" })).toBeInTheDocument();
     expect(screen.getByText("shadow")).toBeInTheDocument();
@@ -160,8 +160,8 @@ describe("dashboard routing and API query helpers", () => {
     const onViewHook = vi.fn();
     const summary = { mode: "shadow", configured: true, receipts: { observed: 7 }, duplicate_deliveries: 2, cross_source_matches: 3, totals: { hooks: 101, deliveries: 912 } };
     const hooks = [{ id: "42", target: "gisce", target_type: "organization" as const, active: true, events: ["issue_comment"], status: "receiving" as const, last_ping_at: "2026-10-02T10:00:00Z", last_event_at: "2026-10-02T10:05:00Z" }];
-    const deliveries = [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", hook_id: "42", hook: { id: "42", target: "gisce", target_type: "organization" as const }, event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }];
-    const common = { summary, summaryLoading: false, sectionLoading: false, loadingMore: false, hasMore: false, deliveryFilters: { hook_id: "", event_name: "", repository: "", result: "" }, error: null, onSectionChange, onLoadMore: vi.fn(), onDeliveryFiltersChange: vi.fn(), onViewHook, onRefresh: vi.fn() };
+    const deliveries = [{ delivery_id: "delivery-1", created_at: "2026-10-02T10:05:00Z", hook_id: "42", hook: { id: "42", target: "gisce", target_type: "organization" as const }, event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed", enqueue_status: "enqueued", job_id: 81 }];
+    const common = { summary, summaryLoading: false, sectionLoading: false, loadingMore: false, hasMore: false, deliveryFilters: { hook_id: "", event_name: "", repository: "", result: "", enqueue_status: "" }, error: null, onSectionChange, onLoadMore: vi.fn(), onDeliveryFiltersChange: vi.fn(), onViewHook, onRefresh: vi.fn() };
     const { rerender } = render(<WebhookPage {...common} section="overview" />);
 
     expect(screen.getByRole("tab", { name: "Hooks (101 total)" })).toBeInTheDocument();
@@ -183,6 +183,8 @@ describe("dashboard routing and API query helpers", () => {
     expect(screen.getAllByText("issue_comment · created").length).toBeGreaterThan(0);
     expect(screen.getByText("gisce/github-agent-bridge")).toBeInTheDocument();
     expect(screen.getByText("#42")).toBeInTheDocument();
+    expect(screen.getByText("enqueued")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Job #81" })).toHaveAttribute("href", "/jobs/81");
   });
 
   it("shows sanitized hook configuration and recent delivery identity", () => {
@@ -206,7 +208,7 @@ describe("dashboard routing and API query helpers", () => {
       takeRecords() { return []; }
     }
     vi.stubGlobal("IntersectionObserver", ImmediateIntersectionObserver);
-    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: {}, duplicate_deliveries: 0, cross_source_matches: 0 }} hooks={[{ id: "42", target: "gisce", target_type: "organization", active: true, events: [], status: "quiet" }]} section="hooks" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={onLoadMore} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
+    render(<WebhookPage summary={{ mode: "shadow", configured: true, receipts: {}, duplicate_deliveries: 0, cross_source_matches: 0 }} hooks={[{ id: "42", target: "gisce", target_type: "organization", active: true, events: [], status: "quiet" }]} section="hooks" summaryLoading={false} sectionLoading={false} loadingMore={false} hasMore deliveryFilters={{ hook_id: "", event_name: "", repository: "", result: "", enqueue_status: "" }} error={null} onSectionChange={vi.fn()} onLoadMore={onLoadMore} onDeliveryFiltersChange={vi.fn()} onViewHook={vi.fn()} onRefresh={vi.fn()} />);
 
     await waitFor(() => expect(onLoadMore).toHaveBeenCalledTimes(1));
     vi.unstubAllGlobals();

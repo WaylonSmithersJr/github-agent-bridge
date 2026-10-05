@@ -152,6 +152,7 @@ class Policy:
     trusted_repos: set[str] = field(default_factory=set)
     trusted_orgs: set[str] = field(default_factory=set)
     enabled_repos: set[str] = field(default_factory=set)
+    webhook_canary_repos: set[str] = field(default_factory=set)
     auto_actions: set[str] = field(default_factory=lambda: {"archive_notification"})
     ask_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue", "docs_update", "content_change"})
     trusted_auto_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"})
@@ -331,6 +332,7 @@ class Policy:
             trusted_repos={r.lower() for r in data.get("trustedRepos", [])},
             trusted_orgs={o.lower() for o in data.get("trustedOrgs", [])},
             enabled_repos={r.lower() for r in data.get("enabledRepos", [])},
+            webhook_canary_repos={r.lower() for r in data.get("webhookCanaryRepos", [])},
             auto_actions=set(actions.get("auto", ["archive_notification"])),
             ask_actions=set(actions.get("ask", ["reply_comment", "open_issue", "docs_update", "content_change"])),
             trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"])),

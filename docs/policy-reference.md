@@ -114,6 +114,7 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 | `trustedRepos` | array of strings | `[]` | Exact `owner/repo` names trusted for `trustedAuto` actions. Case-insensitive. |
 | `trustedOrgs` | array of strings | `[]` | GitHub org/user names trusted for all repos under that owner. Case-insensitive. |
 | `enabledRepos` | array of strings | `[]` | Optional hard allowlist/canary scope. If non-empty, all repos not listed here are denied before other checks. Case-insensitive. |
+| `webhookCanaryRepos` | array of strings | `[]` | Explicit webhook dual-ingest allowlist. Empty means no webhook delivery may enqueue. It does not narrow IMAP scope. |
 | `repoRoutes` | object | `{}` | Exact per-repo delivery routes. Takes precedence over `orgRoutes`. |
 | `orgRoutes` | object | `{}` | Per-owner delivery routes used when no `repoRoutes` entry matches. |
 | `repoRoles` | object | `{}` | Exact per-repo operating role. Takes precedence over `orgRoles`. |
@@ -256,6 +257,23 @@ Result:
 | `another-org/another-repo` | `deny`. |
 
 This is the preferred key for staged rollout from the legacy inbox worker to the bridge.
+
+## `webhookCanaryRepos`
+
+Independent fail-closed allowlist for webhook dual ingestion:
+
+```json
+{
+  "trustedOrgs": ["your-org"],
+  "enabledRepos": [],
+  "webhookCanaryRepos": ["your-org/your-repo"]
+}
+```
+
+`enabledRepos` still applies to every transport. `webhookCanaryRepos` adds a
+second check only to webhook ingestion, so selecting one webhook canary does
+not deny IMAP notifications from the rest of the trusted scope. Events from
+configured `botLogins` are observed but never enqueued through the webhook.
 
 ## `repoRoutes` and `orgRoutes`
 

@@ -25,6 +25,7 @@ def load_schema() -> str:
 SCHEMA = load_schema()
 ACTIVE_STATUSES = ("pending", "running", "waiting_approval")
 COALESCE_STATUSES = ("pending", "waiting_approval")
+ACK_RETRY_LIMIT = 2
 
 
 def semantic_event_identity(
@@ -67,6 +68,21 @@ def canonical_event_key(
     if repo and ctx.workflow_run_id:
         return f"workflow_run:{action}:{repo}:{ctx.workflow_run_id}"
     return f"{source}:{source_key}"
+
+
+def acknowledgement_target_key(ctx: GitHubContext) -> str:
+    """Return a stable identity for one GitHub reaction target."""
+    return json.dumps(
+        {
+            "repo": ctx.repo,
+            "issue_number": ctx.issue_number,
+            "comment_id": ctx.comment_id,
+            "review_comment_id": ctx.review_comment_id,
+            "review_id": ctx.review_id,
+            "commit_comment_id": ctx.commit_comment_id,
+        },
+        sort_keys=True,
+    )
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -247,6 +263,7 @@ class JobQueue:
                     else:
                         con.execute("UPDATE jobs SET coalesced_count=coalesced_count+1, uid=?, message_id=message_id, subject=?, context_json=?, updated_at=? WHERE id=?", (n.uid, n.subject, ctx.to_json(), now, existing["id"]))
                     self._log(con, existing["id"], ctx.work_key, "coalesced", "Notification coalesced into active job", n.message_id)
+                    self._queue_acknowledgement(con, int(existing["id"]), ctx, now)
                     con.execute(
                         "UPDATE github_events SET job_id=?,updated_at=? WHERE event_key=?",
                         (existing["id"], now, event_key),
@@ -282,6 +299,8 @@ class JobQueue:
                     (job_id, now, receipt_id),
                 )
                 self._log(con, job_id, ctx.work_key, "queued" if status == "pending" else status, f"decision={decision} action={action}", n.message_id)
+                if status == "pending":
+                    self._queue_acknowledgement(con, job_id, ctx, now)
                 con.commit()
                 if policy.feedback_learning.enabled:
                     feedback.capture_feedback(
@@ -299,6 +318,68 @@ class JobQueue:
                 con.rollback()
                 row = con.execute("SELECT * FROM jobs WHERE message_id=?", (n.message_id,)).fetchone()
                 return self._row_to_job(row) if row else None, "duplicate"
+
+    def claim_acknowledgement(self, job_id: int | None = None) -> tuple[int, int, GitHubContext] | None:
+        """Reserve one durable GitHub acknowledgement without claiming its job."""
+        now = utc_now()
+        with self.connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            job_filter = "AND a.job_id=?" if job_id is not None else ""
+            status_filter = "a.status IN ('pending','failed')" if job_id is not None else "a.status='pending'"
+            args = (ACK_RETRY_LIMIT, job_id) if job_id is not None else (ACK_RETRY_LIMIT,)
+            row = con.execute(
+                f"""SELECT a.id,a.job_id,a.context_json
+                FROM job_acknowledgements a
+                JOIN jobs j ON j.id=a.job_id
+                WHERE {status_filter} AND a.attempts < ?
+                AND j.status IN ('pending','running') {job_filter}
+                ORDER BY a.created_at,a.id LIMIT 1""",
+                args,
+            ).fetchone()
+            if row is None:
+                con.commit()
+                return None
+            con.execute(
+                "UPDATE job_acknowledgements SET status='processing',attempts=attempts+1,updated_at=? WHERE id=?",
+                (now, row["id"]),
+            )
+            con.commit()
+            return int(row["id"]), int(row["job_id"]), GitHubContext.from_json(row["context_json"])
+
+    def recover_acknowledgements(self) -> int:
+        """Release acknowledgements interrupted by an executor restart."""
+        now = utc_now()
+        with self.connect() as con:
+            cursor = con.execute(
+                "UPDATE job_acknowledgements SET status='pending',updated_at=? WHERE status='processing'",
+                (now,),
+            )
+            return cursor.rowcount
+
+    def finish_acknowledgement(self, acknowledgement_id: int, ok: bool, error: str | None = None) -> None:
+        now = utc_now()
+        with self.connect() as con:
+            con.execute(
+                "UPDATE job_acknowledgements SET status=?,last_error=?,updated_at=? WHERE id=?",
+                ("succeeded" if ok else "failed", None if ok else (error or "reaction failed")[:1000], now, acknowledgement_id),
+            )
+
+    def acknowledgement_ok(self, job_id: int) -> bool:
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT COUNT(*) AS total,SUM(status='succeeded') AS succeeded FROM job_acknowledgements WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+        return bool(row and row["total"] and row["total"] == row["succeeded"])
+
+    @staticmethod
+    def _queue_acknowledgement(con: sqlite3.Connection, job_id: int, ctx: GitHubContext, now: str) -> None:
+        con.execute(
+            """INSERT OR IGNORE INTO job_acknowledgements(
+            job_id,target_key,context_json,status,created_at,updated_at
+            ) VALUES(?,?,?,'pending',?,?)""",
+            (job_id, acknowledgement_target_key(ctx), ctx.to_json(), now, now),
+        )
 
     def quarantine_notification(
         self,
@@ -710,6 +791,12 @@ class JobQueue:
             self._session_event(con, job_id, row["work_key"], session_id, event_type, summary, detail)
             kind = "visible" if event_type.startswith("openclaw_") else "semantic"
             self._progress(con, job_id, row["work_key"], kind, event_type[:80], summary, detail)
+
+    def add_worklog(self, job_id: int, phase: str, summary: str, detail: str | None = None) -> None:
+        with self.connect() as con:
+            row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is not None:
+                self._log(con, job_id, row["work_key"], phase, summary, detail)
 
     def list_jobs(self, status: str | None = None, limit: int = 20) -> list[Job]:
         sql = "SELECT * FROM jobs"

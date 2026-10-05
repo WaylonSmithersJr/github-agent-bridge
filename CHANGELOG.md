@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.69.1 (2026-10-05)
+
+### Bug Fixes
+
+- Acknowledge queued jobs before dispatch
+  ([`b233b04`](https://github.com/gisce/github-agent-bridge/commit/b233b049f4a75d0592ec58350634853ce39d02d6))
+
+
 ## v0.69.0 (2026-10-05)
 
 

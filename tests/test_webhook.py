@@ -157,6 +157,19 @@ def test_webhook_canary_enqueues_enabled_actionable_repository_once(tmp_path):
     assert first.json()["enqueue_status"] == "enqueued"
     assert first.json()["job_id"]
     assert retry.json()["enqueue_status"] == "duplicate"
+    detail = client.get("/api/webhooks/github/deliveries/delivery-1").json()
+    assert detail["delivery"]["delivery_id"] == "delivery-1"
+    assert detail["payload"] == json.loads(payload)
+    assert detail["payload_hash"] == hashlib.sha256(payload).hexdigest()
+    assert detail["job"] == {
+        "id": first.json()["job_id"],
+        "work_key": "gisce/github-agent-bridge#191",
+        "status": "pending",
+        "action": "reply_comment",
+        "decision": "auto_trusted",
+        "work_intent": "work_allowed",
+        "updated_at": detail["job"]["updated_at"],
+    }
     with sqlite3.connect(config.db) as con:
         assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
         assert con.execute(
@@ -320,12 +333,15 @@ def test_webhook_status_requires_dashboard_admin(tmp_path):
     )
     assert {client.get(path).status_code for path in paths} == {401}
     assert client.get("/api/webhooks/github/hooks/42").status_code == 401
+    assert client.get("/api/webhooks/github/deliveries/delivery-1").status_code == 401
     client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "alice"})))
     assert {client.get(path).status_code for path in paths} == {403}
     assert client.get("/api/webhooks/github/hooks/42").status_code == 403
+    assert client.get("/api/webhooks/github/deliveries/delivery-1").status_code == 403
     client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "operator"}, is_admin=True)))
     assert {client.get(path).status_code for path in paths} == {200}
     assert client.get("/api/webhooks/github/hooks/42").status_code == 404
+    assert client.get("/api/webhooks/github/deliveries/delivery-1").status_code == 404
     assert client.get("/api/status").json()["webhook_configured"] is True
 
 
@@ -416,6 +432,14 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
         "admin_url": "https://github.com/organizations/gisce/settings/hooks/42",
     }
     assert second_page["next_cursor"] is None
+
+    delivery_detail = client.get("/api/webhooks/github/deliveries/delivery-1").json()
+    assert delivery_detail["delivery"] == next(
+        item for item in deliveries if item["delivery_id"] == "delivery-1"
+    )
+    assert delivery_detail["payload"] == json.loads(delivery)
+    assert delivery_detail["payload_hash"] == hashlib.sha256(delivery).hexdigest()
+    assert delivery_detail["job"] is None
 
     filtered = client.get("/api/webhooks/github/deliveries", params={
         "hook_id": "42", "event_name": "issue_comment", "repository": "gisce/github-agent-bridge",

@@ -157,6 +157,21 @@ type WebhookHookDetailResponse = {
   recent_deliveries: WebhookDelivery[];
 };
 
+type WebhookDeliveryDetailResponse = {
+  delivery: WebhookDelivery;
+  payload_hash: string;
+  payload: unknown | null;
+  job: {
+    id: number;
+    work_key: string;
+    status: string;
+    action: string;
+    decision: string;
+    work_intent: string;
+    updated_at: string;
+  } | null;
+};
+
 type WebhookDeliveryFilters = {
   hook_id: string;
   event_name: string;
@@ -939,8 +954,13 @@ function selectedWebhookHookIdFromPath(pathname = window.location.pathname) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+function selectedWebhookDeliveryIdFromPath(pathname = window.location.pathname) {
+  const match = pathname.match(/^\/webhooks\/deliveries\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 function isWebhooksPath(pathname = window.location.pathname) {
-  return /^\/webhooks(?:\/hooks\/[^/]+)?\/?$/.test(pathname);
+  return /^\/webhooks(?:\/(?:hooks|deliveries)\/[^/]+)?\/?$/.test(pathname);
 }
 
 function repoFromScope(scope: string) {
@@ -985,6 +1005,7 @@ function App() {
   const isSystemRoute = isSystemPath(pathname);
   const isWebhooksRoute = isWebhooksPath(pathname);
   const selectedWebhookHookId = selectedWebhookHookIdFromPath(pathname);
+  const selectedWebhookDeliveryId = selectedWebhookDeliveryIdFromPath(pathname);
   const isDashboardRoute = !isJobDetailRoute && !isKnowledgeRoute && !isMcpRoute && !isSystemRoute && !isWebhooksRoute;
   const selectedJobId = jobRouteId;
   const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: isDashboardRoute || isSystemRoute });
@@ -1024,19 +1045,24 @@ function App() {
     queryFn: ({ pageParam }) => api<WebhookHooksResponse>(webhookHooksPath(50, pageParam)),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    enabled: webhookEnabled && webhookQuery.hooks && selectedWebhookHookId === null,
+    enabled: webhookEnabled && webhookQuery.hooks && selectedWebhookHookId === null && selectedWebhookDeliveryId === null,
   });
   const webhookDeliveries = useInfiniteQuery({
     queryKey: ["webhook-deliveries", webhookDeliveryFilters],
     queryFn: ({ pageParam }) => api<WebhookDeliveriesResponse>(webhookDeliveriesPath(50, pageParam, webhookDeliveryFilters)),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    enabled: webhookEnabled && webhookQuery.deliveries && selectedWebhookHookId === null,
+    enabled: webhookEnabled && webhookQuery.deliveries && selectedWebhookHookId === null && selectedWebhookDeliveryId === null,
   });
   const webhookHookDetail = useQuery({
     queryKey: ["webhook-hook", selectedWebhookHookId],
     queryFn: () => api<WebhookHookDetailResponse>(`/api/webhooks/github/hooks/${encodeURIComponent(selectedWebhookHookId ?? "")}`),
     enabled: webhookEnabled && selectedWebhookHookId !== null,
+  });
+  const webhookDeliveryDetail = useQuery({
+    queryKey: ["webhook-delivery", selectedWebhookDeliveryId],
+    queryFn: () => api<WebhookDeliveryDetailResponse>(`/api/webhooks/github/deliveries/${encodeURIComponent(selectedWebhookDeliveryId ?? "")}`),
+    enabled: webhookEnabled && selectedWebhookDeliveryId !== null,
   });
   const knowledge = useQuery({
     queryKey: ["knowledge", knowledgeRepo, knowledgeStatus],
@@ -1358,7 +1384,20 @@ function App() {
             onRefresh={() => mcpTokens.refetch()}
           />
         ) : isWebhooksRoute ? (
-          selectedWebhookHookId ? (
+          selectedWebhookDeliveryId ? (
+            <WebhookDeliveryDetailPage
+              data={webhookDeliveryDetail.data}
+              loading={webhookDeliveryDetail.isLoading}
+              error={webhookDeliveryDetail.error}
+              onBack={() => {
+                setWebhookSection("deliveries");
+                navigateDashboard("/webhooks");
+              }}
+              onRefresh={() => webhookDeliveryDetail.refetch()}
+              onViewHook={(hookId) => navigateDashboard(`/webhooks/hooks/${encodeURIComponent(hookId)}`)}
+              onViewJob={viewJob}
+            />
+          ) : selectedWebhookHookId ? (
             <WebhookHookDetailPage
               data={webhookHookDetail.data}
               loading={webhookHookDetail.isLoading}
@@ -1369,6 +1408,7 @@ function App() {
               }}
               onRefresh={() => webhookHookDetail.refetch()}
               onViewHook={(hookId) => navigateDashboard(`/webhooks/hooks/${encodeURIComponent(hookId)}`)}
+              onViewDelivery={(deliveryId) => navigateDashboard(`/webhooks/deliveries/${encodeURIComponent(deliveryId)}`)}
             />
           ) : (
             <WebhookPage
@@ -1388,6 +1428,7 @@ function App() {
               onLoadMore={() => webhookSection === "hooks" ? webhookHooks.fetchNextPage() : webhookDeliveries.fetchNextPage()}
               onDeliveryFiltersChange={setWebhookDeliveryFilters}
               onViewHook={(hookId) => navigateDashboard(`/webhooks/hooks/${encodeURIComponent(hookId)}`)}
+              onViewDelivery={(deliveryId) => navigateDashboard(`/webhooks/deliveries/${encodeURIComponent(deliveryId)}`)}
               onRefresh={refreshWebhooks}
             />
           )
@@ -1736,6 +1777,7 @@ type WebhookPageProps = {
   onLoadMore: () => void;
   onDeliveryFiltersChange: (filters: WebhookDeliveryFilters) => void;
   onViewHook: (hookId: string) => void;
+  onViewDelivery?: (deliveryId: string) => void;
   onRefresh: () => void;
 };
 
@@ -1760,6 +1802,7 @@ function WebhookPage({
   onLoadMore,
   onDeliveryFiltersChange,
   onViewHook,
+  onViewDelivery = () => undefined,
   onRefresh,
 }: WebhookPageProps) {
   const observed = Object.values(summary?.receipts ?? {}).reduce((total, count) => total + count, 0);
@@ -1805,7 +1848,7 @@ function WebhookPage({
       </Panel> : null}
       {section === "deliveries" ? <Panel title="Recent deliveries">
         <WebhookDeliveryFiltersForm filters={deliveryFilters} onChange={onDeliveryFiltersChange} />
-        {sectionLoading ? <WebhookLoadingState text="Loading deliveries…" /> : deliveries?.length ? <LazyScrollFrame noun="deliveries" hasMore={hasMore} loading={loadingMore} onLoadMore={onLoadMore}><WebhookDeliveriesTable deliveries={deliveries} onViewHook={onViewHook} /></LazyScrollFrame> : <EmptyState text="No deliveries match the current filters." />}
+        {sectionLoading ? <WebhookLoadingState text="Loading deliveries…" /> : deliveries?.length ? <LazyScrollFrame noun="deliveries" hasMore={hasMore} loading={loadingMore} onLoadMore={onLoadMore}><WebhookDeliveriesTable deliveries={deliveries} onViewHook={onViewHook} onViewDelivery={onViewDelivery} /></LazyScrollFrame> : <EmptyState text="No deliveries match the current filters." />}
       </Panel> : null}
     </section>
   );
@@ -1821,8 +1864,8 @@ function WebhookDeliveryFiltersForm({ filters, onChange }: { filters: WebhookDel
   return <div className="grid gap-2 border-b border-border p-3 sm:grid-cols-2 xl:grid-cols-4">{fields.map((field) => <label key={field.key} className="grid gap-1 text-xs font-semibold text-muted">{field.label}<input className="h-9 rounded-md border border-border bg-white px-2 font-mono text-xs text-foreground" value={filters[field.key]} placeholder={field.placeholder} onChange={(event) => onChange({ ...filters, [field.key]: event.target.value })} /></label>)}</div>;
 }
 
-function WebhookDeliveriesTable({ deliveries, onViewHook }: { deliveries: WebhookDelivery[]; onViewHook: (hookId: string) => void }) {
-  return <table className="w-full min-w-[980px] text-left text-sm"><thead><tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted"><th className="px-3 py-2">Received</th><th className="px-3 py-2">Hook</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0"><td className="px-3 py-3 font-mono text-xs text-muted">{delivery.created_at}</td><td className="px-3 py-3">{delivery.hook_id ? <button type="button" className="text-left text-primary hover:underline" onClick={() => onViewHook(delivery.hook_id!)}><span className="block font-semibold">{delivery.hook?.target ?? `Hook #${delivery.hook_id}`}</span><span className="font-mono text-xs">#{delivery.hook_id}</span></button> : <span className="text-xs text-muted">Unknown (legacy)</span>}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span>{delivery.duplicate_count ? <span className="ml-2 font-mono text-xs text-muted">{delivery.duplicate_count} retries</span> : null}</td><td className="max-w-[14rem] truncate px-3 py-3 font-mono text-xs text-muted" title={delivery.delivery_id}>{delivery.delivery_id}</td></tr>)}</tbody></table>;
+function WebhookDeliveriesTable({ deliveries, onViewHook, onViewDelivery = () => undefined }: { deliveries: WebhookDelivery[]; onViewHook: (hookId: string) => void; onViewDelivery?: (deliveryId: string) => void }) {
+  return <table className="w-full min-w-[980px] text-left text-sm"><thead><tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted"><th className="px-3 py-2">Received</th><th className="px-3 py-2">Hook</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0 hover:bg-slate-50"><td className="px-3 py-3 font-mono text-xs text-muted">{delivery.created_at}</td><td className="px-3 py-3">{delivery.hook_id ? <button type="button" className="text-left text-primary hover:underline" onClick={() => onViewHook(delivery.hook_id!)}><span className="block font-semibold">{delivery.hook?.target ?? `Hook #${delivery.hook_id}`}</span><span className="font-mono text-xs">#{delivery.hook_id}</span></button> : <span className="text-xs text-muted">Unknown (legacy)</span>}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span>{delivery.duplicate_count ? <span className="ml-2 font-mono text-xs text-muted">{delivery.duplicate_count} retries</span> : null}</td><td className="max-w-[14rem] px-3 py-3"><button type="button" className="block max-w-full truncate font-mono text-xs font-semibold text-primary hover:underline" title={delivery.delivery_id} onClick={() => onViewDelivery(delivery.delivery_id)}>{delivery.delivery_id}</button></td></tr>)}</tbody></table>;
 }
 
 function LazyScrollFrame({ noun, hasMore, loading, onLoadMore, children, className }: { noun: string; hasMore: boolean; loading: boolean; onLoadMore?: () => void; children: React.ReactNode; className?: string }) {
@@ -1857,12 +1900,20 @@ function LazyLoadSentinel({ noun, hasMore, loading, onLoadMore }: { noun: string
   return <div ref={ref} className="flex min-h-10 items-center justify-center border-t border-border px-3 py-2 text-xs font-medium text-muted" aria-live="polite">{loading ? `Loading more ${noun}...` : `Scroll for more ${noun}`}</div>;
 }
 
-function WebhookHookDetailPage({ data, loading, error, onBack, onRefresh, onViewHook }: { data?: WebhookHookDetailResponse; loading: boolean; error: Error | null; onBack: () => void; onRefresh: () => void; onViewHook: (hookId: string) => void }) {
+function WebhookHookDetailPage({ data, loading, error, onBack, onRefresh, onViewHook, onViewDelivery = () => undefined }: { data?: WebhookHookDetailResponse; loading: boolean; error: Error | null; onBack: () => void; onRefresh: () => void; onViewHook: (hookId: string) => void; onViewDelivery?: (deliveryId: string) => void }) {
   if (loading) return <WebhookLoadingState text="Loading hook detail…" />;
   if (error) return <div className="grid gap-3"><Banner tone="error" text={error.message} /><button type="button" className="w-fit rounded border border-border px-3 py-2 text-sm font-semibold" onClick={onBack}>Back to hooks</button></div>;
   if (!data) return <EmptyState text="Hook detail is not available." />;
   const hook = data.hook;
-  return <section className="grid gap-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><button type="button" className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline" onClick={onBack}><ArrowLeft className="h-4 w-4" aria-hidden />Back to hooks</button><h2 className="text-xl font-semibold">{hook.target}</h2><p className="font-mono text-xs text-muted">{hook.target_type} webhook #{hook.id}</p></div><div className="flex gap-2"><RefreshButton onClick={onRefresh} />{hook.admin_url ? <a className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold hover:bg-slate-50" href={safeExternalUrl(hook.admin_url)} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" aria-hidden />Open in GitHub</a> : null}</div></div><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric title="State" value={hook.status} icon={<Activity className="h-5 w-5" />} /><Metric title="Deliveries" value={data.stats.deliveries} icon={<Link className="h-5 w-5" />} /><Metric title="Retries" value={data.stats.duplicates} icon={<RefreshCw className="h-5 w-5" />} /><Metric title="Unsupported" value={data.stats.unsupported} icon={<AlertTriangle className="h-5 w-5" />} /></div><Panel title="Sanitized configuration"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Active" value={hook.active ? "yes" : "no"} /><MiniStat label="Content type" value={hook.content_type ?? "unknown"} /><MiniStat label="SSL verification" value={hook.ssl_verify === null || hook.ssl_verify === undefined ? "unknown" : hook.ssl_verify ? "enabled" : "disabled"} /><MiniStat label="Destination URL" value={hook.delivery_url ?? "unknown"} /><MiniStat label="GitHub created" value={hook.github_created_at ?? "unknown"} /><MiniStat label="GitHub updated" value={hook.github_updated_at ?? "unknown"} /><MiniStat label="Last ping" value={hook.last_ping_at ?? "never"} /><MiniStat label="Last delivery" value={hook.last_event_at ?? "never"} /><MiniStat label="Last result" value={hook.last_result ?? "unknown"} /></div><div className="mt-3 rounded-md border border-border p-3"><div className="text-xs font-semibold text-muted">Subscribed events</div><div className="mt-2 flex flex-wrap gap-1.5">{hook.events.length ? hook.events.map((event) => <span key={event} className="rounded border border-border bg-slate-50 px-2 py-1 font-mono text-xs">{event}</span>) : <span className="text-sm text-muted">No event snapshot; redeliver a ping.</span>}</div></div></Panel><Panel title="Latest observed delivery"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Event" value={hook.last_event_name ? `${hook.last_event_name}${hook.last_action ? ` · ${hook.last_action}` : ""}` : "none"} /><MiniStat label="Repository" value={hook.last_repository ?? "none"} /><MiniStat label="Delivery ID" value={hook.last_delivery_id ?? "none"} /></div></Panel><Panel title="Recent deliveries">{data.recent_deliveries.length ? <WebhookDeliveriesTable deliveries={data.recent_deliveries} onViewHook={onViewHook} /> : <EmptyState text="This hook has no retained deliveries." />}</Panel></section>;
+  return <section className="grid gap-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><button type="button" className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline" onClick={onBack}><ArrowLeft className="h-4 w-4" aria-hidden />Back to hooks</button><h2 className="text-xl font-semibold">{hook.target}</h2><p className="font-mono text-xs text-muted">{hook.target_type} webhook #{hook.id}</p></div><div className="flex gap-2"><RefreshButton onClick={onRefresh} />{hook.admin_url ? <a className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold hover:bg-slate-50" href={safeExternalUrl(hook.admin_url)} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" aria-hidden />Open in GitHub</a> : null}</div></div><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric title="State" value={hook.status} icon={<Activity className="h-5 w-5" />} /><Metric title="Deliveries" value={data.stats.deliveries} icon={<Link className="h-5 w-5" />} /><Metric title="Retries" value={data.stats.duplicates} icon={<RefreshCw className="h-5 w-5" />} /><Metric title="Unsupported" value={data.stats.unsupported} icon={<AlertTriangle className="h-5 w-5" />} /></div><Panel title="Sanitized configuration"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Active" value={hook.active ? "yes" : "no"} /><MiniStat label="Content type" value={hook.content_type ?? "unknown"} /><MiniStat label="SSL verification" value={hook.ssl_verify === null || hook.ssl_verify === undefined ? "unknown" : hook.ssl_verify ? "enabled" : "disabled"} /><MiniStat label="Destination URL" value={hook.delivery_url ?? "unknown"} /><MiniStat label="GitHub created" value={hook.github_created_at ?? "unknown"} /><MiniStat label="GitHub updated" value={hook.github_updated_at ?? "unknown"} /><MiniStat label="Last ping" value={hook.last_ping_at ?? "never"} /><MiniStat label="Last delivery" value={hook.last_event_at ?? "never"} /><MiniStat label="Last result" value={hook.last_result ?? "unknown"} /></div><div className="mt-3 rounded-md border border-border p-3"><div className="text-xs font-semibold text-muted">Subscribed events</div><div className="mt-2 flex flex-wrap gap-1.5">{hook.events.length ? hook.events.map((event) => <span key={event} className="rounded border border-border bg-slate-50 px-2 py-1 font-mono text-xs">{event}</span>) : <span className="text-sm text-muted">No event snapshot; redeliver a ping.</span>}</div></div></Panel><Panel title="Latest observed delivery"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Event" value={hook.last_event_name ? `${hook.last_event_name}${hook.last_action ? ` · ${hook.last_action}` : ""}` : "none"} /><MiniStat label="Repository" value={hook.last_repository ?? "none"} /><MiniStat label="Delivery ID" value={hook.last_delivery_id ?? "none"} /></div></Panel><Panel title="Recent deliveries">{data.recent_deliveries.length ? <WebhookDeliveriesTable deliveries={data.recent_deliveries} onViewHook={onViewHook} onViewDelivery={onViewDelivery} /> : <EmptyState text="This hook has no retained deliveries." />}</Panel></section>;
+}
+
+function WebhookDeliveryDetailPage({ data, loading, error, onBack, onRefresh, onViewHook, onViewJob }: { data?: WebhookDeliveryDetailResponse; loading: boolean; error: Error | null; onBack: () => void; onRefresh: () => void; onViewHook: (hookId: string) => void; onViewJob: (jobId: number) => void }) {
+  if (loading) return <WebhookLoadingState text="Loading delivery detail…" />;
+  if (error) return <div className="grid gap-3"><Banner tone="error" text={error.message} /><button type="button" className="w-fit rounded border border-border px-3 py-2 text-sm font-semibold" onClick={onBack}>Back to deliveries</button></div>;
+  if (!data) return <EmptyState text="Delivery detail is not available." />;
+  const delivery = data.delivery;
+  return <section className="grid gap-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><button type="button" className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline" onClick={onBack}><ArrowLeft className="h-4 w-4" aria-hidden />Back to deliveries</button><h2 className="text-xl font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</h2><p className="font-mono text-xs text-muted">Delivery {delivery.delivery_id}</p></div><RefreshButton onClick={onRefresh} /></div><Panel title="Delivery"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Received" value={delivery.created_at} /><MiniStat label="Repository" value={delivery.repository ?? "unknown"} /><MiniStat label="Result" value={delivery.status} /><MiniStat label="Event key" value={delivery.event_key ?? "unmatchable"} /><MiniStat label="Payload SHA-256" value={data.payload_hash} /><MiniStat label="Retries" value={delivery.duplicate_count ?? 0} /></div>{delivery.hook_id ? <button type="button" className="mt-3 text-sm font-semibold text-primary hover:underline" onClick={() => onViewHook(delivery.hook_id!)}>View hook #{delivery.hook_id}</button> : null}</Panel><Panel title="Generated job">{data.job ? <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-semibold">{data.job.work_key}</div><div className="mt-1 font-mono text-xs text-muted">Job #{data.job.id} · {data.job.status} · {data.job.action} · {data.job.work_intent}</div></div><button type="button" className="rounded-md border border-border px-3 py-2 text-sm font-semibold hover:bg-slate-50" onClick={() => onViewJob(data.job!.id)}>Open job</button></div> : <EmptyState text="This delivery did not generate or coalesce into a job." />}</Panel><Panel title="Full payload">{data.payload === null ? <EmptyState text="Payload was not retained for this legacy delivery." /> : <pre className="max-h-[640px] overflow-auto rounded-md border border-border bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-100">{JSON.stringify(data.payload, null, 2)}</pre>}</Panel></section>;
 }
 
 function SystemPage({
@@ -4429,6 +4480,7 @@ export {
   SystemdUnits,
   UserMenu,
   WebPushControl,
+  WebhookDeliveryDetailPage,
   KnowledgePage,
   KnowledgeProposals,
   KnowledgeRules,
@@ -4442,6 +4494,7 @@ export {
   isSystemPath,
   isWebhooksPath,
   selectedWebhookHookIdFromPath,
+  selectedWebhookDeliveryIdFromPath,
   isRetryableStatus,
   groupSessionEvents,
   groupTranscriptEntries,

@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS webhook_shadow_receipts (
   event_key TEXT,
   repository TEXT,
   payload_hash TEXT NOT NULL,
+  payload_json TEXT,
   status TEXT NOT NULL CHECK(status IN ('observed','duplicate','unsupported')),
   duplicate_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL

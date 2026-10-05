@@ -876,6 +876,7 @@ class JobQueue:
             "webhook_shadow_receipts": {
                 "duplicate_count": "INTEGER NOT NULL DEFAULT 0",
                 "hook_id": "TEXT",
+                "payload_json": "TEXT",
             },
             "webhook_hooks": {
                 "name": "TEXT",

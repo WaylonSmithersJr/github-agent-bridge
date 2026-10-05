@@ -43,6 +43,8 @@ import {
   webhookQuerySelection,
   webhookTimeseriesPath,
   selectedWebhookHookIdFromPath,
+  selectedWebhookDeliveryIdFromPath,
+  WebhookDeliveryDetailPage,
 } from "./main";
 
 describe("dashboard routing and API query helpers", () => {
@@ -112,6 +114,12 @@ describe("dashboard routing and API query helpers", () => {
     expect(isWebhooksPath("/webhooks/hooks/690954530")).toBe(true);
     expect(selectedWebhookHookIdFromPath("/webhooks/hooks/690954530")).toBe("690954530");
     expect(selectedWebhookHookIdFromPath("/webhooks")).toBeNull();
+  });
+
+  it("recognizes shareable webhook delivery detail routes", () => {
+    expect(isWebhooksPath("/webhooks/deliveries/abc%2F123")).toBe(true);
+    expect(selectedWebhookDeliveryIdFromPath("/webhooks/deliveries/abc%2F123")).toBe("abc/123");
+    expect(selectedWebhookDeliveryIdFromPath("/webhooks/hooks/42")).toBeNull();
   });
 
   it("shows a knowledge badge when proposed rules need moderation", () => {
@@ -190,6 +198,17 @@ describe("dashboard routing and API query helpers", () => {
     expect(screen.getByText("https://gab.gisce.net/api/webhooks/github")).toBeInTheDocument();
     expect(screen.getAllByText("issue_comment · created").length).toBeGreaterThan(0);
     expect(screen.getAllByText("delivery-1").length).toBeGreaterThan(0);
+  });
+
+  it("shows the full webhook payload and linked job status", async () => {
+    const onViewJob = vi.fn();
+    const user = userEvent.setup();
+    render(<WebhookDeliveryDetailPage data={{ delivery: { delivery_id: "delivery-1", created_at: "2026-10-02T11:08:00Z", hook_id: "42", event_name: "issue_comment", action: "created", event_key: "issue_comment:created:gisce/github-agent-bridge:7", repository: "gisce/github-agent-bridge", status: "observed" }, payload_hash: "abc123", payload: { action: "created", comment: { id: 7, body: "@giscebot fix it" } }, job: { id: 91, work_key: "gisce/github-agent-bridge#191", status: "running", action: "reply_comment", decision: "auto_trusted", work_intent: "work_allowed", updated_at: "2026-10-02T11:09:00Z" } }} loading={false} error={null} onBack={vi.fn()} onRefresh={vi.fn()} onViewHook={vi.fn()} onViewJob={onViewJob} />);
+
+    expect(screen.getByText(/"body": "@giscebot fix it"/)).toBeInTheDocument();
+    expect(screen.getByText("Job #91 · running · reply_comment · work_allowed")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open job" }));
+    expect(onViewJob).toHaveBeenCalledWith(91);
   });
 
   it("loads the next hook cursor page when the inventory sentinel enters view", async () => {

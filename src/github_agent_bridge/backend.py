@@ -1052,6 +1052,43 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "next_cursor": next_cursor,
         }
 
+    @app.get("/api/webhooks/github/deliveries/{delivery_id}")
+    def github_webhook_delivery_detail(
+        delivery_id: str,
+        _: dict[str, Any] = Depends(current_admin_profile),
+    ) -> dict[str, Any]:
+        ensure_webhook_schema()
+        with sqlite3.connect(config.db) as con:
+            con.row_factory = sqlite3.Row
+            row = con.execute(
+                "SELECT r.delivery_id,r.hook_id,r.event_name,r.action,r.event_key,r.repository,r.status,"
+                "r.duplicate_count,r.created_at,r.payload_hash,r.payload_json,"
+                "h.target hook_target,h.target_type hook_target_type,"
+                "j.id job_id,j.work_key job_work_key,j.status job_status,j.action job_action,"
+                "j.decision job_decision,j.work_intent job_work_intent,j.updated_at job_updated_at "
+                "FROM webhook_shadow_receipts r "
+                "LEFT JOIN webhook_hooks h ON h.hook_id=r.hook_id "
+                "LEFT JOIN ingest_receipts i ON i.source='webhook' AND i.source_key=r.delivery_id "
+                "LEFT JOIN jobs j ON j.id=i.job_id WHERE r.delivery_id=?",
+                (delivery_id,),
+            ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webhook_delivery_not_found")
+        payload = json.loads(row["payload_json"]) if row["payload_json"] else None
+        job = None
+        if row["job_id"] is not None:
+            job = {
+                "id": row["job_id"], "work_key": row["job_work_key"], "status": row["job_status"],
+                "action": row["job_action"], "decision": row["job_decision"],
+                "work_intent": row["job_work_intent"], "updated_at": row["job_updated_at"],
+            }
+        return {
+            "delivery": _webhook_delivery_payload(row),
+            "payload_hash": row["payload_hash"],
+            "payload": payload,
+            "job": job,
+        }
+
     def dashboard_index() -> FileResponse:
         index = config.static_dir / "index.html"
         if not index.exists():

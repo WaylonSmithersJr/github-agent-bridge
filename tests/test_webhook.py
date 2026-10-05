@@ -55,13 +55,27 @@ def actionable_issue_comment_payload(*, comment_id: int = 5948901951) -> bytes:
     }).encode()
 
 
+def workflow_run_payload(*, conclusion: str) -> bytes:
+    return json.dumps({
+        "action": "completed",
+        "repository": {"full_name": "gisce/github-agent-bridge"},
+        "workflow_run": {
+            "id": 33123456789,
+            "name": "pytest",
+            "conclusion": conclusion,
+            "html_url": "https://github.com/gisce/github-agent-bridge/actions/runs/33123456789",
+        },
+        "sender": {"login": "github-actions"},
+    }).encode()
+
+
 def canary_policy(tmp_path):
     path = tmp_path / "policy.json"
     path.write_text(json.dumps({
         "trustedOrgs": ["gisce"],
         "enabledRepos": ["gisce/github-agent-bridge"],
         "botLogins": ["giscebot"],
-        "actions": {"trustedAuto": ["reply_comment"]},
+        "actions": {"trustedAuto": ["reply_comment", "workflow_run_failed"]},
     }))
     return path
 
@@ -168,6 +182,47 @@ def test_webhook_canary_ignores_repo_outside_enabled_repos(tmp_path):
     )
 
     assert response.json()["enqueue_status"] == "outside_canary"
+    with sqlite3.connect(config.db) as con:
+        assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+
+
+def test_webhook_canary_enqueues_failed_workflow_run(tmp_path):
+    payload = workflow_run_payload(conclusion="failure")
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False,
+        webhook_secrets=(SECRET,), webhook_mode="canary",
+        webhook_policy=canary_policy(tmp_path),
+    )
+
+    response = TestClient(create_app(config)).post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="workflow-failure", event="workflow_run"),
+    )
+
+    assert response.json()["enqueue_status"] == "enqueued"
+    with sqlite3.connect(config.db) as con:
+        assert con.execute("SELECT action,work_key FROM jobs").fetchone() == (
+            "workflow_run_failed",
+            "gisce/github-agent-bridge/actions/runs/33123456789",
+        )
+
+
+def test_webhook_canary_ignores_successful_workflow_run(tmp_path):
+    payload = workflow_run_payload(conclusion="success")
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False,
+        webhook_secrets=(SECRET,), webhook_mode="canary",
+        webhook_policy=canary_policy(tmp_path),
+    )
+
+    response = TestClient(create_app(config)).post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="workflow-success", event="workflow_run"),
+    )
+
+    assert response.json()["enqueue_status"] == "ignored"
     with sqlite3.connect(config.db) as con:
         assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
 

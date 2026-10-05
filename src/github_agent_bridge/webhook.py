@@ -86,10 +86,18 @@ def webhook_notification(
     )
     if not isinstance(source, dict):
         return None
+    if event_name == "workflow_run":
+        conclusion = str(source.get("conclusion") or "").lower()
+        if conclusion != "failure":
+            return None
     url = str(source.get("html_url") or subject.get("html_url") or repository.get("html_url") or "")
     if not url.startswith("https://github.com/"):
         return None
-    body = str(source.get("body") or "")
+    body = (
+        "Workflow run failed (conclusion: failure)."
+        if event_name == "workflow_run"
+        else str(source.get("body") or "")
+    )
     sender = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
     login = str(sender.get("login") or "GitHub")
     title = str(subject.get("title") or subject.get("name") or event_name)

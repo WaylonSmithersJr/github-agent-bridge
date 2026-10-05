@@ -876,6 +876,8 @@ class JobQueue:
             "webhook_shadow_receipts": {
                 "duplicate_count": "INTEGER NOT NULL DEFAULT 0",
                 "hook_id": "TEXT",
+                "enqueue_status": "TEXT",
+                "job_id": "INTEGER REFERENCES jobs(id) ON DELETE SET NULL",
             },
             "webhook_hooks": {
                 "name": "TEXT",
@@ -906,6 +908,9 @@ class JobQueue:
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='webhook_shadow_receipts'").fetchone() is not None:
             con.execute(
                 "CREATE INDEX IF NOT EXISTS idx_webhook_shadow_delivery_page ON webhook_shadow_receipts(created_at DESC, delivery_id DESC)"
+            )
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_webhook_shadow_job_id ON webhook_shadow_receipts(job_id)"
             )
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='webhook_hooks'").fetchone() is not None:
             con.execute(

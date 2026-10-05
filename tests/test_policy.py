@@ -1,3 +1,5 @@
+import json
+
 from github_agent_bridge.models import Notification
 from github_agent_bridge.parser import extract_github_context
 from github_agent_bridge.policy import Policy
@@ -422,3 +424,26 @@ def test_workflow_run_failed_is_trusted_auto_by_default_not_auto():
 
     assert Policy(trusted_orgs={"gisce"}).decision(n, ctx, "workflow_run_failed") == "auto_trusted"
     assert Policy().decision(n, ctx, "workflow_run_failed") == "ask"
+
+
+def test_webhook_canary_scope_is_independent_from_imap_enabled_repos(tmp_path):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text(json.dumps({
+        "trustedOrgs": ["gisce"],
+        "webhookCanaryRepos": ["gisce/github-agent-bridge"],
+    }))
+
+    policy = Policy.from_file(policy_file)
+    notification = Notification(
+        1,
+        "<x@github.com>",
+        "subj",
+        "notifications@github.com",
+        "https://github.com/gisce/erp/issues/1#issuecomment-2",
+        auth={"spf": True, "dkim": True, "dmarc": True},
+    )
+    context = extract_github_context(notification.body)
+
+    assert policy.webhook_canary_repos == {"gisce/github-agent-bridge"}
+    assert policy.enabled_repos == set()
+    assert policy.decision(notification, context, "reply_comment") == "auto_trusted"

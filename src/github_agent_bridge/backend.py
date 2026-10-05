@@ -77,7 +77,6 @@ WEBHOOK_COVERAGE_EVENT_GLOBS = (
     "issue_comment:created:*",
     "pull_request_review_comment:created:*",
     "pull_request_review:created:*",
-    "pull_request:review_requested:*",
     "commit_comment:created:*",
     "workflow_run:workflow_run_failed:*",
 )

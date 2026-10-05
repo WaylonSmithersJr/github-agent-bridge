@@ -112,7 +112,7 @@ def webhook_notification(
         reviewer = payload.get("requested_reviewer") if isinstance(payload.get("requested_reviewer"), dict) else {}
         requested_login = str(reviewer.get("login") or "").lower()
         configured_logins = {login.lower().lstrip("@") for login in (bot_logins or set())}
-        if configured_logins and requested_login not in configured_logins:
+        if requested_login not in configured_logins:
             return None
     if event_name == "workflow_run":
         conclusion = str(source.get("conclusion") or "").lower()

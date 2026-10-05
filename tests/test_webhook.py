@@ -428,6 +428,66 @@ def test_webhook_canary_ignores_pull_request_review_requested_for_other_reviewer
         assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
 
 
+def test_webhook_canary_ignores_pull_request_review_requested_when_bot_logins_empty(tmp_path):
+    policy = canary_policy(tmp_path)
+    policy.write_text(json.dumps({
+        "trustedOrgs": ["gisce"],
+        "webhookCanaryRepos": ["gisce/github-agent-bridge"],
+        "botLogins": [],
+        "actions": {"trustedAuto": ["submit_review"]},
+    }))
+    payload = pull_request_review_requested_payload(requested_reviewer="someone-else")
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False,
+        webhook_secrets=(SECRET,), webhook_mode="canary",
+        webhook_policy=policy,
+    )
+
+    response = TestClient(create_app(config)).post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="review-requested-no-bots", event="pull_request"),
+    )
+
+    assert response.json()["status"] == "observed"
+    assert response.json()["enqueue_status"] == "ignored"
+    with sqlite3.connect(config.db) as con:
+        assert con.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+
+
+def test_webhook_canary_preserves_review_request_sender_as_trigger_actor(tmp_path, monkeypatch):
+    def fail_context_lookup(notification, ctx):
+        raise AssertionError("signed webhook sender should not be replaced by PR author lookup")
+
+    monkeypatch.setattr(
+        "github_agent_bridge.queue.trigger_actor_details_for_enqueue",
+        fail_context_lookup,
+    )
+    policy = canary_policy(tmp_path)
+    policy.write_text(json.dumps({
+        "trustedOrgs": ["gisce"],
+        "webhookCanaryRepos": ["gisce/github-agent-bridge"],
+        "botLogins": ["giscebot"],
+        "actions": {"trustedAuto": ["submit_review"]},
+    }))
+    payload = pull_request_review_requested_payload(sender="review-requester")
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3", require_auth=False,
+        webhook_secrets=(SECRET,), webhook_mode="canary",
+        webhook_policy=policy,
+    )
+
+    response = TestClient(create_app(config)).post(
+        "/api/webhooks/github",
+        content=payload,
+        headers=signed_headers(payload, delivery="review-requested-actor", event="pull_request"),
+    )
+
+    assert response.json()["enqueue_status"] == "enqueued"
+    with sqlite3.connect(config.db) as con:
+        assert con.execute("SELECT trigger_actor FROM jobs").fetchone()[0] == "review-requester"
+
+
 def test_webhook_canary_enqueues_failed_workflow_run(tmp_path):
     payload = workflow_run_payload(conclusion="failure")
     config = DashboardConfig(
@@ -795,6 +855,16 @@ def test_webhook_coverage_uses_comparable_window_keys_and_grace(tmp_path):
                 for delivery_id, event_key, created_at in rows
             ],
         )
+        con.execute(
+            "INSERT INTO webhook_shadow_receipts("
+            "delivery_id,event_name,action,event_key,repository,payload_hash,status,created_at"
+            ") VALUES(?,?,?,?,?,?,?,?)",
+            (
+                "review-request", "pull_request", "review_requested",
+                "pull_request:review_requested:gisce/repo:42:giscebot",
+                "gisce/repo", "review-request", "observed", within_window,
+            ),
+        )
         con.executemany(
             "INSERT INTO ingest_receipts("
             "source,source_key,payload_hash,event_key,status,created_at,updated_at"
@@ -805,6 +875,10 @@ def test_webhook_coverage_uses_comparable_window_keys_and_grace(tmp_path):
                 ("email-recent", "hash-3", "issue_comment:created:gisce/repo:5", "accepted", too_recent, too_recent),
                 ("email-old", "hash-4", "issue_comment:created:gisce/repo:6", "accepted", too_old, too_old),
                 ("email-fallback", "hash-5", "email:<fallback@github.com>", "accepted", within_window, within_window),
+                (
+                    "email-review-request", "hash-6", "email:<review-request@github.com>",
+                    "accepted", within_window, within_window,
+                ),
             ],
         )
     client = TestClient(create_app(DashboardConfig(

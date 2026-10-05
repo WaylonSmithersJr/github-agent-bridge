@@ -195,13 +195,19 @@ describe("dashboard routing and API query helpers", () => {
     expect(screen.getByRole("link", { name: "Job #81" })).toHaveAttribute("href", "/jobs/81");
   });
 
-  it("shows sanitized hook configuration and recent delivery identity", () => {
-    render(<WebhookHookDetailPage data={{ hook: { id: "42", target: "gisce", target_type: "organization", name: "web", active: true, events: ["issue_comment"], content_type: "json", ssl_verify: true, delivery_url: "https://gab.gisce.net/api/webhooks/github", github_created_at: "2026-10-02T11:07:17Z", github_updated_at: "2026-10-02T11:07:17Z", last_ping_at: "2026-10-02T11:07:20Z", last_event_at: "2026-10-02T11:08:00Z", last_delivery_id: "delivery-1", last_event_name: "issue_comment", last_action: "created", last_repository: "gisce/github-agent-bridge", last_result: "observed", status: "receiving", admin_url: "https://github.com/organizations/gisce/settings/hooks/42" }, stats: { deliveries: 3, duplicates: 1, unsupported: 0 }, recent_deliveries: [{ delivery_id: "delivery-1", created_at: "2026-10-02T11:08:00Z", hook_id: "42", hook: { id: "42", target: "gisce", target_type: "organization" }, event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }] }} loading={false} error={null} onBack={vi.fn()} onRefresh={vi.fn()} onViewHook={vi.fn()} />);
+  it("shows sanitized hook configuration and can request a fresh ping", async () => {
+    const onPing = vi.fn().mockResolvedValue("GitHub accepted the ping request.");
+    const user = userEvent.setup();
+    render(<WebhookHookDetailPage data={{ hook: { id: "42", target: "gisce", target_type: "organization", name: "web", active: true, events: ["issue_comment"], content_type: "json", ssl_verify: true, delivery_url: "https://gab.gisce.net/api/webhooks/github", ping_url: "https://api.github.com/orgs/gisce/hooks/42/pings", github_created_at: "2026-10-02T11:07:17Z", github_updated_at: "2026-10-02T11:07:17Z", last_ping_at: "2026-10-02T11:07:20Z", last_event_at: "2026-10-02T11:08:00Z", last_delivery_id: "delivery-1", last_event_name: "issue_comment", last_action: "created", last_repository: "gisce/github-agent-bridge", last_result: "observed", status: "receiving", admin_url: "https://github.com/organizations/gisce/settings/hooks/42" }, stats: { deliveries: 3, duplicates: 1, unsupported: 0 }, recent_actions: [{ id: 1, action: "ping", actor: "operator", status: "succeeded", created_at: "2026-10-02T11:07:19Z" }], recent_deliveries: [{ delivery_id: "delivery-1", created_at: "2026-10-02T11:08:00Z", hook_id: "42", hook: { id: "42", target: "gisce", target_type: "organization" }, event_name: "issue_comment", action: "created", repository: "gisce/github-agent-bridge", status: "observed" }] }} loading={false} error={null} onBack={vi.fn()} onRefresh={vi.fn()} onViewHook={vi.fn()} onPing={onPing} />);
 
     expect(screen.getByRole("link", { name: /Open in GitHub/i })).toHaveAttribute("href", "https://github.com/organizations/gisce/settings/hooks/42");
     expect(screen.getByText("https://gab.gisce.net/api/webhooks/github")).toBeInTheDocument();
     expect(screen.getAllByText("issue_comment · created").length).toBeGreaterThan(0);
     expect(screen.getAllByText("delivery-1").length).toBeGreaterThan(0);
+    expect(screen.getByText("by @operator")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Send ping" }));
+    expect(onPing).toHaveBeenCalledWith("42");
+    expect(await screen.findByText("GitHub accepted the ping request.")).toBeInTheDocument();
   });
 
   it("shows the full webhook payload and linked job status", async () => {

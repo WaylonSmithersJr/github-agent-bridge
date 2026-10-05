@@ -136,6 +136,17 @@ CREATE TABLE IF NOT EXISTS webhook_hooks (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_hooks_page ON webhook_hooks(updated_at DESC, hook_id DESC);
+CREATE TABLE IF NOT EXISTS webhook_hook_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hook_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('ping')),
+  actor TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('requested','succeeded','failed')),
+  detail TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_hook_actions_hook ON webhook_hook_actions(hook_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS coalesced_notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

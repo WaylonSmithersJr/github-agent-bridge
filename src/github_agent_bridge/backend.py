@@ -10,6 +10,7 @@ import os
 import secrets
 import shlex
 import sqlite3
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -251,6 +252,43 @@ def _webhook_delivery_payload(row: sqlite3.Row) -> dict[str, Any]:
         "duplicate_count": row["duplicate_count"],
         "created_at": row["created_at"],
     }
+
+
+def _webhook_ping_endpoint(row: sqlite3.Row) -> str:
+    hook_id = str(row["hook_id"])
+    target = str(row["target"])
+    if row["target_type"] == "organization":
+        path = f"/orgs/{urllib.parse.quote(target, safe='')}/hooks/{urllib.parse.quote(hook_id, safe='')}/pings"
+    elif row["target_type"] == "repository" and target.count("/") == 1:
+        owner, repository = target.split("/", 1)
+        path = (
+            f"/repos/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repository, safe='')}"
+            f"/hooks/{urllib.parse.quote(hook_id, safe='')}/pings"
+        )
+    else:
+        raise ValueError("webhook_ping_target_invalid")
+    parsed = urllib.parse.urlparse(str(row["ping_url"] or ""))
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "api.github.com"
+        or parsed.path != path
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("webhook_ping_url_invalid")
+    return path
+
+
+def _request_webhook_ping(endpoint: str, *, gh_bin: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [gh_bin, "api", "--method", "POST", endpoint],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=15,
+    )
 
 
 class DashboardConfig:
@@ -1133,6 +1171,11 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
                 "WHERE r.hook_id=? ORDER BY r.created_at DESC,r.delivery_id DESC LIMIT 20",
                 (hook_id,),
             ).fetchall()
+            recent_actions = con.execute(
+                "SELECT id,action,actor,status,detail,created_at,completed_at "
+                "FROM webhook_hook_actions WHERE hook_id=? ORDER BY created_at DESC,id DESC LIMIT 10",
+                (hook_id,),
+            ).fetchall()
         return {
             "hook": _webhook_hook_payload(hook),
             "stats": {
@@ -1141,6 +1184,61 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
                 "unsupported": stats["unsupported"] or 0,
             },
             "recent_deliveries": [_webhook_delivery_payload(row) for row in recent],
+            "recent_actions": [dict(row) for row in recent_actions],
+        }
+
+    @app.post("/api/webhooks/github/hooks/{hook_id}/ping")
+    def github_webhook_hook_ping(
+        hook_id: str,
+        profile: dict[str, Any] = Depends(current_admin_profile),
+    ) -> dict[str, Any]:
+        ensure_webhook_schema()
+        created_at = datetime.now(UTC).isoformat()
+        with sqlite3.connect(config.db) as con:
+            con.row_factory = sqlite3.Row
+            hook = con.execute(
+                "SELECT hook_id,target,target_type,ping_url FROM webhook_hooks WHERE hook_id=?",
+                (hook_id,),
+            ).fetchone()
+            if hook is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webhook_hook_not_found")
+            try:
+                endpoint = _webhook_ping_endpoint(hook)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            cursor = con.execute(
+                "INSERT INTO webhook_hook_actions(hook_id,action,actor,status,created_at) VALUES(?,?,?,?,?)",
+                (hook_id, "ping", str(profile["login"]), "requested", created_at),
+            )
+            action_id = int(cursor.lastrowid)
+            con.commit()
+
+        def finish(action_status: str, detail: str) -> None:
+            with sqlite3.connect(config.db) as con:
+                con.execute(
+                    "UPDATE webhook_hook_actions SET status=?,detail=?,completed_at=? WHERE id=?",
+                    (action_status, detail[:1000], datetime.now(UTC).isoformat(), action_id),
+                )
+                con.commit()
+
+        try:
+            result = _request_webhook_ping(endpoint, gh_bin=_env("GITHUB_AGENT_BRIDGE_GH_BIN", "gh"))
+        except FileNotFoundError as exc:
+            finish("failed", "gh executable not found")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="github_cli_unavailable") from exc
+        except subprocess.TimeoutExpired as exc:
+            finish("failed", "GitHub ping request timed out")
+            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="github_webhook_ping_timeout") from exc
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or f"gh exited {result.returncode}"
+            finish("failed", detail)
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="github_webhook_ping_failed")
+        finish("succeeded", "GitHub accepted the ping request")
+        return {
+            "action_id": action_id,
+            "hook_id": hook_id,
+            "status": "succeeded",
+            "detail": "GitHub accepted the ping request; configuration will refresh when delivery arrives.",
         }
 
     @app.get("/api/webhooks/github/deliveries")
@@ -1303,6 +1401,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
             "delete_knowledge_rule",
             "create_mcp_token",
             "revoke_mcp_token",
+            "ping_webhook",
         ]
         if profile.get("is_admin"):
             admin_actions.extend(["view_autoupdate_plan", "refresh_autoupdate_plan", "apply_autoupdate", "complete_autoupdate_reload"])

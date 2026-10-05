@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Notification, utc_now
+from .parser import classify_github_action
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,8 @@ def webhook_notification(
     event_name: str,
     delivery_id: str,
     payload: dict[str, Any],
+    *,
+    bot_logins: set[str] | None = None,
 ) -> Notification | None:
     """Translate actionable webhook payloads into the transport-neutral queue input."""
     action = str(payload.get("action") or "")
@@ -90,6 +93,10 @@ def webhook_notification(
         conclusion = str(source.get("conclusion") or "").lower()
         if conclusion != "failure":
             return None
+    if event_name == "pull_request_review":
+        review_state = str(source.get("state") or "").lower()
+        if review_state not in {"changes_requested", "commented"}:
+            return None
     url = str(source.get("html_url") or subject.get("html_url") or repository.get("html_url") or "")
     if not url.startswith("https://github.com/"):
         return None
@@ -102,7 +109,7 @@ def webhook_notification(
     login = str(sender.get("login") or "GitHub")
     title = str(subject.get("title") or subject.get("name") or event_name)
     suffix = f" (#{number})" if number else ""
-    return Notification(
+    notification = Notification(
         uid=None,
         message_id=f"<{delivery_id}@github.com>",
         subject=f"[{repo}] {title}{suffix}",
@@ -110,6 +117,14 @@ def webhook_notification(
         body=f"{body}\n\n{url}",
         auth={"spf": True, "dkim": True, "dmarc": True},
     )
+    if event_name != "workflow_run" and classify_github_action(
+        notification.subject,
+        notification.body,
+        bot_logins,
+        message_id=notification.message_id,
+    ) == "archive_notification":
+        return None
+    return notification
 
 
 def persist_shadow_delivery(

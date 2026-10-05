@@ -75,6 +75,14 @@ WEBHOOK_TIMESERIES_MAX_DAYS = 366
 WEBHOOK_TIMESERIES_MAX_HOURLY_DAYS = 31
 
 
+def _expand_systemd_home_specifier(value: str) -> str:
+    if value == "%h":
+        return str(Path.home())
+    if value.startswith("%h/"):
+        return str(Path.home() / value[3:])
+    return value
+
+
 def _knowledge_actor(item: dict[str, Any]) -> str:
     actor = item.get("trigger_actor") or (item.get("actor") if item.get("actor") != "github" else "")
     return str(actor or "").strip().lower()
@@ -265,7 +273,9 @@ class DashboardConfig:
         self.webhook_mode = (webhook_mode or os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_MODE", "shadow")).lower()
         if self.webhook_mode not in {"shadow", "canary"}:
             raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_MODE must be shadow or canary")
-        policy_value = webhook_policy or os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY", "")
+        policy_value = _expand_systemd_home_specifier(
+            str(webhook_policy or os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY", ""))
+        )
         self.webhook_policy = Path(policy_value).expanduser() if policy_value else None
         if self.webhook_mode == "canary" and self.webhook_policy is None:
             raise ValueError("GITHUB_AGENT_BRIDGE_WEBHOOK_POLICY is required in canary mode")
@@ -780,17 +790,23 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         job_id = None
         if config.webhook_mode == "canary":
             policy = Policy.from_file(config.webhook_policy)
-            notification = webhook_notification(event_name, delivery_id, payload)
             repo = str(full_name or "").lower()
-            if notification is None:
-                enqueue_status = "ignored"
-            elif repo not in policy.enabled_repos:
+            if repo not in policy.enabled_repos:
                 enqueue_status = "outside_canary"
             else:
-                job, enqueue_status = JobQueue(config.db).ingest(
-                    notification, policy, source="webhook", source_key=delivery_id,
+                notification = webhook_notification(
+                    event_name,
+                    delivery_id,
+                    payload,
+                    bot_logins=policy.bot_logins,
                 )
-                job_id = job.id if job else None
+                if notification is None:
+                    enqueue_status = "ignored"
+                else:
+                    job, enqueue_status = JobQueue(config.db).ingest(
+                        notification, policy, source="webhook", source_key=delivery_id,
+                    )
+                    job_id = job.id if job else None
         receipt = persist_shadow_delivery(
             config.db,
             delivery_id=delivery_id,

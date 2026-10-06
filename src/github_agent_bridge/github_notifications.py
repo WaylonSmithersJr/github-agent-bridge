@@ -118,13 +118,15 @@ def notification_from_github_thread(thread: dict, gh_bin: str = "gh") -> GitHubN
 
 
 def list_notification_threads(gh_bin: str = "gh", *, all_threads: bool = False, participating: bool = False) -> list[dict]:
-    args = ["api", "-X", "GET", "notifications", "--paginate", "-f", "per_page=100"]
+    args = ["api", "-X", "GET", "notifications", "--paginate", "--slurp", "-f", "per_page=100"]
     if all_threads:
         args.extend(["-f", "all=true"])
     if participating:
         args.extend(["-f", "participating=true"])
     data = run_gh_json(args, gh_bin)
-    return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+    return [item for page in data if isinstance(page, list) for item in page if isinstance(item, dict)]
 
 
 def mark_thread_read(thread_id: str, gh_bin: str = "gh") -> None:

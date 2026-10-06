@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from github_agent_bridge.actors import trigger_actor_details_for_enqueue
-from github_agent_bridge.github_notifications import notification_from_github_thread
+from github_agent_bridge.github_notifications import list_notification_threads, notification_from_github_thread
 from github_agent_bridge.models import Notification
 from github_agent_bridge.parser import extract_github_context
 
@@ -112,3 +112,19 @@ def test_assignment_enqueue_actor_ignores_issue_author_lookup(monkeypatch):
 
     actor = trigger_actor_details_for_enqueue(notification, extract_github_context(body), gh_bin="gh")
     assert actor is None
+
+
+def test_list_notification_threads_flattens_paginated_gh_output(monkeypatch):
+    calls = []
+
+    def fake_run_gh_json(args, gh_bin):
+        calls.append((args, gh_bin))
+        return [[{"id": "1"}], [{"id": "2"}, None]]
+
+    monkeypatch.setattr("github_agent_bridge.github_notifications.run_gh_json", fake_run_gh_json)
+
+    assert list_notification_threads("custom-gh", all_threads=True) == [{"id": "1"}, {"id": "2"}]
+    assert calls == [(
+        ["api", "-X", "GET", "notifications", "--paginate", "--slurp", "-f", "per_page=100", "-f", "all=true"],
+        "custom-gh",
+    )]

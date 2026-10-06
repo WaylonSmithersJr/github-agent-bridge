@@ -157,6 +157,46 @@ def test_dashboard_only_update_can_stage_while_jobs_are_active(tmp_path, monkeyp
     ]
 
 
+def test_webhook_only_update_restarts_only_ingress(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+
+    plan = plan_update(
+        db,
+        repo_dir=tmp_path,
+        installed_version="1.2.3",
+        runner=release_runner("v1.2.4", ["src/github_agent_bridge/webhook.py"]),
+    )
+
+    assert plan["decision"] == "stage_webhook_reload"
+    assert plan["classification"]["webhook_only"] is True
+    assert plan["service_plan"]["immediate"] == [{
+        "command": "try-restart",
+        "unit": "github-agent-bridge-webhook.service",
+        "reason": "webhook ingress update can reload independently",
+    }]
+
+
+def test_shared_dashboard_and_ingress_update_restarts_both_apis(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+
+    plan = plan_update(
+        db,
+        repo_dir=tmp_path,
+        installed_version="1.2.3",
+        runner=release_runner("v1.2.4", ["src/github_agent_bridge/backend.py"]),
+    )
+
+    assert plan["decision"] == "stage_api_reload"
+    assert [item["unit"] for item in plan["service_plan"]["immediate"]] == [
+        "github-agent-bridge-dashboard.service",
+        "github-agent-bridge-webhook.service",
+    ]
+
+
 def test_executor_update_records_pending_reload_when_jobs_are_active(tmp_path, monkeypatch):
     monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
     db = tmp_path / "bridge.sqlite3"

@@ -42,6 +42,10 @@ accepts a possible duplicate rather than risk dropping a legitimate action.
    operational cycle has no unexplained IMAP-only actionable events.
 
 Phase 1 is exposed as `POST /api/webhooks/github` by the dashboard service.
+For production, nginx should route that exact path to the dedicated
+socket-activated `github-agent-bridge-webhook.service` on port 8766. The
+dashboard keeps the route for backward compatibility, but using it couples
+GitHub delivery availability to dashboard/UI restarts.
 For a single trusted owner, configure `GITHUB_AGENT_BRIDGE_WEBHOOK_SECRET`;
 during rotation, `GITHUB_AGENT_BRIDGE_WEBHOOK_PREVIOUS_SECRET` accepts the old
 secret as well. This legacy form accepts any repository signed with that shared

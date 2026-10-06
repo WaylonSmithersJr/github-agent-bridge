@@ -373,6 +373,7 @@ def _autoupdate_systemd_units() -> dict[str, str]:
     return {
         "executor": _env("GITHUB_AGENT_BRIDGE_EXECUTOR_UNIT", "github-agent-bridge.service"),
         "dashboard": _env("GITHUB_AGENT_BRIDGE_DASHBOARD_UNIT", "github-agent-bridge-dashboard.service"),
+        "webhook": _env("GITHUB_AGENT_BRIDGE_WEBHOOK_UNIT", "github-agent-bridge-webhook.service"),
         "reader": _env("GITHUB_AGENT_BRIDGE_READER_TIMER_UNIT", "github-agent-bridge-reader.timer"),
         "monitor": _env("GITHUB_AGENT_BRIDGE_MONITOR_TIMER_UNIT", "github-agent-bridge-monitor.timer"),
         "feedback": _env("GITHUB_AGENT_BRIDGE_FEEDBACK_TIMER_UNIT", "github-agent-bridge-feedback.timer"),
@@ -704,6 +705,124 @@ def _is_admin(config: DashboardConfig, login: str, token: str | None = None) -> 
     return False
 
 
+def _webhook_schema_initializer(config: DashboardConfig):
+    lock = threading.Lock()
+    ready = False
+
+    def ensure() -> None:
+        nonlocal ready
+        if ready:
+            return
+        with lock:
+            if not ready:
+                JobQueue(config.db)
+                ready = True
+
+    return ensure
+
+
+async def _receive_github_webhook(
+    request: Request,
+    config: DashboardConfig,
+    ensure_webhook_schema,
+) -> dict[str, Any]:
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="application_json_required")
+    delivery_id = request.headers.get("x-github-delivery", "").strip()
+    event_name = request.headers.get("x-github-event", "").strip()
+    hook_id = request.headers.get("x-github-hook-id", "").strip() or None
+    signature = request.headers.get("x-hub-signature-256", "").strip()
+    if not delivery_id or not event_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="github_headers_required")
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > config.webhook_max_bytes:
+                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="payload_too_large")
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_content_length")
+    raw_payload = await request.body()
+    if len(raw_payload) > config.webhook_max_bytes:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="payload_too_large")
+    try:
+        payload = json.loads(raw_payload)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_json")
+    repository = payload.get("repository") if isinstance(payload, dict) else None
+    full_name = repository.get("full_name") if isinstance(repository, dict) else None
+    owner = str(full_name or "").partition("/")[0].lower()
+    if config.webhook_secrets_by_owner:
+        webhook_secrets = config.webhook_secrets_by_owner.get(owner, ())
+        if not webhook_secrets:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="repository_owner_not_allowed")
+    else:
+        webhook_secrets = config.webhook_secrets
+    if not verify_signature(raw_payload, signature, webhook_secrets):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_signature")
+    ensure_webhook_schema()
+    enqueue_status = None
+    job_id = None
+    if config.webhook_mode in {"canary", "primary"}:
+        policy = Policy.from_file(config.webhook_policy)
+        repo = str(full_name or "").lower()
+        sender = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
+        sender_login = str(sender.get("login") or "").lower()
+        if config.webhook_mode == "canary" and repo not in policy.webhook_canary_repos:
+            enqueue_status = "outside_canary"
+        elif sender_login in policy.bot_logins:
+            enqueue_status = "ignored_bot"
+        else:
+            notification = webhook_notification(
+                event_name,
+                delivery_id,
+                payload,
+                bot_logins=policy.bot_logins,
+            )
+            if notification is None:
+                enqueue_status = "ignored"
+            else:
+                job, enqueue_status = JobQueue(config.db).ingest(
+                    notification, policy, source="webhook", source_key=delivery_id,
+                )
+                job_id = job.id if job else None
+    receipt = persist_shadow_delivery(
+        config.db,
+        delivery_id=delivery_id,
+        event_name=event_name,
+        raw_payload=raw_payload,
+        hook_id=hook_id,
+        retention_days=config.webhook_retention_days,
+        enqueue_status=enqueue_status,
+        job_id=job_id,
+    )
+    response = {
+        "mode": config.webhook_mode,
+        "status": receipt.status,
+        "event_key": receipt.event_key,
+    }
+    if config.webhook_mode != "shadow":
+        response.update({"enqueue_status": enqueue_status, "job_id": job_id})
+    return response
+
+
+def create_webhook_app(config: DashboardConfig | None = None) -> FastAPI:
+    configure_sentry(service="webhook-ingress")
+    config = config or DashboardConfig()
+    ensure_webhook_schema = _webhook_schema_initializer(config)
+    app = FastAPI(title="GitHub Agent Bridge Webhook Ingress")
+    app.state.dashboard_config = config
+
+    @app.get("/api/health")
+    def health() -> dict[str, Any]:
+        return {"ok": True, "service": "github-agent-bridge-webhook-ingress"}
+
+    @app.post("/api/webhooks/github")
+    async def github_webhook(request: Request) -> dict[str, Any]:
+        return await _receive_github_webhook(request, config, ensure_webhook_schema)
+
+    return app
+
+
 def create_app(config: DashboardConfig | None = None) -> FastAPI:
     configure_sentry(service="dashboard")
     config = config or DashboardConfig()
@@ -720,17 +839,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
     app = FastAPI(title="GitHub Agent Bridge Dashboard API", lifespan=lifespan)
     app.state.dashboard_config = config
     app.state.dashboard_shutdown_event = shutdown_event
-    webhook_schema_lock = threading.Lock()
-    webhook_schema_ready = False
-
-    def ensure_webhook_schema() -> None:
-        nonlocal webhook_schema_ready
-        if webhook_schema_ready:
-            return
-        with webhook_schema_lock:
-            if not webhook_schema_ready:
-                JobQueue(config.db)
-                webhook_schema_ready = True
+    ensure_webhook_schema = _webhook_schema_initializer(config)
 
     assets_dir = config.static_dir / "assets"
     if assets_dir.exists():
@@ -798,83 +907,7 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
 
     @app.post("/api/webhooks/github")
     async def github_webhook_shadow(request: Request) -> dict[str, Any]:
-        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
-            raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="application_json_required")
-        delivery_id = request.headers.get("x-github-delivery", "").strip()
-        event_name = request.headers.get("x-github-event", "").strip()
-        hook_id = request.headers.get("x-github-hook-id", "").strip() or None
-        signature = request.headers.get("x-hub-signature-256", "").strip()
-        if not delivery_id or not event_name:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="github_headers_required")
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                if int(content_length) > config.webhook_max_bytes:
-                    raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="payload_too_large")
-            except ValueError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_content_length")
-        raw_payload = await request.body()
-        if len(raw_payload) > config.webhook_max_bytes:
-            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="payload_too_large")
-        try:
-            payload = json.loads(raw_payload)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_json")
-        repository = payload.get("repository") if isinstance(payload, dict) else None
-        full_name = repository.get("full_name") if isinstance(repository, dict) else None
-        owner = str(full_name or "").partition("/")[0].lower()
-        if config.webhook_secrets_by_owner:
-            webhook_secrets = config.webhook_secrets_by_owner.get(owner, ())
-            if not webhook_secrets:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="repository_owner_not_allowed")
-        else:
-            webhook_secrets = config.webhook_secrets
-        if not verify_signature(raw_payload, signature, webhook_secrets):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_signature")
-        ensure_webhook_schema()
-        enqueue_status = None
-        job_id = None
-        if config.webhook_mode in {"canary", "primary"}:
-            policy = Policy.from_file(config.webhook_policy)
-            repo = str(full_name or "").lower()
-            sender = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
-            sender_login = str(sender.get("login") or "").lower()
-            if config.webhook_mode == "canary" and repo not in policy.webhook_canary_repos:
-                enqueue_status = "outside_canary"
-            elif sender_login in policy.bot_logins:
-                enqueue_status = "ignored_bot"
-            else:
-                notification = webhook_notification(
-                    event_name,
-                    delivery_id,
-                    payload,
-                    bot_logins=policy.bot_logins,
-                )
-                if notification is None:
-                    enqueue_status = "ignored"
-                else:
-                    job, enqueue_status = JobQueue(config.db).ingest(
-                        notification, policy, source="webhook", source_key=delivery_id,
-                    )
-                    job_id = job.id if job else None
-        receipt = persist_shadow_delivery(
-            config.db,
-            delivery_id=delivery_id,
-            event_name=event_name,
-            raw_payload=raw_payload,
-            hook_id=hook_id,
-            retention_days=config.webhook_retention_days,
-            enqueue_status=enqueue_status,
-            job_id=job_id,
-        )
-        response = {
-            "mode": config.webhook_mode,
-            "status": receipt.status,
-            "event_key": receipt.event_key,
-        }
-        if config.webhook_mode != "shadow":
-            response.update({"enqueue_status": enqueue_status, "job_id": job_id})
-        return response
+        return await _receive_github_webhook(request, config, ensure_webhook_schema)
 
     @app.get("/api/webhooks/github/status")
     @app.get("/api/webhooks/github/summary")
@@ -1719,24 +1752,38 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
 app = create_app()
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(*, ingress: bool = False) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=Path(sys.argv[0]).name)
     parser.add_argument("--db", default=os.getenv("GITHUB_AGENT_BRIDGE_DASHBOARD_DB", os.getenv("GITHUB_AGENT_BRIDGE_DB", DEFAULT_DB)))
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--no-auth", action="store_true", help="disable auth for isolated local development only")
+    parser.add_argument("--host", default=os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_HOST", DEFAULT_HOST) if ingress else DEFAULT_HOST)
+    parser.add_argument("--port", type=int, default=int(os.getenv("GITHUB_AGENT_BRIDGE_WEBHOOK_PORT", "8766")) if ingress else DEFAULT_PORT)
+    parser.add_argument("--fd", type=int, help="serve an inherited systemd socket file descriptor")
+    if not ingress:
+        parser.add_argument("--no-auth", action="store_true", help="disable auth for isolated local development only")
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def _serve_uvicorn(application: FastAPI, args: argparse.Namespace) -> int:
     try:
         import uvicorn
     except ImportError:
         print("uvicorn is required; install github-agent-bridge[dashboard]", file=sys.stderr)
         return 2
-    uvicorn.run(create_app(DashboardConfig(db=args.db, require_auth=not args.no_auth)), host=args.host, port=args.port)
+    if args.fd is not None:
+        uvicorn.run(application, fd=args.fd)
+    else:
+        uvicorn.run(application, host=args.host, port=args.port)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return _serve_uvicorn(create_app(DashboardConfig(db=args.db, require_auth=not args.no_auth)), args)
+
+
+def webhook_main(argv: list[str] | None = None) -> int:
+    args = build_parser(ingress=True).parse_args(argv)
+    return _serve_uvicorn(create_webhook_app(DashboardConfig(db=args.db)), args)
 
 
 if __name__ == "__main__":

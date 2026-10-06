@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.71.0 (2026-10-06)
+
+### Features
+
+- Trigger audited webhook pings
+  ([`df47c43`](https://github.com/gisce/github-agent-bridge/commit/df47c43f92215b155ca700527d288f860ca15d8a))
+
+
 ## v0.70.0 (2026-10-06)
 
 ### Features

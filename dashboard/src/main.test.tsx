@@ -193,6 +193,7 @@ describe("dashboard routing and API query helpers", () => {
     expect(screen.getByText("#42")).toBeInTheDocument();
     expect(screen.getByText("enqueued")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Job #81" })).toHaveAttribute("href", "/jobs/81");
+    expect(document.querySelector('time[datetime="2026-10-02T10:05:00.000Z"]')).toBeInTheDocument();
   });
 
   it("shows sanitized hook configuration and can request a fresh ping", async () => {
@@ -205,6 +206,8 @@ describe("dashboard routing and API query helpers", () => {
     expect(screen.getAllByText("issue_comment · created").length).toBeGreaterThan(0);
     expect(screen.getAllByText("delivery-1").length).toBeGreaterThan(0);
     expect(screen.getByText("by @operator")).toBeInTheDocument();
+    expect(document.querySelectorAll("time").length).toBeGreaterThanOrEqual(6);
+    expect(document.querySelector('time[datetime="2026-10-02T11:07:17.000Z"]')).toHaveAttribute("title", "UTC: 2026-10-02T11:07:17.000Z");
     await user.click(screen.getByRole("button", { name: "Send ping" }));
     expect(onPing).toHaveBeenCalledWith("42");
     expect(await screen.findByText("GitHub accepted the ping request.")).toBeInTheDocument();
@@ -217,6 +220,7 @@ describe("dashboard routing and API query helpers", () => {
 
     expect(screen.getByText(/"body": "@giscebot fix it"/)).toBeInTheDocument();
     expect(screen.getByText("Job #91 · running · reply_comment · work_allowed")).toBeInTheDocument();
+    expect(document.querySelector('time[datetime="2026-10-02T11:08:00.000Z"]')).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Open job" }));
     expect(onViewJob).toHaveBeenCalledWith(91);
   });

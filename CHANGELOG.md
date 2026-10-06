@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.70.0 (2026-10-06)
+
+### Features
+
+- Isolate socket-activated webhook ingress
+  ([`4fcabed`](https://github.com/gisce/github-agent-bridge/commit/4fcabedbed4646cccae2d4839b2d0bd5a5f08976))
+
+
 ## v0.69.1 (2026-10-05)
 
 ### Bug Fixes

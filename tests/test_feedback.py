@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 import pytest
@@ -105,11 +106,112 @@ def test_capture_feedback_deduplicates_events(tmp_path):
     assert feedback.list_rules(db, "repo:gisce/erp") == []
 
 
+def test_pending_events_retries_error_proposals(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+
+    feedback.store_proposal(
+        db,
+        {
+            "event_id": event["id"],
+            "is_feedback": False,
+            "scope": event["scope"],
+            "type": "error",
+            "rule": "",
+            "confidence": 0.0,
+            "reason": "classification failed",
+        },
+        auto_approve_confidence=0.8,
+        model="gpt-5.4-mini",
+        error="temporary classifier failure",
+    )
+
+    assert [e["id"] for e in feedback.pending_events(db)] == [event["id"]]
+
+
+def test_pending_events_skips_non_error_proposals(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+
+    feedback.store_proposal(
+        db,
+        {
+            "event_id": event["id"],
+            "is_feedback": False,
+            "scope": event["scope"],
+            "type": "domain_context",
+            "rule": "",
+            "confidence": 0.2,
+            "reason": "Only about this PR.",
+        },
+        auto_approve_confidence=0.8,
+    )
+
+    assert feedback.pending_events(db) == []
+
+
 def test_capture_feedback_ignores_non_actionable_decisions(tmp_path):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)
 
     assert feedback.capture_feedback(db, notification(), context(), "archive_notification", "auto", "work_allowed") is False
+    assert feedback.list_events(db) == []
+
+
+def test_capture_feedback_keeps_archived_pull_request_reviews(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    ctx = GitHubContext(
+        ["https://github.com/gisce/erp/pull/1#pullrequestreview-99"],
+        "gisce/erp",
+        1,
+        review_id=99,
+        target_kind="review",
+    )
+    review = notification(
+        "Per a la propera, prova també desar, tornar a editar i tancar. "
+        "https://github.com/gisce/erp/pull/1#pullrequestreview-99"
+    )
+
+    assert feedback.capture_feedback(
+        db,
+        review,
+        ctx,
+        "archive_notification",
+        "auto",
+        "review_only",
+        trigger_actor="reviewer",
+    )
+
+    events = feedback.list_events(db, "repo:gisce/erp")
+    assert len(events) == 1
+    assert events[0]["github_context"]["review_id"] == 99
+    assert events[0]["context"]["bridge_action"] == "archive_notification"
+
+
+def test_capture_feedback_still_ignores_archived_review_comments(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    ctx = GitHubContext(
+        ["https://github.com/gisce/erp/pull/1#discussion_r99"],
+        "gisce/erp",
+        1,
+        review_comment_id=99,
+        target_kind="review_comment",
+    )
+
+    assert feedback.capture_feedback(
+        db,
+        notification(),
+        ctx,
+        "archive_notification",
+        "auto",
+        "review_only",
+    ) is False
     assert feedback.list_events(db) == []
 
 
@@ -188,6 +290,20 @@ def test_list_rules_orders_newest_seen_first(tmp_path):
     assert [rule["id"] for rule in rules] == ["same-last-seen-newer-created", "newer", "older"]
 
 
+def test_list_applicable_rules_includes_global_org_and_repo_scopes(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.add_rule(db, "global", "operating_rule", "Global rule.", 0.9)
+    feedback.add_rule(db, "org:gisce", "style_preference", "Org rule.", 0.9)
+    feedback.add_rule(db, "repo:gisce/erp", "technical_criterion", "Repo rule.", 0.9)
+    feedback.add_rule(db, "repo:other/project", "technical_criterion", "Other rule.", 0.9)
+    feedback.add_rule(db, "repo:gisce/erp", "technical_criterion", "Low confidence rule.", 0.4)
+
+    rules = feedback.list_applicable_rules(db, "gisce/erp", min_confidence=0.5)
+
+    assert {rule["rule"] for rule in rules} == {"Global rule.", "Org rule.", "Repo rule."}
+
+
 def test_add_rule_rejects_invalid_confidence(tmp_path):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)
@@ -230,10 +346,123 @@ def test_knowledge_moderation_approves_rejects_and_deletes_rules(tmp_path):
     assert feedback.delete_rule(db, rules[0]["id"]) is False
 
 
+def test_update_rule_scope_moves_and_merges_duplicate_target_rule(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    repo_rule = feedback.add_rule(db, "repo:gisce/erp", "style_preference", "Prefer compact feedback in GitHub follow-ups.", 0.7, ["event-1"])
+    global_rule = feedback.add_rule(db, "global", "style_preference", "Prefer compact feedback in GitHub follow-ups.", 0.9, ["event-2"])
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "UPDATE feedback_rules SET created_at=?, last_seen=? WHERE id=?",
+            ("2026-06-01T10:00:00Z", "2026-06-02T10:00:00Z", repo_rule["id"]),
+        )
+        con.execute(
+            "UPDATE feedback_rules SET created_at=?, last_seen=? WHERE id=?",
+            ("2026-06-03T10:00:00Z", "2026-06-04T10:00:00Z", global_rule["id"]),
+        )
+
+    moved = feedback.update_rule_scope(db, repo_rule["id"], "global")
+    rules = feedback.list_rules(db, min_confidence=0)
+
+    assert moved is not None
+    assert moved["id"] == global_rule["id"]
+    assert moved["scope"] == "global"
+    assert moved["confidence"] == 0.9
+    assert moved["observations"] == 2
+    assert moved["created_at"] == "2026-06-01T10:00:00Z"
+    assert moved["last_seen"] == "2026-06-04T10:00:00Z"
+    assert moved["source_events"] == ["event-1", "event-2"]
+    assert [rule["id"] for rule in rules] == [global_rule["id"]]
+
+
+def test_update_rule_scope_preserves_rule_dates(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    rule = feedback.add_rule(db, "repo:gisce/erp", "style_preference", "Prefer compact feedback in GitHub follow-ups.", 0.7, ["event-1"])
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "UPDATE feedback_rules SET created_at=?, last_seen=? WHERE id=?",
+            ("2026-06-01T10:00:00Z", "2026-06-02T10:00:00Z", rule["id"]),
+        )
+
+    moved = feedback.update_rule_scope(db, rule["id"], "org:gisce")
+
+    assert moved is not None
+    assert moved["scope"] == "org:gisce"
+    assert moved["created_at"] == "2026-06-01T10:00:00Z"
+    assert moved["last_seen"] == "2026-06-02T10:00:00Z"
+
+
+def test_list_proposals_includes_source_event_details(tmp_path):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only", trigger_actor="ecarreras")
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+    proposed = feedback.store_proposal(
+        db,
+        {
+            "event_id": event["id"],
+            "is_feedback": True,
+            "scope": "repo:gisce/erp",
+            "type": "technical_criterion",
+            "rule": "Preserve backward compatibility for existing synchronous callers when introducing asynchronous flows.",
+            "confidence": 0.74,
+            "reason": "Useful recurring compatibility criterion.",
+        },
+        auto_approve_confidence=0.9,
+    )
+
+    listed = feedback.list_proposals(db, status="proposed")
+
+    assert listed[0]["id"] == proposed["id"]
+    assert listed[0]["source_event"]["id"] == event["id"]
+    assert listed[0]["source_event"]["trigger_actor"] == "ecarreras"
+    assert listed[0]["source_event"]["github_urls"] == ["https://github.com/gisce/erp/pull/1#issuecomment-10"]
+
+
+def test_approve_proposal_can_react_to_origin_comment(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+    proposed = feedback.store_proposal(
+        db,
+        {
+            "event_id": event["id"],
+            "is_feedback": True,
+            "scope": "repo:gisce/erp",
+            "type": "style_preference",
+            "rule": "Prefer compact feedback in GitHub follow-ups.",
+            "confidence": 0.7,
+            "reason": "Useful recurring style correction.",
+        },
+        auto_approve_confidence=0.9,
+    )
+    reacted = []
+    monkeypatch.setattr(feedback, "react_to_feedback_event", lambda *args, **kwargs: reacted.append((args, kwargs)) or True)
+
+    approved = feedback.approve_proposal(db, proposed["id"], react=True, gh_bin="gh-test")
+
+    assert approved is not None
+    assert approved["status"] == "approved"
+    assert reacted == [((db, event["id"]), {"gh_bin": "gh-test"})]
+
+
 def test_openclaw_json_payload_text_is_extracted():
     raw = '{"result":{"payloads":[{"text":"{\\\"is_feedback\\\":false,\\\"scope\\\":\\\"global\\\",\\\"type\\\":\\\"domain_context\\\",\\\"rule\\\":\\\"\\\",\\\"confidence\\\":0,\\\"reason\\\":\\\"shape test\\\"}"}]}}'
 
     assert feedback._extract_json_object(feedback._openclaw_text_from_json(raw))["reason"] == "shape test"
+
+
+def test_openclaw_top_level_payload_text_is_extracted():
+    raw = json.dumps(
+        {
+            "payloads": [{"text": '{"reason": "current shape"}', "mediaUrl": None}],
+            "meta": {"finalAssistantVisibleText": '{"reason": "current shape"}'},
+        }
+    )
+
+    assert feedback._extract_json_object(feedback._openclaw_text_from_json(raw))["reason"] == "current shape"
 
 
 def test_learning_prompt_uses_packaged_prompt_resource():
@@ -355,6 +584,157 @@ def test_react_to_feedback_comment_posts_heart_to_origin_comment(monkeypatch):
     ]
 
 
+def test_react_to_feedback_comment_resolves_review_comment(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+
+        class Result:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+
+        result = Result()
+        if cmd[2] == "repos/gisce/erp/pulls/1/reviews/99/comments":
+            result.stdout = (
+                '[{"id":123,"html_url":"https://github.com/gisce/erp/pull/1#discussion_r123",'
+                '"body":"Move this setting into FeatureFlags."}]'
+            )
+        return result
+
+    monkeypatch.setattr(feedback.subprocess, "run", fake_run)
+    event = {
+        "comment": "Re: [gisce/erp] PR\n\nMove this setting into FeatureFlags.\n"
+        "https://github.com/gisce/erp/pull/1#pullrequestreview-99",
+        "github_context": {
+            "urls": ["https://github.com/gisce/erp/pull/1#pullrequestreview-99"],
+            "repo": "gisce/erp",
+            "issue_number": 1,
+            "comment_id": None,
+            "review_id": 99,
+            "review_comment_id": None,
+            "commit_comment_id": None,
+            "commit_sha": None,
+            "target_kind": "review",
+            "workflow_run_id": None,
+        },
+    }
+
+    assert feedback.react_to_feedback_comment(event, gh_bin="gh") is True
+    assert calls[-1][4] == "repos/gisce/erp/pulls/comments/123/reactions"
+
+
+def test_react_to_feedback_comment_does_not_guess_review_comment(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+
+        class Result:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+
+        result = Result()
+        if cmd[2] == "repos/gisce/erp/pulls/1/reviews/99/comments":
+            result.stdout = (
+                '[{"id":123,"html_url":"https://github.com/gisce/erp/pull/1#discussion_r123",'
+                '"body":"Move this setting into FeatureFlags."},'
+                '{"id":124,"html_url":"https://github.com/gisce/erp/pull/1#discussion_r124",'
+                '"body":"Add a regression test."}]'
+            )
+        return result
+
+    monkeypatch.setattr(feedback.subprocess, "run", fake_run)
+    event = {
+        "comment": "Re: [gisce/erp] PR\n\nSummary text only.\n"
+        "https://github.com/gisce/erp/pull/1#pullrequestreview-99",
+        "github_context": {
+            "urls": ["https://github.com/gisce/erp/pull/1#pullrequestreview-99"],
+            "repo": "gisce/erp",
+            "issue_number": 1,
+            "comment_id": None,
+            "review_id": 99,
+            "review_comment_id": None,
+            "commit_comment_id": None,
+            "commit_sha": None,
+            "target_kind": "review",
+            "workflow_run_id": None,
+        },
+    }
+
+    assert feedback.react_to_feedback_comment(event, gh_bin="gh") is False
+    assert len(calls) == 1
+
+
+def test_persist_resolved_review_comment_source_updates_event_context(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    ctx = GitHubContext(
+        ["https://github.com/gisce/erp/pull/1#pullrequestreview-99"],
+        "gisce/erp",
+        1,
+        review_id=99,
+        target_kind="review",
+    )
+    n = notification("Move this setting into FeatureFlags. https://github.com/gisce/erp/pull/1#pullrequestreview-99")
+    feedback.capture_feedback(db, n, ctx, "reply_comment", "auto_trusted", "work_allowed")
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+
+    def fake_run(cmd, **kwargs):
+        class Result:
+            returncode = 0
+            stderr = ""
+            stdout = (
+                '[{"id":123,"html_url":"https://github.com/gisce/erp/pull/1#discussion_r123",'
+                '"body":"Move this setting into FeatureFlags."}]'
+            )
+
+        return Result()
+
+    monkeypatch.setattr(feedback.subprocess, "run", fake_run)
+
+    updated = feedback.persist_resolved_review_comment_source(db, event, gh_bin="gh")
+
+    assert updated["source_url"] == "https://github.com/gisce/erp/pull/1#discussion_r123"
+    assert updated["github_context"]["review_comment_id"] == 123
+    assert feedback.list_events(db, "repo:gisce/erp")[0]["source_url"] == "https://github.com/gisce/erp/pull/1#discussion_r123"
+
+
+def test_persist_resolved_review_comment_source_keeps_review_source_when_no_match(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    review_url = "https://github.com/gisce/erp/pull/1#pullrequestreview-99"
+    ctx = GitHubContext([review_url], "gisce/erp", 1, review_id=99, target_kind="review")
+    n = notification(f"Review summary only. {review_url}")
+    feedback.capture_feedback(db, n, ctx, "reply_comment", "auto_trusted", "work_allowed")
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+
+    def fake_run(cmd, **kwargs):
+        class Result:
+            returncode = 0
+            stderr = ""
+            stdout = (
+                '[{"id":123,"html_url":"https://github.com/gisce/erp/pull/1#discussion_r123",'
+                '"body":"Move this setting into FeatureFlags."},'
+                '{"id":124,"html_url":"https://github.com/gisce/erp/pull/1#discussion_r124",'
+                '"body":"Add a regression test."}]'
+            )
+
+        return Result()
+
+    monkeypatch.setattr(feedback.subprocess, "run", fake_run)
+
+    updated = feedback.persist_resolved_review_comment_source(db, event, gh_bin="gh")
+
+    assert updated["source_url"] == review_url
+    assert updated["github_context"]["review_comment_id"] is None
+    stored = feedback.list_events(db, "repo:gisce/erp")[0]
+    assert stored["source_url"] == review_url
+    assert stored["github_context"]["review_comment_id"] is None
+
+
 def test_learn_from_events_passes_policy_route_agent(tmp_path, monkeypatch):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)
@@ -380,7 +760,8 @@ def test_learn_from_events_passes_policy_route_agent(tmp_path, monkeypatch):
     feedback.learn_from_events(db, policy=policy, limit=5, auto_approve_confidence=0.8)
 
     assert captured["agent"] == "gisce-developer"
-    assert captured["session_id"] == "github-agent-bridge-feedback-gisce-developer"
+    event = feedback.list_events(db, "repo:gisce/erp")[0]
+    assert captured["session_id"] == feedback.session_id_for_event("github-agent-bridge-feedback", "gisce-developer", event["id"])
 
 
 def test_learn_from_events_falls_back_when_model_override_is_not_allowed(tmp_path, monkeypatch):
@@ -411,6 +792,31 @@ def test_learn_from_events_falls_back_when_model_override_is_not_allowed(tmp_pat
     assert result["rejected"] == 1
     assert result["errors"] == 0
     assert feedback.list_proposals(db, status="rejected")[0]["model"] == ""
+
+
+def test_learn_from_events_can_fail_closed_when_model_override_is_not_allowed(tmp_path, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(db, notification(), context(), "reply_comment", "auto_trusted", "review_only")
+    seen_models = []
+
+    def fake_classify(event, **kwargs):
+        seen_models.append(kwargs.get("model"))
+        raise RuntimeError('GatewayClientRequestError: Error: Model override "openai/gpt-5.4-mini" is not allowed for agent "main".')
+
+    monkeypatch.setattr(feedback, "classify_event_with_llm", fake_classify)
+
+    result = feedback.learn_from_events(
+        db,
+        model="openai/gpt-5.4-mini",
+        fallback_to_default_model=False,
+        limit=5,
+        auto_approve_confidence=0.8,
+    )
+
+    assert seen_models == ["openai/gpt-5.4-mini"]
+    assert result["errors"] == 1
+    assert feedback.list_proposals(db, status="error")[0]["model"] == "openai/gpt-5.4-mini"
 
 
 def test_learn_from_events_rejects_task_specific_comments(tmp_path, monkeypatch):

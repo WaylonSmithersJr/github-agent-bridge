@@ -24,14 +24,14 @@ def test_monitor_alerts_when_github_release_is_newer(tmp_path, monkeypatch):
     db = tmp_path / "bridge.sqlite3"
     JobQueue(db)
     monkeypatch.setattr(monitor_module, "_package_version", lambda: "0.18.1")
-    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_RELEASE_REPO", "pilipilisbot/github-agent-bridge")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_RELEASE_REPO", "gisce/github-agent-bridge")
     monkeypatch.setattr(
         monitor_module,
         "_latest_github_release",
         lambda repo: {
             "tag_name": "v0.18.2",
             "name": "v0.18.2",
-            "html_url": "https://github.com/pilipilisbot/github-agent-bridge/releases/tag/v0.18.2",
+            "html_url": "https://github.com/gisce/github-agent-bridge/releases/tag/v0.18.2",
             "published_at": "2026-05-25T10:00:00Z",
             "body": "Fixes the install drift warning.",
         },
@@ -41,7 +41,7 @@ def test_monitor_alerts_when_github_release_is_newer(tmp_path, monkeypatch):
 
     assert report.ok is False
     assert report.metrics["package_version"] == "0.18.1"
-    assert report.metrics["release_repo"] == "pilipilisbot/github-agent-bridge"
+    assert report.metrics["release_repo"] == "gisce/github-agent-bridge"
     assert report.metrics["latest_release"]["tag_name"] == "v0.18.2"
     assert any("new github-agent-bridge release v0.18.2 available" in a for a in report.alerts)
     assert any("Fixes the install drift warning." in a for a in report.alerts)
@@ -51,14 +51,14 @@ def test_monitor_does_not_alert_when_github_release_matches(tmp_path, monkeypatc
     db = tmp_path / "bridge.sqlite3"
     JobQueue(db)
     monkeypatch.setattr(monitor_module, "_package_version", lambda: "0.18.2")
-    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_RELEASE_REPO", "pilipilisbot/github-agent-bridge")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_RELEASE_REPO", "gisce/github-agent-bridge")
     monkeypatch.setattr(
         monitor_module,
         "_latest_github_release",
         lambda repo: {
             "tag_name": "v0.18.2",
             "name": "v0.18.2",
-            "html_url": "https://github.com/pilipilisbot/github-agent-bridge/releases/tag/v0.18.2",
+            "html_url": "https://github.com/gisce/github-agent-bridge/releases/tag/v0.18.2",
             "published_at": "2026-05-25T10:00:00Z",
             "body": "Current release.",
         },
@@ -73,13 +73,22 @@ def test_monitor_does_not_alert_when_github_release_matches(tmp_path, monkeypatc
 def test_monitor_release_lookup_failure_is_not_alert(tmp_path, monkeypatch):
     db = tmp_path / "bridge.sqlite3"
     JobQueue(db)
-    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_RELEASE_REPO", "pilipilisbot/github-agent-bridge")
+    monkeypatch.setenv("GITHUB_AGENT_BRIDGE_RELEASE_REPO", "gisce/github-agent-bridge")
     monkeypatch.setattr(monitor_module, "_latest_github_release", lambda repo: None)
 
     report = monitor(db, check_systemd=False)
 
     assert report.ok is True
-    assert report.metrics["latest_release_error"] == "could not fetch latest release for pilipilisbot/github-agent-bridge"
+    assert report.metrics["latest_release_error"] == "could not fetch latest release for gisce/github-agent-bridge"
+
+
+def test_monitor_release_lookup_runtime_error_is_not_fatal(monkeypatch):
+    def fail_urlopen(*args, **kwargs):
+        raise RuntimeError("HTTP 503: Service Unavailable")
+
+    monkeypatch.setattr(monitor_module.urllib.request, "urlopen", fail_urlopen)
+
+    assert monitor_module._latest_github_release("gisce/github-agent-bridge") is None
 
 
 def test_monitor_alerts_on_blocked_job(tmp_path):
@@ -90,6 +99,24 @@ def test_monitor_alerts_on_blocked_job(tmp_path):
     report = monitor(db, check_systemd=False)
     assert report.ok is False
     assert any("blocked jobs: 1" in a for a in report.alerts)
+
+
+def test_monitor_alerts_on_quarantined_notifications(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.quarantine_notification(
+        notif(uid=9, mid="<poison@github.com>", body="bad"),
+        reason="ingestion_error",
+        error="ValueError: missing GitHub context",
+    )
+
+    report = monitor(db, check_systemd=False)
+
+    assert report.ok is False
+    assert report.metrics["quarantined_notifications"] == 1
+    assert report.metrics["latest_quarantined_notification"]["uid"] == 9
+    assert "monitor.quarantined_notifications" in report.metrics["alert_codes"]
+    assert any("quarantined GitHub notifications: 1" in a for a in report.alerts)
 
 
 def test_monitor_alerts_on_old_pending_job(tmp_path):
@@ -174,6 +201,61 @@ def test_monitor_reports_executor_child_processes(tmp_path, monkeypatch):
     assert report.metrics["executor_pid"] == 123
     assert report.metrics["executor_children"] == [{"pid": 456, "cmd": "openclaw agent"}]
     assert "executor children: 456:openclaw agent" in report.text()
+
+
+def test_monitor_alerts_when_registered_job_process_is_dead(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.enqueue(notif(), Policy(trusted_orgs={"gisce"}))
+    executor_id = "executor-123-deadbeef"
+    worker_id = f"{executor_id}/worker-0"
+    job = q.claim_next(worker_id)
+    assert job is not None
+    q.register_runtime_process(
+        job.id,
+        worker_id,
+        executor_id,
+        {"pid": 456, "ppid": 123, "pgid": 456, "sid": 456, "start_time_ticks": 999},
+    )
+    q.set_state("executor_process_tracking_id", executor_id)
+    monkeypatch.setattr(monitor_module, "_is_active", lambda unit: "active")
+    monkeypatch.setattr(monitor_module, "_main_pid", lambda unit: 123)
+    monkeypatch.setattr(monitor_module, "_direct_children", lambda pid: [{"pid": 789, "cmd": "other job"}])
+    monkeypatch.setattr(monitor_module, "_last_service_result", lambda unit: ("success", "0", 42))
+    monkeypatch.setattr(monitor_module, "process_identity_matches", lambda *args, **kwargs: False)
+
+    report = monitor(db)
+
+    assert report.ok is False
+    assert "monitor.running_process_mismatch" in report.metrics["alert_codes"]
+    assert any("PID 456 is dead, reparented, zombie, or reused" in alert for alert in report.alerts)
+    assert "runtime detail: job=1 state=running pid=456" in report.text()
+
+
+def test_monitor_accepts_registered_job_process_identity(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.enqueue(notif(), Policy(trusted_orgs={"gisce"}))
+    executor_id = "executor-123-deadbeef"
+    worker_id = f"{executor_id}/worker-0"
+    job = q.claim_next(worker_id)
+    assert job is not None
+    q.register_runtime_process(
+        job.id,
+        worker_id,
+        executor_id,
+        {"pid": 456, "ppid": 123, "pgid": 456, "sid": 456, "start_time_ticks": 999},
+    )
+    q.set_state("executor_process_tracking_id", executor_id)
+    monkeypatch.setattr(monitor_module, "_is_active", lambda unit: "active")
+    monkeypatch.setattr(monitor_module, "_main_pid", lambda unit: 123)
+    monkeypatch.setattr(monitor_module, "_direct_children", lambda pid: [{"pid": 456, "cmd": "openclaw agent"}])
+    monkeypatch.setattr(monitor_module, "_last_service_result", lambda unit: ("success", "0", 42))
+    monkeypatch.setattr(monitor_module, "process_identity_matches", lambda *args, **kwargs: True)
+
+    report = monitor(db)
+
+    assert "monitor.running_process_mismatch" not in report.metrics.get("alert_codes", [])
 
 
 def test_monitor_persists_process_samples_and_alert_state(tmp_path, monkeypatch):

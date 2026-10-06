@@ -1,6 +1,14 @@
 # `policy.json` reference
 
-`policy.json` controls which GitHub notifications the bridge trusts, which repositories are in scope, which actions are automatic, where OpenClaw agent work is delivered, which operating posture the agent uses, and whether feedback learning is captured.
+`policy.json` controls which GitHub notifications the bridge trusts, which repositories are in scope, which actions are automatic, where OpenClaw agent work is delivered, which operating posture the agent uses, whether the optional LLM intent classifier is enabled, and whether feedback learning is captured.
+
+The machine-readable JSON Schema lives at [`src/github_agent_bridge/policy.schema.json`](../src/github_agent_bridge/policy.schema.json). Before restarting the service, validate an edited policy with:
+
+```bash
+gab validate-policy --policy ~/.config/github-agent-bridge/policy.json
+```
+
+Schema errors include the offending dotted path and reject unknown fields. Validation also applies runtime semantic checks, including referenced prompt override files.
 
 ## Quick map
 
@@ -11,8 +19,9 @@ flowchart TD
     C --> D[repoRoutes/orgRoutes]
     D --> E[repoRoles/orgRoles]
     E --> F[promptOverrides]
-    F --> G[feedbackLearning]
-    G --> H[OpenClaw dispatch]
+    F --> G[intentClassifier]
+    G --> H[feedbackLearning]
+    H --> I[OpenClaw dispatch]
 ```
 
 | Question | Policy area |
@@ -23,6 +32,7 @@ flowchart TD
 | Where should accepted work be delivered? | `repoRoutes`, `orgRoutes` |
 | How much authority should the agent use? | `repoRoles`, `orgRoles` |
 | Which prompt text should be customized? | `promptOverrides` |
+| Should trusted human comments be classified by an LLM before policy routing? | `intentClassifier` |
 | Should feedback-like GitHub comments be captured as rule candidates? | `feedbackLearning` |
 
 Default path in the packaged CLI/systemd examples:
@@ -84,6 +94,16 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
   "feedbackLearning": {
     "enabled": true,
     "minConfidence": 0.5
+  },
+  "intentClassifier": {
+    "enabled": false,
+    "model": "openai/gpt-5.4-mini",
+    "thinking": "low",
+    "minConfidence": 0.75,
+    "onlyWhenParserDefaulted": true,
+    "openclawBin": "openclaw",
+    "sessionId": "github-agent-bridge-intent",
+    "timeout": 60
   }
 }
 ```
@@ -96,8 +116,9 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 | `trustedRepos` | array of strings | `[]` | Exact `owner/repo` names trusted for `trustedAuto` actions. Case-insensitive. |
 | `trustedOrgs` | array of strings | `[]` | GitHub org/user names trusted for all repos under that owner. Case-insensitive. |
 | `trustedTeams` | array of strings | `[]` | GitHub `org/team-slug` entries whose active members are trusted actors for `trustedAuto` actions. Case-insensitive team config; actor membership is checked with `gh api`. |
-| `enabledRepos` | array of strings | `[]` | Optional hard allowlist/canary scope by exact repo. If neither `enabledRepos` nor `enabledOrgs` is set, there is no extra scope restriction. Case-insensitive. |
-| `enabledOrgs` | array of strings | `[]` | Optional hard allowlist/canary scope by owner/org. Repos outside listed repos/orgs are denied before other checks. Case-insensitive. |
+| `enabledRepos` | array of strings | `[]` | Optional hard allowlist/canary scope. If non-empty, all repos not listed here are denied before other checks. Case-insensitive. |
+| `enabledOrgs` | array of strings | `[]` | Optional owner/org allowlist when `enabledRepos` is empty. Case-insensitive. |
+| `webhookCanaryRepos` | array of strings | `[]` | Explicit webhook dual-ingest allowlist. Empty means no webhook delivery may enqueue. It does not narrow IMAP scope. |
 | `repoRoutes` | object | `{}` | Exact per-repo delivery routes. Takes precedence over `orgRoutes`. |
 | `orgRoutes` | object | `{}` | Per-owner delivery routes used when no `repoRoutes` entry matches. |
 | `repoRoles` | object | `{}` | Exact per-repo operating role. Takes precedence over `orgRoles`. |
@@ -105,6 +126,7 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 | `botLogins` | array of strings | `["pilipilisbot"]` | GitHub login names that should count as addressed bots when classifying mentions, assignments, and review requests. |
 | `actions` | object | built-in action defaults | Maps classified notification actions to policy decisions. |
 | `promptOverrides` | object | `{}` | Optional Markdown files that replace selected packaged prompt resources. |
+| `intentClassifier` | object | `{ "enabled": false, "thinking": "low", "minConfidence": 0.75, "onlyWhenParserDefaulted": true, "openclawBin": "openclaw", "sessionId": "github-agent-bridge-intent", "timeout": 60 }` | Controls the optional enqueue-time LLM classifier for trusted human GitHub comments. |
 | `feedbackLearning` | object | `{ "enabled": true, "minConfidence": 0.5, "autoApproveConfidence": 0.8 }` | Controls candidate capture, autonomous learning, and prompt threshold for feedback rules. |
 
 Unknown top-level keys are ignored by the current implementation.
@@ -264,6 +286,23 @@ Result:
 
 This is the preferred key for staged rollout from the legacy inbox worker to the bridge.
 
+## `webhookCanaryRepos`
+
+Independent fail-closed allowlist for webhook dual ingestion:
+
+```json
+{
+  "trustedOrgs": ["your-org"],
+  "enabledRepos": [],
+  "webhookCanaryRepos": ["your-org/your-repo"]
+}
+```
+
+`enabledRepos` still applies to every transport. `webhookCanaryRepos` adds a
+second check only to webhook ingestion, so selecting one webhook canary does
+not deny IMAP notifications from the rest of the trusted scope. Events from
+configured `botLogins` are observed but never enqueued through the webhook.
+
 ## `repoRoutes` and `orgRoutes`
 
 Routes decide where the OpenClaw agent task is delivered after a job is accepted.
@@ -324,9 +363,16 @@ Repository role and work intent are intentionally separate:
 - Role controls judgment and authority: owner, maintainer, contributor, or reviewer.
 - Work intent controls allowed actions: for example `review_only` versus `work_allowed`.
 
-For PR review/discussion follow-ups, the bridge classifies the work intent as `review_only` by default unless the human explicitly asks to implement/apply/fix/push or assigns/has assigned the bot to the PR/issue. Assignment means the bot is expected to own the work; follow-up PR/issue comments are upgraded to `work_allowed` while the authenticated bot remains assigned. This keeps maintainer/owner judgment while preventing commits to a contributor PR branch from review discussion.
+For PR review/discussion follow-ups, the bridge classifies the work intent as `review_only` by default unless the trusted intent classifier or parser identifies an explicit request for repository state changes. Assignment, review requests, and PR authorship can make an event relevant to the configured agent, but they do not by themselves grant write permission. This keeps maintainer/owner judgment while preventing commits to a contributor PR branch from review discussion.
 
 Do not treat `review_only` as an automatic role downgrade to `reviewer`. `owner` + `review_only` is valid and means: review with owner-level judgment, explain why yes/why no, and push back when needed, but do not modify code, commit, push, or update PR metadata.
+
+Executor `--work-intent` filters use this stored work intent when claiming jobs.
+They do not reclassify notifications, grant write permission, or change the
+agent prompt. A `review_only` worker can only claim queued `review_only` jobs, a
+`work_allowed` worker can only claim queued implementation jobs, and an
+unfiltered worker can claim either. See `docs/operations.md` for production
+topologies.
 
 Precedence:
 
@@ -431,6 +477,7 @@ The base prompt is a Python `str.format` template. It may use these placeholders
 | `{thread}` | Issue or PR number. |
 | `{action}` | Classified bridge action. |
 | `{work_intent}` | Work intent, for example `work_allowed` or `review_only`. |
+| `{action_mode}` | Effective action mode exposed to the agent, currently `fix_allowed` for `work_allowed` jobs and `review_only` otherwise. |
 | `{url}` | Short GitHub URL extracted from the notification. |
 | `{message_id}` | Source notification message id. |
 | `{subject}` | Source notification subject. |
@@ -459,11 +506,11 @@ Supported action names currently produced by the parser:
 | Action | Produced when | Typical meaning |
 | --- | --- | --- |
 | `archive_notification` | Notification is routine and does not mention/assign/request the bot. | Persist as handled without agent work. |
-| `sync_after_merge` | Notification text contains `merged`. | Dispatch trusted post-merge workspace cleanup to the agent. |
+| `sync_after_merge` | GitHub sends an explicit merge notification, either via a `/merged@github.com` message id or a PR timeline `#event-...` URL whose text matches a merge event. | Dispatch trusted post-merge workspace cleanup to the agent. |
 | `workflow_run_failed` | Notification text contains a GitHub Actions run URL and a failure marker such as `run failed`, `workflow failed`, or `job failed`. | Dispatch trusted CI failure investigation to the agent. |
 | `submit_review` | GitHub requested a review from the bot. | React 👀 and dispatch review-only work that must end with a formal PR review verdict. |
 | `reply_comment` | Bot mentioned, Copilot review, or PR review/comment notification. | React 👀 and dispatch agent work/reply. |
-| `open_issue` | Bot assigned to an issue/PR. | React 👀 and dispatch agent work for the assigned thread. |
+| `open_issue` | User asks to open an issue, or the bot is assigned to an issue/PR. | React 👀 and dispatch the agent with the separately classified work intent. Assignment alone stays `review_only`. |
 
 Other action names can appear in policy, but they have no effect until parser/dispatcher code produces or handles them.
 
@@ -708,21 +755,25 @@ configured default behavior.
 }
 ```
 
-Resolution order is deterministic:
+Matching routes are composed in deterministic order, from broad defaults to
+specific overrides:
 
-1. repo + action
-2. repo + intent
-3. repo default
-4. global action
-5. global intent
-6. global default
-7. no override
+1. global default
+2. repo default
+3. global intent, complexity, then action
+4. repo intent, complexity, then action
 
-Each route is an object with optional `model` and `thinking` fields. A route can
-set only one field; the bridge appends only the flags that are configured on the
-selected route. Supported `thinking` values are `off`, `minimal`, `low`,
+Each route is an object with optional `model` and `thinking` fields. Every
+matching route overrides only the fields it defines, so a repo default such as
+`{"thinking": "xhigh"}` keeps the inherited model and still allows global
+action or complexity rules to select cheaper settings. Repo-specific action,
+complexity, and intent rules remain the final and most specific overrides. The
+bridge appends only the flags configured in the composed result. Supported
+`thinking` values are `off`, `minimal`, `low`,
 `medium`, `high`, `xhigh`, `adaptive`, and `max`; invalid values fail policy
-load with a clear error.
+load with a clear error. Use provider-qualified model IDs such as
+`openai/gpt-5.4-mini`; bare model names can resolve to a different provider
+after an OpenClaw update.
 
 When a configured route is selected, the executor records a
 `model_route_selected` session event and semantic progress row so job detail and
@@ -730,11 +781,53 @@ session views can explain which override was used.
 
 ### Comment value / no-op reaction rule
 
-For PR/issue comments that produce `reply_comment`, the bridge checks the actual GitHub comment before dispatch. If the comment is not addressed to the authenticated bot and the bot is not assigned, the bridge reacts with 👀 plus 👍 and skips agent dispatch. “Addressed to the bot” currently means the bot is the first mentioned user; later mentions can be merely referential. This avoids low-value “I checked / no extra input” comments when the conversation is clearly directed at someone else.
+For PR/issue comments that produce `reply_comment`, the bridge checks the actual GitHub comment before dispatch. If the comment is not addressed to the authenticated bot and the bot is not assigned, the bridge reacts with 👀 plus 👍 and skips agent dispatch. With `intentClassifier.enabled`, the classifier receives the configured `botLogins` and routed OpenClaw agent as `agent_identity`, then decides whether the event is addressed to the configured agent without assuming a hard-coded bot login. This avoids low-value “I checked / no extra input” comments when the conversation is clearly directed at someone else.
 
 Reviews with no actionable code comments (for example “generated no new comments”, “wasn't able to review any files”, or “no actionable findings”) are treated as no-op: the bridge reacts 👀 + 👍 and skips agent dispatch, even if the bot is assigned.
 
 Agents must also apply the comment value rule before posting: comment only when adding a new finding, decision, direct answer, completed-work evidence, or useful next-step clarification. If the would-be comment only restates visible GitHub state or previous discussion, react 👀/👍 and stay silent.
+
+## Intent classifier
+
+`intentClassifier` controls an optional enqueue-time LLM classifier for trusted GitHub comments and reviews. It is disabled by default; when enabled, the bridge calls OpenClaw with the packaged `prompt_rules/intent_classifier.md` prompt or `promptOverrides.rules.intent_classifier`, expects JSON output, and uses the result only when confidence is high enough. Low-confidence, invalid, timed-out, or failed classifier calls fall back to the deterministic parser result.
+
+Classifier calls use `openclaw agent --local`, isolating enqueue-time routing
+from gateway concurrency, event-loop stalls, and gateway SQLite locks. Normal
+executor, feedback-learning, and interactive gateway calls still need suitable
+OpenClaw concurrency headroom; see
+[`operations.md`](operations.md#openclaw-concurrency-headroom).
+
+The classifier returns structured semantics: whether the event is addressed to the configured agent, the requested action, the work intent, write permission, and the scope of any requested state change. Results not addressed to the configured agent are normalized to `archive_notification` + `review_only`. Results that request `work_allowed` without `write_permission=state_change_allowed` are normalized back to `review_only`.
+
+Example:
+
+```json
+{
+  "intentClassifier": {
+    "enabled": true,
+    "model": "openai/gpt-5.4-mini",
+    "thinking": "low",
+    "minConfidence": 0.75,
+    "onlyWhenParserDefaulted": true,
+    "openclawBin": "openclaw",
+    "sessionId": "github-agent-bridge-intent",
+    "timeout": 60
+  }
+}
+```
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | Enable the LLM classifier for eligible trusted GitHub comments. |
+| `model` | string | unset | Optional OpenClaw model override for classifier calls. When unset, OpenClaw uses its default model for the session/configuration. |
+| `thinking` | string | `low` | OpenClaw thinking level for classifier calls. Supported values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `adaptive`, and `max`. |
+| `minConfidence` | number | `0.75` | Minimum classifier confidence required before replacing the deterministic parser action/work-intent result. |
+| `onlyWhenParserDefaulted` | boolean | `true` | Run the classifier for conservative comment/review classifications and for bot-mentioned comments even when the parser saw implementation-looking language. Set to `false` to let the classifier arbitrate all eligible trusted GitHub comments and reviews. |
+| `openclawBin` | string | `openclaw` | OpenClaw executable used for classifier subprocess calls. |
+| `sessionId` | string | `github-agent-bridge-intent` | Base session id prefix for classifier calls. The bridge derives an isolated per-event session id from this value plus routed agent and GitHub notification/context data. |
+| `timeout` | integer | `60` | Maximum seconds to wait for one classifier call before falling back to parser behavior. |
+
+The classifier runs before policy decision mapping, but it does not grant trust or bypass authorization. Source trust, `enabledRepos`, `actions`, `trustedRepos`, `trustedOrgs`, routes, roles, and the final `Policy.decision` checks still apply after classification.
 
 ## Feedback learning
 
@@ -747,7 +840,7 @@ Agents must also apply the comment value rule before posting: comment only when 
     "minConfidence": 0.5,
     "autoApproveConfidence": 0.8,
     "maxEventsPerRun": 10,
-    "model": "gpt-5.4-mini",
+    "model": "openai/gpt-5.4-mini",
     "thinking": "low"
   }
 }

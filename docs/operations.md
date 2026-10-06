@@ -13,6 +13,7 @@ This guide is for running and monitoring the bridge.
 | Environment | `systemd/env.example` copied to a private env file |
 | Units | `systemd/*.service`, `systemd/*.timer` |
 | Reader wrapper | packaged `github-agent-bridge-reader-run` console script |
+| Autoupdate wrapper | packaged `github-agent-bridge-autoupdate-run` console script |
 
 ## Production commands
 
@@ -29,6 +30,71 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   --policy ~/.config/github-agent-bridge/policy.json \
   run --mode live --workers 4 --review-timeout 900 --work-timeout 3600
 ```
+
+Intent-specific executor pool:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  --policy ~/.config/github-agent-bridge/policy.json \
+  run --mode live --workers 2 --work-intent review_only --review-timeout 900
+```
+
+Use `--work-intent` when an operator wants separate worker capacity for cheap
+review/comment follow-ups and heavier implementation jobs. Allowed values are
+`review_only`, `work_allowed`, and `all`; the flag may be repeated or
+comma-separated. Omitting it or passing `all` keeps the default all-intents
+executor behavior.
+
+A common production topology is:
+
+| Pool | Example command | Purpose |
+| --- | --- | --- |
+| General | `gab ... run --mode live --workers 2` | Claims any pending job. Keeps the system simple when the queue is small. |
+| Review-only | `gab ... run --mode live --workers 2 --work-intent review_only` | Keeps replies, reviews, and analysis moving even when implementation work is backed up. |
+| Work-only | `gab ... run --mode live --workers 1 --work-intent work_allowed` | Caps concurrent state-changing work so long-running edits do not consume all executor slots. |
+
+Intent filters apply only while claiming pending jobs. The queue still enforces
+the per-`work_key` guard, so two pools cannot run two jobs for the same
+issue/PR/thread concurrently. If every running executor is filtered to
+`review_only`, `work_allowed` jobs remain pending until a general or work-only
+executor is available; `gab monitor` will report old pending jobs normally.
+
+For systemd installs, set `GITHUB_AGENT_BRIDGE_WORK_INTENT` in the private env
+file read by the service:
+
+```bash
+# ~/.config/github-agent-bridge/env
+GITHUB_AGENT_BRIDGE_MODE=live
+GITHUB_AGENT_BRIDGE_WORKERS=2
+GITHUB_AGENT_BRIDGE_WORK_INTENT=review_only
+```
+
+### OpenClaw concurrency headroom
+
+The executor workers run long OpenClaw agent turns, while feedback learning and
+interactive operations make shorter calls through the gateway. These gateway
+calls consume OpenClaw's global agent concurrency, so
+`agents.defaults.maxConcurrent` should be **greater than** the bridge worker
+count. Otherwise four busy workers can fill a four-slot OpenClaw queue and
+starve other gateway work.
+
+The enqueue-time intent classifier is deliberately different: the bridge calls
+`openclaw agent --local` for an isolated one-shot classification. This keeps the
+reader independent from gateway queue saturation, event-loop stalls, and
+gateway SQLite lock contention. Classifier calls are sequential in the reader,
+so they do not add another pool of concurrent bridge jobs.
+
+For the standard four-worker deployment, use eight OpenClaw slots:
+
+```bash
+openclaw config set agents.defaults.maxConcurrent 8 --strict-json
+openclaw config validate
+```
+
+Keep `GITHUB_AGENT_BRIDGE_WORKERS=4`; the extra OpenClaw slots are headroom for
+feedback and interactive operations, not additional bridge jobs. As a minimum
+sizing rule use `maxConcurrent >= workers + 2`; eight is the recommended value
+for four workers when feedback learning and interactive use are active.
 
 Reader timer job:
 
@@ -86,6 +152,31 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 
 Use `--no-persist-observability` for ad hoc monitor runs that should not write
 observability records.
+
+## Sentry error reporting
+
+Sentry is optional and disabled by default. Install the extra in the same
+virtualenv used by the services:
+
+```bash
+python -m pip install 'github-agent-bridge[sentry]'
+```
+
+Then set the DSN in the private systemd environment file:
+
+```text
+GITHUB_AGENT_BRIDGE_SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
+GITHUB_AGENT_BRIDGE_SENTRY_ENVIRONMENT=production
+GITHUB_AGENT_BRIDGE_SENTRY_RELEASE=
+GITHUB_AGENT_BRIDGE_SENTRY_TRACES_SAMPLE_RATE=
+GITHUB_AGENT_BRIDGE_SENTRY_PROFILES_SAMPLE_RATE=
+```
+
+`SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`,
+`SENTRY_TRACES_SAMPLE_RATE`, and `SENTRY_PROFILES_SAMPLE_RATE` are also
+honored for compatibility, but prefer the `GITHUB_AGENT_BRIDGE_*` names in this
+service's env file. If a DSN is set without `sentry-sdk` installed, the bridge
+continues running without external error reporting.
 
 ## Safe update planning
 
@@ -155,7 +246,7 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 The default install command is:
 
 ```bash
-python -m pip install git+https://github.com/pilipilisbot/github-agent-bridge.git@<target-tag>
+python -m pip install git+https://github.com/gisce/github-agent-bridge.git@<target-tag>
 ```
 
 Set `GITHUB_AGENT_BRIDGE_AUTOUPDATE_INSTALL_COMMAND` or pass
@@ -163,9 +254,50 @@ Set `GITHUB_AGENT_BRIDGE_AUTOUPDATE_INSTALL_COMMAND` or pass
 Python executable, or another package source. Use `--skip-install` or
 `--skip-systemd-actions` for a partial operator-controlled run.
 
-`--apply` refuses releases that include SQLite schema/migration changes for now.
-Those still need the follow-up migration workflow with DB backup, migration
-status tracking, rollback/degraded-state handling, and post-checks.
+For releases that include SQLite schema/migration changes, `--apply` stays
+conservative. If the active queue is not quiet, it refuses before installing and
+records `active_jobs_block_migration`. If the queue is quiet, it backs up the
+SQLite database first, installs the target package, runs the packaged schema
+initialization from a fresh Python subprocess, restarts the safe immediate
+systemd units, and then runs post-checks for installed version, queue state, and
+restarted services. Set `GITHUB_AGENT_BRIDGE_AUTOUPDATE_BACKUP_DIR` or pass
+`--backup-dir` to choose where the pre-migration SQLite backups are written.
+Migration or post-check failures are recorded in autoupdate state with
+`degraded=true`, the backup path, command output, and the blocker that needs
+operator recovery.
+
+Dashboard admins can run the same first-step workflow from the autoupdate notice:
+`Check now` refreshes and records the plan, `Apply update` runs the immediate
+safe subset, and `Complete reload` runs the recorded deferred reload once the
+queue is quiet. These buttons are admin-only; migration releases require a quiet
+queue before `Apply update` will install or restart anything. A refresh-only
+check does not arm the deferred executor completion action; the dashboard only
+enables completion after an update has been applied/staged.
+
+When a previous `--record --apply` run left `executor_reload_pending=true`,
+rerun the recorded deferred actions after the active queue drains:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  update --complete-pending --json
+```
+
+This command reads the persisted autoupdate state instead of checking GitHub or
+installing the package again. It exits without touching services while
+`pending`, `running`, or `waiting_approval` jobs exist; once the queue is quiet
+it runs the deferred systemd actions and clears the pending reload marker.
+Migration-blocked updates should be retried with `--apply` or the dashboard
+`Apply update` action after the queue drains so the backup, schema application,
+restart, and post-check sequence can run in one quiet window.
+
+Install and enable `github-agent-bridge-autoupdate.timer` to retry that
+completion pass automatically. The timer only calls
+`update --complete-pending`; it does not check GitHub, install a package, or
+restart the executor while active jobs remain in the queue:
+
+```bash
+systemctl --user enable --now github-agent-bridge-autoupdate.timer
+```
 
 Running-job age is not treated as a failure signal by itself. The monitor uses
 the latest semantic heartbeat, visible OpenClaw output, and persisted
@@ -175,6 +307,17 @@ semantic or visible progress update before the monitor considers it quiet.
 The alert wrapper uses the same composite stalled-job alert before automatic
 unlock or child termination. It does not unlock every old running job; it passes
 only the job ids that the monitor flagged as stalled.
+
+Each live dispatch also records its executor generation, worker id, root PID,
+parent PID, process group/session ids, and Linux process start time in the job
+metadata. The start time prevents PID reuse from making a dead job look alive.
+When the monitor finds a running job whose registered root process is dead,
+reparented, reused, or owned by another executor generation, it restarts the
+complete executor systemd cgroup and leaves the affected work blocked. This
+restart is deliberately broader than `killpg`: tools may create new process
+groups or sessions, but they remain in the service cgroup and are therefore
+terminated together. `KillMode=control-group` and `TimeoutStopSec=30s` in the
+executor unit make that cleanup explicit.
 
 Set `GITHUB_AGENT_BRIDGE_KILL_STALE_CHILDREN=1` in the private systemd env file
 to let `github-agent-bridge-monitor-alert` terminate stale executor child
@@ -198,17 +341,41 @@ a job URL to open the dashboard with that job's session, worklog, activity feed
 and GitHub links selected. The UI is a Vite + React + TypeScript app styled with
 Tailwind and operational components, using TanStack Query for API state and
 Recharts for percentile charts.
+Webhook administrators can request a configuration refresh from a hook detail
+page. This runs `gh api --method POST <validated-ping-path>` under the dashboard
+service identity, so `gh auth status` must report an account with organization
+or repository webhook write permission. Each request and result is retained in
+`webhook_hook_actions`; raw CLI errors are audited but are not returned to the
+browser.
 The process activity API and dashboard distinguish live executor process state,
 persisted process activity, semantic job progress, and visible transcript/output
 progress so operators can tell whether a running job is merely alive or actually
 making useful progress.
 The System page lists configured user-level systemd units and lets operators
 expand a unit row to follow its live journal tail in place.
+When the dashboard process receives a shutdown request, active SSE streams for
+job sessions and journal tails are signaled to close promptly. This lets
+dashboard-only autoupdates restart the FastAPI service without waiting for
+long-lived browser streams to hit the systemd stop timeout.
 Timestamps stay stored and returned by the API in UTC, while the browser renders
 them in the viewer's local timezone from `Intl.DateTimeFormat`; hovering a
 rendered timestamp shows the UTC value.
 Production serves the static bundle from
 `src/github_agent_bridge/dashboard_static`.
+
+Public webhook ingestion should use the separate
+`github-agent-bridge-webhook.socket` and `github-agent-bridge-webhook.service`.
+The ingress app exposes only `GET /api/health` and
+`POST /api/webhooks/github`; dashboard, OAuth, monitoring and administration
+routes are deliberately absent. systemd owns `127.0.0.1:8766` and passes file
+descriptor 3 to Uvicorn, retaining queued TCP connections across short process
+restarts. Consequently a dashboard/UI deployment does not interrupt webhook
+delivery, and an ingress deployment has no connection-refused gap while the
+service is replaced.
+When VAPID keys are configured and the dashboard is exposed over HTTPS, signed-in
+users can enable the header bell control. The executor sends final `done` and
+`blocked` job notifications through those browser push subscriptions for the
+triggering GitHub actor and coalesced human actors.
 
 The API uses GitHub OAuth sessions by default. Configure these values in
 `~/.config/github-agent-bridge/env`:
@@ -222,6 +389,13 @@ GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_ORGS=example-org
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS=example-org/platform
 GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS=alice
 GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS=example-org/bridge-admins
+GITHUB_AGENT_BRIDGE_DASHBOARD_PUBLIC_URL=https://bridge.example.com
+GITHUB_AGENT_BRIDGE_WEB_PUSH_VAPID_PUBLIC_KEY=replace-with-vapid-public-key
+GITHUB_AGENT_BRIDGE_WEB_PUSH_VAPID_PRIVATE_KEY=replace-with-vapid-private-key
+GITHUB_AGENT_BRIDGE_WEB_PUSH_VAPID_CONTACT=mailto:admin@example.com
+GITHUB_AGENT_BRIDGE_GITHUB_APP_ID=your-github-app-id
+GITHUB_AGENT_BRIDGE_GITHUB_APP_SLUG=
+GITHUB_AGENT_BRIDGE_WEB_PUSH_ICON_URL=
 ```
 
 See [`dashboard-github-oauth.md`](dashboard-github-oauth.md) for the GitHub
@@ -259,7 +433,7 @@ GET /
 GET /jobs/{id}
 GET /api/health
 GET /api/status
-GET /api/jobs?status=pending&repo=pilipilisbot/github-agent-bridge&limit=20
+GET /api/jobs?status=pending&repo=gisce/github-agent-bridge&limit=20
 GET /api/jobs/{id}
 GET /api/jobs/{id}/logs
 GET /api/jobs/{id}/session
@@ -321,16 +495,60 @@ before it is returned to the authenticated dashboard. The process activity panel
 uses persisted process samples for a compact CPU history line chart when monitor
 samples exist, and falls back to the live executor snapshot otherwise.
 
+### Run history and runtime accounting
+
+Every successful queue claim creates a `job_runs` row with its own attempt,
+worker, OpenClaw session id, and start time. Every transition out of `running`
+closes that run with a finish time and a `done`, `blocked`, `requeued`, or
+`cancelled` result. The `started_at` and `finished_at` columns on `jobs` remain a
+compatibility summary of the current or latest attempt; runtime metrics use
+completed `job_runs` as their source of truth.
+
+`GET /api/metrics/summary` assigns a completed run to the dashboard-local day
+that contains the largest share of its elapsed runtime. A tie is assigned to the
+local start day, and monthly totals are derived from that selected day. Runtime
+is measured in UTC elapsed seconds, so DST changes do not add or lose execution
+time. The response retains the legacy `jobs` count fields as aliases for run
+counts and also returns explicit `runs`, `work_runs`, and `review_runs` fields.
+
+Schema initialization backfills at most one recoverable interval per legacy
+job. That row has result `historical` and `is_estimated=1`; earlier attempts are
+not reconstructed from the old aggregate fields. Run rows have the same
+retention lifecycle as their parent job and are removed by `ON DELETE CASCADE`
+when that job is deleted. They are not independently age-pruned because doing
+so would silently rewrite historical usage totals; deployments should apply any
+future job-retention policy to `jobs`, which also bounds run storage.
+
 When publishing the dashboard through nginx, disable buffering for the proxied
-dashboard location so SSE events flush immediately:
+dashboard location so SSE events flush immediately. Also intercept upstream
+restart errors so browser users see a short auto-refreshing maintenance page
+instead of nginx's generic "Bad Gateway" response while the dashboard service is
+restarting. A complete example is available in
+[`nginx-dashboard.conf`](nginx-dashboard.conf).
+The example routes the exact webhook path to the socket-activated ingress on
+port 8766 before the generic dashboard location.
 
 ```nginx
 location / {
     proxy_pass http://127.0.0.1:8765;
     proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_buffering off;
     proxy_cache off;
     proxy_read_timeout 1h;
+    proxy_intercept_errors on;
+    error_page 502 503 504 = @dashboard_restarting;
+}
+
+location @dashboard_restarting {
+    internal;
+    default_type text/html;
+    add_header Cache-Control "no-store" always;
+    add_header Retry-After "5" always;
+    return 503 '<!doctype html><title>Dashboard restarting</title><meta http-equiv="refresh" content="5"><h1>Dashboard restarting</h1><p>The bridge dashboard is applying a restart. This page will retry automatically.</p>';
 }
 ```
 
@@ -377,7 +595,7 @@ newer release is available. The alert includes the release URL and the first
 non-empty release-note line so operators can see what changed before updating:
 
 ```bash
-GITHUB_AGENT_BRIDGE_RELEASE_REPO=pilipilisbot/github-agent-bridge \
+GITHUB_AGENT_BRIDGE_RELEASE_REPO=gisce/github-agent-bridge \
   gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 monitor --json
 ```
 
@@ -401,6 +619,19 @@ Curated rules injected into agent prompts can be inspected with:
 gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   feedback-rules --scope repo:owner/name --min-confidence 0.5
 ```
+
+To inject the same curated rules into a non-bridge agent workflow, render them
+as prompt text:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  --policy ~/.config/github-agent-bridge/policy.json \
+  rules --repo owner/name
+```
+
+The `rules` command uses the policy `feedbackLearning.minConfidence` threshold
+unless `--min-confidence` is provided, and it includes matching `global`,
+`org:owner`, and `repo:owner/name` rules.
 
 Capture is controlled by `policy.json` `feedbackLearning.enabled`; the prompt
 threshold comes from `feedbackLearning.minConfidence`.
@@ -427,7 +658,7 @@ work agents. Configure it in `policy.json`:
 ```json
 {
   "feedbackLearning": {
-    "model": "gpt-5.4-mini",
+    "model": "openai/gpt-5.4-mini",
     "thinking": "low",
     "sessionId": "github-agent-bridge-feedback"
   }
@@ -453,17 +684,17 @@ to move low-risk actions to lighter models without changing implementation jobs:
   "modelRoutes": {
     "byAction": {
       "sync_after_merge": {
-        "model": "gpt-5.4-mini",
+        "model": "openai/gpt-5.4-mini",
         "thinking": "low"
       },
       "workflow_run_failed": {
-        "model": "gpt-5.4-mini",
+        "model": "openai/gpt-5.4-mini",
         "thinking": "medium"
       }
     },
     "byIntent": {
       "review_only": {
-        "model": "gpt-5.4-mini",
+        "model": "openai/gpt-5.4-mini",
         "thinking": "medium"
       }
     }
@@ -501,9 +732,10 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 retry <job-id>
 ```
 
 Dashboard users listed in `GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS` or
-`GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS` can also sign in and retry blocked,
-denied, or waiting-approval jobs from the job detail page. The dashboard records
-the admin login in the job worklog.
+`GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS` can also sign in and retry blocked
+jobs from the job detail page. Jobs denied by policy or awaiting approval cannot
+be retried; a new event must pass policy. The dashboard records the admin login
+in the job worklog.
 
 For `reply_comment` jobs, the executor checks GitHub before dispatching. If the
 authenticated bot has already commented after the triggering issue comment, the

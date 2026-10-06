@@ -13,16 +13,18 @@ from pathlib import Path
 
 from . import feedback
 from .actors import backfill_trigger_actors
-from .autoupdate import apply_update_plan, plan_update, record_update_plan
+from .autoupdate import apply_update_plan, complete_pending_reload, plan_update, record_update_plan
+from .cancellation import cancel_running_job
 from .dashboard_data import inspect_db_read_only, list_jobs
-from .dispatch import GitHubClient, OpenClawDispatcher, RunMode
+from .dispatch import FEEDBACK_LEARNING_RULES, GitHubClient, OpenClawDispatcher, RunMode, prompt_rule
 from .executor import ExecutorConfig, ExecutorPool
 from .github_notifications import list_notification_threads, mark_thread_read, notification_from_github_thread
 from .models import Notification, utc_now
 from .monitor import MonitorThresholds, monitor, report_json
-from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS
+from .mcp import authenticate_token, create_token, list_tokens, revoke_token, serve_stdio
+from .observability import DEFAULT_PROCESS_SAMPLE_RETENTION_SECONDS, configure_sentry
 from .parser import decode_header_value, extract_body_text, is_github_notification_message, parse_auth_results
-from .policy import Policy
+from .policy import Policy, validate_policy_file
 from .queue import JobQueue
 from .reader import ImapConfig, ImapReader, imap_mailbox_arg
 
@@ -86,6 +88,16 @@ def notification_from_comment_url(url: str, gh_bin: str = "gh", message_id_prefi
 def cmd_init_db(args: argparse.Namespace) -> int:
     JobQueue(args.db)
     print(f"initialized {args.db}")
+    return 0
+
+
+def cmd_validate_policy(args: argparse.Namespace) -> int:
+    try:
+        validate_policy_file(args.policy)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"invalid policy: {exc}", file=sys.stderr)
+        return 1
+    print(f"valid policy: {Path(args.policy).expanduser()}")
     return 0
 
 
@@ -179,6 +191,7 @@ def cmd_read_github_notifications_once(args: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     q = JobQueue(args.db); policy = load_policy(args.policy)
     mode = RunMode(args.mode)
+    work_intents = parse_work_intents(args.work_intent)
     dispatcher = OpenClawDispatcher(
         args.openclaw_bin,
         args.node_bin,
@@ -191,9 +204,36 @@ def cmd_run(args: argparse.Namespace) -> int:
         cli_grace_seconds=args.cli_grace,
         feedback_db_path=args.db,
     )
-    pool = ExecutorPool(q, policy, dispatcher, GitHubClient(args.gh_bin, mode=mode), ExecutorConfig(args.workers, args.idle_sleep, args.once))
+    pool = ExecutorPool(
+        q,
+        policy,
+        dispatcher,
+        GitHubClient(args.gh_bin, mode=mode),
+        ExecutorConfig(
+            workers=args.workers,
+            idle_sleep_seconds=args.idle_sleep,
+            run_once=args.once,
+            work_intents=work_intents,
+        ),
+    )
     pool.run()
     return 0
+
+
+def parse_work_intents(values: list[str] | None) -> frozenset[str] | None:
+    if not values:
+        return None
+    allowed = {"review_only", "work_allowed"}
+    selected: set[str] = set()
+    for raw_value in values:
+        for raw_part in raw_value.split(","):
+            part = raw_part.strip().lower()
+            if not part or part == "all":
+                continue
+            if part not in allowed:
+                raise SystemExit(f"unknown work intent {part!r}; allowed values: all, review_only, work_allowed")
+            selected.add(part)
+    return frozenset(selected) if selected else None
 
 
 def job_dict(job):
@@ -238,9 +278,39 @@ def cmd_dismiss(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_cancel(args: argparse.Namespace) -> int:
+    result = cancel_running_job(
+        JobQueue(args.db),
+        args.job_id,
+        actor=args.actor,
+        reason=args.reason,
+        github=GitHubClient(args.gh_bin, mode=RunMode.SHADOW if args.no_github_comment else RunMode.LIVE),
+        signal_grace_seconds=args.signal_grace,
+    )
+    print(json.dumps({
+        "job_id": args.job_id,
+        "cancelled": result.cancelled,
+        "signalled": result.signalled,
+        "followup_url": result.followup_url,
+        "detail": result.detail,
+    }, ensure_ascii=False))
+    return 0 if result.cancelled else 1
+
+
 def cmd_unlock_stale(args: argparse.Namespace) -> int:
     n = JobQueue(args.db).unlock_stale(args.older_than, job_ids=args.job_id)
     print(json.dumps({"unlocked": n}, ensure_ascii=False))
+    return 0
+
+
+def cmd_block_running(args: argparse.Namespace) -> int:
+    blocked = JobQueue(args.db).block_running(
+        "orphaned running job reconciled by monitor",
+        args.reason,
+        job_ids=args.job_id,
+        older_than_seconds=args.older_than,
+    )
+    print(json.dumps({"blocked": blocked, "count": len(blocked)}, ensure_ascii=False))
     return 0
 
 
@@ -272,6 +342,14 @@ def cmd_monitor(args: argparse.Namespace) -> int:
 
 
 def cmd_update(args: argparse.Namespace) -> int:
+    if args.complete_pending:
+        completion = complete_pending_reload(
+            args.db,
+            systemctl_bin=args.systemctl_bin,
+        )
+        print(json.dumps({"completion": completion}, ensure_ascii=False, indent=2 if args.json else None))
+        return 0 if completion.get("completed") else 2
+
     plan = plan_update(
         args.db,
         repo=args.repo,
@@ -291,11 +369,17 @@ def cmd_update(args: argparse.Namespace) -> int:
         install_command = shlex.split(args.install_command) if args.install_command else None
         payload["execution"] = apply_update_plan(
             plan,
+            db=args.db,
             repo=args.repo,
+            backup_dir=args.backup_dir,
             install_command=install_command,
             systemctl_bin=args.systemctl_bin,
             run_install=not args.skip_install,
+            run_migrations=not args.skip_migrations,
             run_systemd=not args.skip_systemd_actions,
+            run_postchecks=not args.skip_postchecks,
+            policy_path=args.policy,
+            openclaw_bin=args.openclaw_bin,
         )
     if args.record:
         payload["state"] = record_update_plan(args.db, plan)
@@ -311,6 +395,16 @@ def cmd_feedback_rules(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rules(args: argparse.Namespace) -> int:
+    policy = load_policy(args.policy)
+    min_confidence = args.min_confidence if args.min_confidence is not None else policy.feedback_learning.min_confidence
+    rules = feedback.list_applicable_rules(args.db, repo=args.repo, min_confidence=min_confidence)
+    context = feedback.format_rules_context(args.repo, min_confidence, rules)
+    template = prompt_rule("feedback_learning", FEEDBACK_LEARNING_RULES, policy)
+    print(template.format(repo=args.repo.strip().lower(), min_confidence=min_confidence, rules=context), end="")
+    return 0
+
+
 def cmd_feedback_events(args: argparse.Namespace) -> int:
     print(json.dumps({"events": feedback.list_events(args.db, args.scope, args.limit)}, ensure_ascii=False, indent=2))
     return 0
@@ -318,7 +412,12 @@ def cmd_feedback_events(args: argparse.Namespace) -> int:
 
 def cmd_feedback_rule_add(args: argparse.Namespace) -> int:
     rule = feedback.add_rule(args.db, args.scope, args.type, args.rule, args.confidence, args.source_event)
-    print(json.dumps({"rule": rule}, ensure_ascii=False, indent=2))
+    reacted = 0
+    if not args.no_react:
+        for event_id in args.source_event:
+            if feedback.react_to_feedback_event(args.db, event_id, gh_bin=args.gh_bin):
+                reacted += 1
+    print(json.dumps({"rule": rule, "reacted": reacted}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -340,6 +439,7 @@ def cmd_feedback_learn(args: argparse.Namespace) -> int:
         auto_approve_confidence=args.auto_approve_confidence if args.auto_approve_confidence is not None else policy.feedback_learning.auto_approve_confidence,
         timeout=args.timeout,
         prompt_template=feedback.load_prompt_override(classifier_override) if classifier_override else None,
+        fallback_to_default_model=policy.feedback_learning.fallback_to_default_model,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
@@ -350,12 +450,44 @@ def cmd_feedback_proposals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp_token_create(args: argparse.Namespace) -> int:
+    JobQueue(args.db)
+    payload = create_token(args.db, args.name, expires_at=args.expires_at, user_login=args.user, created_by=args.created_by)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_mcp_tokens(args: argparse.Namespace) -> int:
+    JobQueue(args.db)
+    print(json.dumps({"tokens": list_tokens(args.db, include_revoked=args.include_revoked, user_login=args.user)}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_mcp_token_revoke(args: argparse.Namespace) -> int:
+    JobQueue(args.db)
+    revoked = revoke_token(args.db, args.token_id)
+    print(json.dumps({"token_id": args.token_id, "revoked": revoked}, ensure_ascii=False))
+    return 0 if revoked else 1
+
+
+def cmd_mcp_serve(args: argparse.Namespace) -> int:
+    JobQueue(args.db)
+    token = args.token or os.getenv("GITHUB_AGENT_BRIDGE_MCP_TOKEN", "")
+    if not authenticate_token(args.db, token):
+        print("invalid MCP token", file=sys.stderr)
+        return 2
+    return serve_stdio(args.db)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog=Path(sys.argv[0]).name)
     p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--policy", default=None)
     sub = p.add_subparsers(required=True)
     s = sub.add_parser("init-db"); s.set_defaults(func=cmd_init_db)
+    s = sub.add_parser("validate-policy", help="validate a policy file against the published schema")
+    s.add_argument("--policy", required=True)
+    s.set_defaults(func=cmd_validate_policy)
     s = sub.add_parser("enqueue-json"); s.add_argument("file"); s.set_defaults(func=cmd_enqueue_json)
     s = sub.add_parser("enqueue-comment-url", help="fetch a GitHub issue/PR comment URL and enqueue it as a trusted notification")
     s.add_argument("url")
@@ -384,6 +516,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--timeout", type=int, default=3600, help="fallback OpenClaw agent timeout in seconds")
     s.add_argument("--review-timeout", type=int, default=900, help="OpenClaw agent timeout for review_only jobs")
     s.add_argument("--work-timeout", type=int, default=3600, help="OpenClaw agent timeout for work_allowed jobs")
+    s.add_argument("--work-intent", action="append", help="limit this executor to work intents: all, review_only, work_allowed; repeat or comma-separate")
     s.add_argument("--cli-grace", type=int, default=60, help="extra seconds the bridge waits for openclaw CLI cleanup after agent timeout")
     s.add_argument("--openclaw-bin", default=os.getenv("OPENCLAW_BIN", "openclaw")); s.add_argument("--node-bin", default=os.getenv("NODE_BIN"))
     s.add_argument("--gh-bin", default="gh"); s.add_argument("--channel", default=os.getenv("GITHUB_AGENT_BRIDGE_DEFAULT_CHANNEL", "telegram")); s.add_argument("--to", default=os.getenv("GITHUB_AGENT_BRIDGE_DEFAULT_TO", ""))
@@ -392,10 +525,26 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("jobs"); s.add_argument("--status"); s.add_argument("--limit", type=int, default=20); s.set_defaults(func=cmd_jobs)
     s = sub.add_parser("retry"); s.add_argument("job_id", type=int); s.set_defaults(func=cmd_retry)
     s = sub.add_parser("dismiss"); s.add_argument("job_id", type=int); s.add_argument("--reason", required=True); s.set_defaults(func=cmd_dismiss)
+    s = sub.add_parser("cancel", help="cancel a running job, stop its runtime process, and comment on GitHub")
+    s.add_argument("job_id", type=int)
+    s.add_argument("--actor", required=True, help="GitHub login of the admin or job owner cancelling the job")
+    s.add_argument("--reason", default=None, help="optional cancellation reason")
+    s.add_argument("--gh-bin", default="gh")
+    s.add_argument("--signal-grace", type=float, default=5.0, help="seconds to wait after SIGTERM before SIGKILL")
+    s.add_argument("--no-github-comment", action="store_true", help="skip the GitHub cancellation comment")
+    s.set_defaults(func=cmd_cancel)
     s = sub.add_parser("unlock-stale")
     s.add_argument("--older-than", type=int, default=1800)
     s.add_argument("--job-id", type=int, action="append", help="only unlock a specific running job id; repeat for multiple jobs")
     s.set_defaults(func=cmd_unlock_stale)
+    s = sub.add_parser("block-running", help="mark orphaned running jobs blocked without retrying them")
+    s.add_argument("--older-than", type=int)
+    s.add_argument("--job-id", type=int, action="append", help="only block a specific running job id; repeat for multiple jobs")
+    s.add_argument(
+        "--reason",
+        default="The executor process no longer owns this job. It was blocked, not auto-requeued, to avoid duplicate external actions.",
+    )
+    s.set_defaults(func=cmd_block_running)
     s = sub.add_parser("backfill-trigger-actors", help="fill missing job trigger_actor values from stored GitHub context")
     s.add_argument("--gh-bin", default="gh")
     s.add_argument("--limit", type=int, default=None)
@@ -419,7 +568,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-persist-observability", action="store_true", help="skip writing process samples and alert observations")
     s.set_defaults(func=cmd_monitor)
     s = sub.add_parser("update", help="check a GitHub release update and record safe reload state")
-    s.add_argument("--repo", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO") or "pilipilisbot/github-agent-bridge")
+    s.add_argument("--repo", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO") or "gisce/github-agent-bridge")
     s.add_argument("--repo-dir", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_REPO_DIR") or ".")
     s.add_argument("--target-tag", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_TARGET_TAG"))
     s.add_argument("--gh-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_GH_BIN", "gh"))
@@ -431,15 +580,24 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--record", action="store_true", help="persist the update decision in the bridge state table")
     s.add_argument("--apply", action="store_true", help="install the target release and run the plan's immediate systemd actions")
     s.add_argument("--install-command", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_INSTALL_COMMAND"), help="override the package install command used by --apply")
+    s.add_argument("--backup-dir", default=os.getenv("GITHUB_AGENT_BRIDGE_AUTOUPDATE_BACKUP_DIR"), help="directory for SQLite backups before migration updates")
     s.add_argument("--systemctl-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_SYSTEMCTL_BIN", "systemctl"))
+    s.add_argument("--openclaw-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_OPENCLAW_BIN", "openclaw"))
     s.add_argument("--skip-install", action="store_true", help="with --apply, run service actions without installing the target package")
+    s.add_argument("--skip-migrations", action="store_true", help="with --apply, skip SQLite schema initialization after a migration-tagged install")
     s.add_argument("--skip-systemd-actions", action="store_true", help="with --apply, install the package without running systemd actions")
+    s.add_argument("--skip-postchecks", action="store_true", help="with --apply, skip installed-version, service, and queue post-checks")
+    s.add_argument("--complete-pending", action="store_true", help="run recorded deferred reload actions once the queue is quiet")
     s.add_argument("--json", action="store_true", help="pretty-print structured JSON")
     s.set_defaults(func=cmd_update)
     s = sub.add_parser("feedback-rules", help="list curated feedback rules")
     s.add_argument("--scope", default="", help="filter by exact scope or scope prefix, e.g. repo:owner/name")
     s.add_argument("--min-confidence", type=float, default=None)
     s.set_defaults(func=cmd_feedback_rules)
+    s = sub.add_parser("rules", help="render curated rules for a repository as prompt text")
+    s.add_argument("--repo", required=True, help="repository name, e.g. owner/name")
+    s.add_argument("--min-confidence", type=float, default=None, help="override policy feedbackLearning.minConfidence")
+    s.set_defaults(func=cmd_rules)
     s = sub.add_parser("feedback-events", help="list captured feedback candidates")
     s.add_argument("--scope", default="", help="filter by exact scope or scope prefix, e.g. repo:owner/name")
     s.add_argument("--limit", type=int, default=20)
@@ -450,6 +608,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--rule", required=True, help="curated rule text")
     s.add_argument("--confidence", type=float, default=0.8)
     s.add_argument("--source-event", action="append", default=[], help="feedback event id that supports this rule")
+    s.add_argument("--gh-bin", default=os.getenv("GITHUB_AGENT_BRIDGE_GH_BIN", "gh"))
+    s.add_argument("--no-react", action="store_true", help="do not add a heart reaction to source feedback comments")
     s.set_defaults(func=cmd_feedback_rule_add)
     s = sub.add_parser("feedback-learn", help="autonomously classify feedback candidates and promote high-confidence rules")
     s.add_argument("--limit", type=int, default=None)
@@ -465,12 +625,46 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--status", choices=["", "approved", "rejected", "proposed", "error"], default="")
     s.add_argument("--limit", type=int, default=20)
     s.set_defaults(func=cmd_feedback_proposals)
+    s = sub.add_parser("mcp-token-create", help="create an MCP access token")
+    s.add_argument("--name", required=True, help="human-readable token name")
+    s.add_argument("--user", default=None, help="GitHub login that owns the token")
+    s.add_argument("--created-by", default=None, help="GitHub login that issued the token")
+    s.add_argument("--expires-at", default=None, help="optional UTC ISO timestamp after which the token is rejected")
+    s.set_defaults(func=cmd_mcp_token_create)
+    s = sub.add_parser("mcp-tokens", help="list MCP access token records without token secrets")
+    s.add_argument("--include-revoked", action="store_true")
+    s.add_argument("--user", default=None, help="filter tokens by owning GitHub login")
+    s.set_defaults(func=cmd_mcp_tokens)
+    s = sub.add_parser("mcp-token-revoke", help="revoke an MCP access token")
+    s.add_argument("token_id")
+    s.set_defaults(func=cmd_mcp_token_revoke)
+    s = sub.add_parser("mcp-serve", help="run the authenticated stdio MCP server")
+    s.add_argument("--token", default="", help="MCP token; defaults to GITHUB_AGENT_BRIDGE_MCP_TOKEN")
+    s.set_defaults(func=cmd_mcp_serve)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    configure_sentry(service=_sentry_service(args))
     return args.func(args)
+
+
+def _sentry_service(args: argparse.Namespace) -> str:
+    command = getattr(getattr(args, "func", None), "__name__", "")
+    if command == "cmd_run":
+        return "executor"
+    if command == "cmd_read_imap_once":
+        return "reader"
+    if command == "cmd_monitor":
+        return "monitor"
+    if command.startswith("cmd_feedback"):
+        return "feedback"
+    if command == "cmd_update":
+        return "update"
+    if command.startswith("cmd_mcp"):
+        return "mcp"
+    return "cli"
 
 
 if __name__ == "__main__":

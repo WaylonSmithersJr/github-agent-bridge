@@ -28,6 +28,7 @@
   "enabledOrgs": [
     "your-org"
   ],
+  "webhookCanaryRepos": [],
   "repoRoutes": {},
   "orgRoutes": {
     "your-org": {
@@ -68,22 +69,28 @@
     "default": {},
     "byIntent": {
       "review_only": {
-        "model": "gpt-5.4-mini",
+        "model": "openai/gpt-5.4-mini",
         "thinking": "medium"
       }
     },
     "byAction": {
       "sync_after_merge": {
-        "model": "gpt-5.4-mini",
+        "model": "openai/gpt-5.4-mini",
         "thinking": "low"
       },
       "workflow_run_failed": {
-        "model": "gpt-5.4-mini",
+        "model": "openai/gpt-5.4-mini",
         "thinking": "medium"
       },
       "archive_notification": {
-        "model": "gpt-5.4-mini",
+        "model": "openai/gpt-5.4-mini",
         "thinking": "minimal"
+      }
+    },
+    "byComplexity": {
+      "mechanical": {
+        "model": "openai/gpt-5.4-mini",
+        "thinking": "low"
       }
     },
     "byRepo": {}
@@ -93,8 +100,19 @@
     "minConfidence": 0.5,
     "autoApproveConfidence": 0.8,
     "maxEventsPerRun": 10,
-    "model": "gpt-5.4-mini",
+    "model": "openai/gpt-5.4-mini",
     "thinking": "low",
-    "sessionId": "github-agent-bridge-feedback"
+    "sessionId": "github-agent-bridge-feedback",
+    "fallbackToDefaultModel": true
+  },
+  "intentClassifier": {
+    "enabled": false,
+    "model": "openai/gpt-5.4-mini",
+    "thinking": "low",
+    "minConfidence": 0.75,
+    "onlyWhenParserDefaulted": true,
+    "openclawBin": "openclaw",
+    "sessionId": "github-agent-bridge-intent",
+    "timeout": 60
   }
 }

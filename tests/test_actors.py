@@ -9,6 +9,7 @@ from github_agent_bridge.actors import (
     actor_endpoint,
     backfill_trigger_actors,
     default_gh_bin,
+    github_actor_details_for_context,
     normalize_github_login,
     trigger_actor_from_notification,
 )
@@ -57,9 +58,57 @@ def test_actor_details_from_github_payload_accepts_github_app_bot_login():
     assert actor.user_id == 946600
 
 
+def test_actor_details_from_assignment_event_uses_assigner():
+    actor = actor_details_from_github_payload(
+        {
+            "event": "assigned",
+            "actor": {"login": "giscebot", "id": 286264155},
+            "assignee": {"login": "giscebot", "id": 286264155},
+            "assigner": {
+                "login": "ecarreras",
+                "id": 294235,
+                "avatar_url": "https://avatars.githubusercontent.com/u/294235?v=4",
+            },
+        }
+    )
+
+    assert actor is not None
+    assert actor.login == "ecarreras"
+    assert actor.avatar_url == "https://avatars.githubusercontent.com/u/294235?v=4"
+    assert actor.user_id == 294235
+
+
 def test_actor_endpoint_prefers_exact_trigger_resource():
     assert actor_endpoint(GitHubContext(urls=[], repo="gisce/erp", issue_number=1, comment_id=99)) == "repos/gisce/erp/issues/comments/99"
+    assert (
+        actor_endpoint(
+            GitHubContext(
+                urls=["https://github.com/gisce/erp/issues/1#event-28540136634"],
+                repo="gisce/erp",
+                issue_number=1,
+            )
+        )
+        == "repos/gisce/erp/issues/events/28540136634"
+    )
     assert actor_endpoint(GitHubContext(urls=[], repo="gisce/erp", issue_number=1)) == "repos/gisce/erp/issues/1"
+
+
+def test_github_actor_lookup_is_bounded_by_timeout(monkeypatch):
+    calls = []
+
+    def fake_run(args, check=False, stdout=None, stderr=None, text=False, timeout=None):
+        calls.append({"args": args, "timeout": timeout})
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr("github_agent_bridge.actors.subprocess.run", fake_run)
+
+    actor = github_actor_details_for_context(
+        GitHubContext(urls=[], repo="gisce/erp", issue_number=1),
+        timeout=3,
+    )
+
+    assert actor is None
+    assert calls == [{"args": ["gh", "api", "repos/gisce/erp/issues/1"], "timeout": 3}]
 
 
 def test_backfill_trigger_actors_uses_stored_context(tmp_path, monkeypatch):
@@ -80,7 +129,7 @@ def test_backfill_trigger_actors_uses_stored_context(tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_run(args, check=False, stdout=None, stderr=None, text=False):
+    def fake_run(args, check=False, stdout=None, stderr=None, text=False, timeout=None):
         calls.append(args)
         return subprocess.CompletedProcess(args, 0, json.dumps({"user": {"login": "ecarreras", "id": 294235, "avatar_url": "https://avatars.githubusercontent.com/u/294235?v=4"}}), "")
 
@@ -103,7 +152,7 @@ def test_backfill_dry_run_does_not_migrate_legacy_schema(tmp_path, monkeypatch):
     con.commit()
     con.close()
 
-    def fake_run(args, check=False, stdout=None, stderr=None, text=False):
+    def fake_run(args, check=False, stdout=None, stderr=None, text=False, timeout=None):
         return subprocess.CompletedProcess(args, 0, json.dumps({"user": {"login": "ecarreras"}}), "")
 
     monkeypatch.setattr("github_agent_bridge.actors.subprocess.run", fake_run)

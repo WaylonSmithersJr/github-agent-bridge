@@ -2,6 +2,868 @@
 
 <!-- version list -->
 
+## v0.71.4 (2026-10-06)
+
+### Bug Fixes
+
+- Skip stale release workflow runs
+  ([`d976323`](https://github.com/gisce/github-agent-bridge/commit/d9763238d425a3bf5b1c7da8f1e1584f0154927f))
+
+### Documentation
+
+- Explain stale release handling
+  ([`4b9176b`](https://github.com/gisce/github-agent-bridge/commit/4b9176be6815978bc80960e3cdda4e0837dc670a))
+
+
+## v0.71.3 (2026-10-06)
+
+### Bug Fixes
+
+- Prevent retry from bypassing denied policy decisions
+  ([`25b9fd1`](https://github.com/gisce/github-agent-bridge/commit/25b9fd1c24c6a84bea061167c9f39d1a4508d1dd))
+
+- **deps**: Bump source-map-js from 1.2.1 to 1.2.2 in /dashboard
+  ([`ad1cec8`](https://github.com/gisce/github-agent-bridge/commit/ad1cec8d9ee5c501961cef3299605505564b209b))
+
+
+## v0.71.2 (2026-10-06)
+
+### Bug Fixes
+
+- Classify repository webhook hooks correctly
+  ([`a029d30`](https://github.com/gisce/github-agent-bridge/commit/a029d30efc85d849f2dfe0b8ee78418e56fd4516))
+
+- **dashboard**: Complete Tailwind 4 migration
+  ([`27116e7`](https://github.com/gisce/github-agent-bridge/commit/27116e70957ded07508ea8c4e298684a926bcc4b))
+
+- **deps**: Bump postcss-selector-parser and tailwindcss in /dashboard
+  ([`32dbdd1`](https://github.com/gisce/github-agent-bridge/commit/32dbdd18a4bbc3da8daff74d55ede5c6dcb20f90))
+
+
+## v0.71.1 (2026-10-06)
+
+### Bug Fixes
+
+- **dashboard**: Show webhook dates in local time
+  ([`5223f97`](https://github.com/gisce/github-agent-bridge/commit/5223f979b76ff1e192a23fe9376c570c3c43c715))
+
+
+## v0.71.0 (2026-10-06)
+
+### Features
+
+- Trigger audited webhook pings
+  ([`df47c43`](https://github.com/gisce/github-agent-bridge/commit/df47c43f92215b155ca700527d288f860ca15d8a))
+
+
+## v0.70.0 (2026-10-06)
+
+### Features
+
+- Isolate socket-activated webhook ingress
+  ([`4fcabed`](https://github.com/gisce/github-agent-bridge/commit/4fcabedbed4646cccae2d4839b2d0bd5a5f08976))
+
+
+## v0.69.1 (2026-10-05)
+
+### Bug Fixes
+
+- Acknowledge queued jobs before dispatch
+  ([`b233b04`](https://github.com/gisce/github-agent-bridge/commit/b233b049f4a75d0592ec58350634853ce39d02d6))
+
+
+## v0.69.0 (2026-10-05)
+
+
+## v0.68.1 (2026-10-05)
+
+### Bug Fixes
+
+- Harden webhook review request handling
+  ([`abe67a3`](https://github.com/gisce/github-agent-bridge/commit/abe67a35ed2989bed8430599175c9e1dce036ba0))
+
+- Support webhook review requests
+  ([`4ac8bea`](https://github.com/gisce/github-agent-bridge/commit/4ac8bea7e8c2752bd8917df12866d2a75d39246e))
+
+
+## v0.68.0 (2026-10-05)
+
+
+## v0.67.2 (2026-10-05)
+
+### Bug Fixes
+
+- Guard webhook canary enqueue semantics
+  ([`f6904d4`](https://github.com/gisce/github-agent-bridge/commit/f6904d4789c48b663054a55c5879f40c4133a420))
+
+- Harden webhook canary rollout gates
+  ([`3fae7bc`](https://github.com/gisce/github-agent-bridge/commit/3fae7bc0fd758c1552a983a3515e1476ffdd6e72))
+
+
+## v0.67.1 (2026-10-05)
+
+### Bug Fixes
+
+- **dashboard**: Move update controls to system tab
+  ([`1abc43f`](https://github.com/gisce/github-agent-bridge/commit/1abc43f5bf8d87bef12796e8760444fa388c2344))
+
+
+## v0.67.0 (2026-10-05)
+
+### Bug Fixes
+
+- Classify failed webhook workflow runs
+  ([`e715f26`](https://github.com/gisce/github-agent-bridge/commit/e715f2644834916749b546d6f0edd7ccf0166d59))
+
+### Features
+
+- Enable guarded webhook canary ingestion
+  ([`095baaa`](https://github.com/gisce/github-agent-bridge/commit/095baaa5482fa73cfc4fb39052414fcdeb99478f))
+
+
+## v0.66.0 (2026-10-05)
+
+### Features
+
+- **policy**: Publish and validate JSON schema
+  ([`6bc2619`](https://github.com/gisce/github-agent-bridge/commit/6bc26191a239f0b904c8ca25172da4be0cf2c54f))
+
+
+## v0.65.0 (2026-10-05)
+
+### Features
+
+- **queue**: Persist per-attempt job runs
+  ([`57abdaa`](https://github.com/gisce/github-agent-bridge/commit/57abdaa173473652be4d837f78c0e76c2933a794))
+
+
+## v0.64.0 (2026-10-03)
+
+### Bug Fixes
+
+- Report stable webhook inventory totals
+  ([`524f0e3`](https://github.com/gisce/github-agent-bridge/commit/524f0e336b9072e90cc372133b1abf166fb165f8))
+
+### Features
+
+- Add webhook coverage gate observability
+  ([`7d7386e`](https://github.com/gisce/github-agent-bridge/commit/7d7386e9d4648b644e83e06683805579bf3151d1))
+
+### Refactoring
+
+- Share lazy scroll tables across dashboard
+  ([`f94a2d6`](https://github.com/gisce/github-agent-bridge/commit/f94a2d6a12f9c9271f0c8f3206ff228a1c8b0c70))
+
+
+## v0.63.1 (2026-10-03)
+
+### Bug Fixes
+
+- Make webhook monitoring operational
+  ([`85ade3d`](https://github.com/gisce/github-agent-bridge/commit/85ade3d4ebe26cc951f07ac6913c10a718d602ba))
+
+
+## v0.63.0 (2026-10-02)
+
+### Features
+
+- **dashboard**: Add webhook monitoring views
+  ([`0367a3f`](https://github.com/gisce/github-agent-bridge/commit/0367a3fa73a07ca863ae95f16b6879f71985a474))
+
+- **webhooks**: Expose monitoring data
+  ([`a4be314`](https://github.com/gisce/github-agent-bridge/commit/a4be314862b57ac815cf387b1eefe9424f5164bc))
+
+### Performance Improvements
+
+- **webhooks**: Split dashboard monitoring queries
+  ([`d13698e`](https://github.com/gisce/github-agent-bridge/commit/d13698ead46a81f65832f486a6c1c58cd19d9ab9))
+
+
+## v0.62.1 (2026-10-02)
+
+### Bug Fixes
+
+- Compose model route overrides
+  ([`83b3a28`](https://github.com/gisce/github-agent-bridge/commit/83b3a2848a43275e2ebb1b2eee89e4809ff155e2))
+
+
+## v0.62.0 (2026-10-02)
+
+### Bug Fixes
+
+- Harden webhook owner configuration
+  ([`b0a528b`](https://github.com/gisce/github-agent-bridge/commit/b0a528bacfe49a3e8f9e76bbb0889d9287bf9431))
+
+### Features
+
+- Add shadow GitHub webhook ingestion
+  ([`5b64134`](https://github.com/gisce/github-agent-bridge/commit/5b64134a18fb106163a1416aefadffb4ed08db1f))
+
+- Monitor webhook shadow ingestion
+  ([`4bc0b43`](https://github.com/gisce/github-agent-bridge/commit/4bc0b43008b230a521efe567217780a319836646))
+
+
+## v0.61.0 (2026-10-02)
+
+### Features
+
+- Add transport-independent event ingestion
+  ([`b8b48ad`](https://github.com/gisce/github-agent-bridge/commit/b8b48adffbc84cf42cc987e8709acac08f080ed8))
+
+
+## v0.60.11 (2026-10-01)
+
+### Bug Fixes
+
+- **deps**: Update dashboard dependencies
+  ([`c297216`](https://github.com/gisce/github-agent-bridge/commit/c29721682ed8d249d8421dca713baa5a4e08f667))
+
+### Chores
+
+- **deps**: Bump @vitest/mocker and vitest in /dashboard
+  ([#206](https://github.com/gisce/github-agent-bridge/pull/206),
+  [`6f4395f`](https://github.com/gisce/github-agent-bridge/commit/6f4395f63a8e3d575973780f1eb8bebc22d975a9))
+
+- **deps-dev**: Bump @babel/core from 7.29.0 to 7.29.7 in /dashboard
+  ([#223](https://github.com/gisce/github-agent-bridge/pull/223),
+  [`7f2956b`](https://github.com/gisce/github-agent-bridge/commit/7f2956bce384a588165d66f2b6b726c858607300))
+
+- **deps-dev**: Bump baseline-browser-mapping in /dashboard
+  ([#207](https://github.com/gisce/github-agent-bridge/pull/207),
+  [`d84e313`](https://github.com/gisce/github-agent-bridge/commit/d84e313721404e186720cb72da85123377c62f15))
+
+- **deps-dev**: Bump browserslist from 4.28.2 to 4.29.0 in /dashboard
+  ([#204](https://github.com/gisce/github-agent-bridge/pull/204),
+  [`ab2a630`](https://github.com/gisce/github-agent-bridge/commit/ab2a6306137d29194b5be8a10b69bd9ffac90f4f))
+
+- **deps-dev**: Bump postcss from 8.5.15 to 8.5.28 in /dashboard
+  ([#221](https://github.com/gisce/github-agent-bridge/pull/221),
+  [`ef2b735`](https://github.com/gisce/github-agent-bridge/commit/ef2b73556c352975f0f60a27ce19757969ed2f59))
+
+- **deps-dev**: Bump postcss-selector-parser in /dashboard
+  ([#208](https://github.com/gisce/github-agent-bridge/pull/208),
+  [`7049c62`](https://github.com/gisce/github-agent-bridge/commit/7049c62211115dcb41819765c85ffb3c21729d7e))
+
+
+## v0.60.10 (2026-10-01)
+
+### Bug Fixes
+
+- Handle addressed approved reviews
+  ([`893c3d0`](https://github.com/gisce/github-agent-bridge/commit/893c3d05ca832526998352fc90485fd6099faa63))
+
+### Chores
+
+- **deps**: Bump undici from 7.25.0 to 7.30.0 in /dashboard
+  ([#220](https://github.com/gisce/github-agent-bridge/pull/220),
+  [`104c92c`](https://github.com/gisce/github-agent-bridge/commit/104c92cd76f02a7bfd654183572411aab256cb9c))
+
+
+## v0.60.9 (2026-09-30)
+
+### Bug Fixes
+
+- Learn from archived pull request reviews
+  ([`bdfcfe8`](https://github.com/gisce/github-agent-bridge/commit/bdfcfe87006e20d46163768c81bd7c45938fc0f8))
+
+
+## v0.60.8 (2026-09-29)
+
+### Bug Fixes
+
+- Coalesce equivalent running notifications
+  ([`13b955e`](https://github.com/gisce/github-agent-bridge/commit/13b955ead13a0fa9f12ba8e816b4e77744dde84a))
+
+- Handle missing autoupdate executable
+  ([`8f18603`](https://github.com/gisce/github-agent-bridge/commit/8f1860316adc03bd5f4fb8b753ddf37f6989c00e))
+
+
+## v0.60.7 (2026-09-26)
+
+### Bug Fixes
+
+- Isolate intent classifier from gateway
+  ([`05c0651`](https://github.com/gisce/github-agent-bridge/commit/05c0651f2ba7427048158aeb9e02df9cdf74310d))
+
+### Documentation
+
+- Require OpenClaw concurrency headroom
+  ([`59cabb7`](https://github.com/gisce/github-agent-bridge/commit/59cabb790a9c423699c3810462ccba2562720c8b))
+
+
+## v0.60.6 (2026-09-23)
+
+### Bug Fixes
+
+- Quarantine poison GitHub notifications
+  ([`5539bac`](https://github.com/gisce/github-agent-bridge/commit/5539bac5a5603c89f08dedcc7a08e96ef12568d6))
+
+- Retry transient enqueue storage failures
+  ([`b129f29`](https://github.com/gisce/github-agent-bridge/commit/b129f29df04879a2b6182c22e54ef6253a930b24))
+
+### Chores
+
+- Migrate repository references to gisce
+  ([#210](https://github.com/gisce/github-agent-bridge/pull/210),
+  [`9baccbd`](https://github.com/gisce/github-agent-bridge/commit/9baccbdf8c3ffa8e4c8869163e9b26280bcb345b))
+
+### Testing
+
+- Cover quarantine schema upgrades
+  ([`1ddaa48`](https://github.com/gisce/github-agent-bridge/commit/1ddaa4895cfe57ec190c9e67cd4b7f16c375cc29))
+
+
+## v0.60.5 (2026-09-22)
+
+### Performance Improvements
+
+- Index dashboard job ordering
+  ([`76b4243`](https://github.com/gisce/github-agent-bridge/commit/76b42434424c6fd1fbaecd1209c83c3198d3c7f5))
+
+
+## v0.60.4 (2026-09-14)
+
+### Bug Fixes
+
+- Fail executor on worker thread crash
+  ([`0428ec4`](https://github.com/pilipilisbot/github-agent-bridge/commit/0428ec4cc121362f22c16f6bc45891cd1e2d1668))
+
+
+## v0.60.3 (2026-09-01)
+
+### Bug Fixes
+
+- Close context-managed sqlite connections
+  ([`9acdf0c`](https://github.com/pilipilisbot/github-agent-bridge/commit/9acdf0cc50950cda51d8de71bc7fb58d30b8ace7))
+
+
+## v0.60.2 (2026-09-01)
+
+### Bug Fixes
+
+- Mark cancelled jobs as done
+  ([`971677d`](https://github.com/pilipilisbot/github-agent-bridge/commit/971677d29a808e31bcecd77c26c57b57fbbc01fa))
+
+
+## v0.60.1 (2026-08-15)
+
+### Bug Fixes
+
+- Center MCP owner selectors
+  ([`ef2db7f`](https://github.com/pilipilisbot/github-agent-bridge/commit/ef2db7f64f90fe0e5fbf3fb6287dde07f2286424))
+
+- Improve MCP user selector
+  ([`f1f1c68`](https://github.com/pilipilisbot/github-agent-bridge/commit/f1f1c6868f5136f04852357fdce80cad7673598a))
+
+- Include all job actors in MCP users
+  ([`8c84041`](https://github.com/pilipilisbot/github-agent-bridge/commit/8c84041f05e3a77da2895394c21a9eb8e35eb894))
+
+
+## v0.60.0 (2026-08-07)
+
+### Features
+
+- Link mcp tokens to known users
+  ([`3ddc958`](https://github.com/pilipilisbot/github-agent-bridge/commit/3ddc9580ecfe5b4120bb6b9979c7b804c9a07a5b))
+
+
+## v0.59.0 (2026-08-05)
+
+### Bug Fixes
+
+- Create mcp token owner index after migration
+  ([`ff4a3a6`](https://github.com/pilipilisbot/github-agent-bridge/commit/ff4a3a68ab8fc17b3f68877e739d4cb7aefb4ce6))
+
+### Features
+
+- Manage MCP tokens per user
+  ([`7db9123`](https://github.com/pilipilisbot/github-agent-bridge/commit/7db9123843acce0ead3013f21357d4ba60dab36c))
+
+
+## v0.58.4 (2026-08-04)
+
+### Bug Fixes
+
+- Retry transient IMAP aborts
+  ([`73002af`](https://github.com/pilipilisbot/github-agent-bridge/commit/73002af92807b61a3b5966fa267cf4d68e3e45a6))
+
+
+## v0.58.3 (2026-08-04)
+
+### Bug Fixes
+
+- Cancel journal read before closing stream
+  ([`31f9761`](https://github.com/pilipilisbot/github-agent-bridge/commit/31f97611123b4ea05a0fc5d0d2c49c7583de4816))
+
+- Handle missing gh executable
+  ([`ecc87a0`](https://github.com/pilipilisbot/github-agent-bridge/commit/ecc87a0607f7e443d157fa847966f24cb570e885))
+
+- Harden sqlite queue path handling
+  ([#19](https://github.com/pilipilisbot/github-agent-bridge/pull/19),
+  [`d812ffc`](https://github.com/pilipilisbot/github-agent-bridge/commit/d812ffcabb3ef54b30b26b221fac2e3bd10fc48b))
+
+- Initialize sqlite after state directory recovery
+  ([#19](https://github.com/pilipilisbot/github-agent-bridge/pull/19),
+  [`d812ffc`](https://github.com/pilipilisbot/github-agent-bridge/commit/d812ffcabb3ef54b30b26b221fac2e3bd10fc48b))
+
+- Recover when sqlite parent directory disappears
+  ([#19](https://github.com/pilipilisbot/github-agent-bridge/pull/19),
+  [`d812ffc`](https://github.com/pilipilisbot/github-agent-bridge/commit/d812ffcabb3ef54b30b26b221fac2e3bd10fc48b))
+
+- Tolerate runtime errors in release check
+  ([`6573d20`](https://github.com/pilipilisbot/github-agent-bridge/commit/6573d20b18eb3d255a300cce70defcfc89faad5c))
+
+### Documentation
+
+- Add nginx dashboard restart page
+  ([`4e3e36e`](https://github.com/pilipilisbot/github-agent-bridge/commit/4e3e36e5fcc183cf972c33457c392bcde7ef5536))
+
+- Animate dashboard restart page
+  ([`9a37582`](https://github.com/pilipilisbot/github-agent-bridge/commit/9a37582acfe4a63bf0ad26e5f4a790bd61aec08b))
+
+
+## v0.58.2 (2026-08-03)
+
+### Bug Fixes
+
+- Stop dashboard sse streams on shutdown
+  ([`3b6dcc0`](https://github.com/pilipilisbot/github-agent-bridge/commit/3b6dcc048fe1d02efd489183038484b63e9597ac))
+
+
+## v0.58.1 (2026-07-31)
+
+### Bug Fixes
+
+- Handle cancellation finish race
+  ([`99e3de7`](https://github.com/pilipilisbot/github-agent-bridge/commit/99e3de7a073c8e168eeb280d7ed164aee69be4e2))
+
+
+## v0.58.0 (2026-07-30)
+
+### Features
+
+- Allow cancelling running jobs
+  ([`0fb09a5`](https://github.com/pilipilisbot/github-agent-bridge/commit/0fb09a50979b061fa3cff324b77d0bca97a41012))
+
+
+## v0.57.4 (2026-07-29)
+
+### Bug Fixes
+
+- Reconcile interrupted executor jobs safely
+  ([`65da3c5`](https://github.com/pilipilisbot/github-agent-bridge/commit/65da3c5c0bfbee07239d6ab9aba8b19ce1ed0b56))
+
+- Supervise complete job process trees
+  ([`ed565e1`](https://github.com/pilipilisbot/github-agent-bridge/commit/ed565e150947e6c81eb03fc2d479cad9006d1576))
+
+
+## v0.57.3 (2026-07-28)
+
+### Bug Fixes
+
+- **dashboard**: Show active filters when collapsed
+  ([`da8c1a1`](https://github.com/pilipilisbot/github-agent-bridge/commit/da8c1a1359048501c71fe1d15d32a15c26a31693))
+
+
+## v0.57.2 (2026-07-28)
+
+### Bug Fixes
+
+- Harden sqlite queue path handling
+  ([`b0a2283`](https://github.com/pilipilisbot/github-agent-bridge/commit/b0a22832453d01131d35b1aa101234d11b9cca9c))
+
+- Initialize sqlite after state directory recovery
+  ([`4a192e8`](https://github.com/pilipilisbot/github-agent-bridge/commit/4a192e8a8437989d56441f372203cc333928f90e))
+
+
+## v0.57.1 (2026-07-28)
+
+### Bug Fixes
+
+- Resolve assignment events to their assigner
+  ([`516a053`](https://github.com/pilipilisbot/github-agent-bridge/commit/516a0539f7017b0a00fa31e0b427b7c2cded6a68))
+
+### Documentation
+
+- Explain intent-specific worker pools
+  ([`4475616`](https://github.com/pilipilisbot/github-agent-bridge/commit/447561689a2039e27470f3d1ba49ae37e901610c))
+
+
+## v0.57.0 (2026-07-24)
+
+### Bug Fixes
+
+- Distinguish failed partial results from blocked jobs
+  ([`cd3b640`](https://github.com/pilipilisbot/github-agent-bridge/commit/cd3b6409b32391ab2e9051b1c848ad781f790e93))
+
+- Isolate rescued review sessions
+  ([`c336d08`](https://github.com/pilipilisbot/github-agent-bridge/commit/c336d082391d2b46ff53b0b79315d83dfb86e7a5))
+
+- Keep failed dispatches blocked after follow-up
+  ([`62dc485`](https://github.com/pilipilisbot/github-agent-bridge/commit/62dc485e393bc2848ee0f5635e68c3e15207b602))
+
+- Pin model routes to explicit providers
+  ([`aaa2c70`](https://github.com/pilipilisbot/github-agent-bridge/commit/aaa2c70916edbd3e754e5b675eb068db9bff915b))
+
+- Record rescued review session attempts
+  ([`f883a34`](https://github.com/pilipilisbot/github-agent-bridge/commit/f883a34930c2b8e2bafe31013f847e38ff865e91))
+
+### Features
+
+- Add resilient cost-aware model routing
+  ([`1adec2a`](https://github.com/pilipilisbot/github-agent-bridge/commit/1adec2a61be90189c9ce816163583ecfe7f8f192))
+
+- Let feedback learning fail closed on model routing
+  ([`d28ef61`](https://github.com/pilipilisbot/github-agent-bridge/commit/d28ef61755514007c3f070ae2db6ca34c454f3b5))
+
+
+## v0.56.0 (2026-07-17)
+
+### Features
+
+- Let workers claim jobs by intent
+  ([`af43bd4`](https://github.com/pilipilisbot/github-agent-bridge/commit/af43bd47f5546ba192b7576be68ea7be2e75e2a5))
+
+
+## v0.55.0 (2026-07-16)
+
+### Bug Fixes
+
+- Let users view all knowledge
+  ([`52f89f6`](https://github.com/pilipilisbot/github-agent-bridge/commit/52f89f66eecba9f6cee4b95848aa80f19fa2291d))
+
+### Features
+
+- Allow users to manage owned knowledge
+  ([`caf69e2`](https://github.com/pilipilisbot/github-agent-bridge/commit/caf69e23f22ec92401fee688100e1b63a98f1a11))
+
+
+## v0.54.0 (2026-07-14)
+
+### Features
+
+- Improve desktop jobs table layout
+  ([`e8b5068`](https://github.com/pilipilisbot/github-agent-bridge/commit/e8b5068e45c3af84eaab906037421a8d7341cd5e))
+
+
+## v0.53.0 (2026-07-13)
+
+### Bug Fixes
+
+- Keep runtime usage on jobs dashboard
+  ([`fd3f3b7`](https://github.com/pilipilisbot/github-agent-bridge/commit/fd3f3b70268dbc810cc7147d029397d08067a06c))
+
+- Place runtime usage below monitor alerts
+  ([`4769158`](https://github.com/pilipilisbot/github-agent-bridge/commit/47691589343303b59fae96888ad1996cc052af31))
+
+### Features
+
+- Stack runtime usage by work mode
+  ([`bb1d61b`](https://github.com/pilipilisbot/github-agent-bridge/commit/bb1d61bc537d179b9d4eac41e4f3de8fae9bba3e))
+
+
+## v0.52.0 (2026-07-13)
+
+### Features
+
+- Add dashboard action mode icons
+  ([`7ad465e`](https://github.com/pilipilisbot/github-agent-bridge/commit/7ad465e710f537f207f98e709b7034ca722444c6))
+
+
+## v0.51.0 (2026-07-03)
+
+### Bug Fixes
+
+- Enforce PR action modes from intent
+  ([`c52e43e`](https://github.com/pilipilisbot/github-agent-bridge/commit/c52e43ee87e9d72dc74b5b1b1156a0e97a677200))
+
+### Features
+
+- Show PR action mode decisions in dashboard
+  ([`fa002b1`](https://github.com/pilipilisbot/github-agent-bridge/commit/fa002b1c7773e46064e23b1203527739e903e8d7))
+
+
+## v0.50.0 (2026-06-26)
+
+
+## v0.49.0 (2026-06-26)
+
+### Chores
+
+- Clarify web push notification icon
+  ([`d3c4db1`](https://github.com/pilipilisbot/github-agent-bridge/commit/d3c4db1685dfb1b2666b018ae9d743e070aea9f9))
+
+### Features
+
+- Allow configured web push notification icon
+  ([`907fc8c`](https://github.com/pilipilisbot/github-agent-bridge/commit/907fc8c9d04d04e924e401aae5fb596f407bfd95))
+
+- Derive web push icon from GitHub App
+  ([`0acca0a`](https://github.com/pilipilisbot/github-agent-bridge/commit/0acca0aeeb2f9ad56b828508436f555614274624))
+
+- Enrich web push notifications
+  ([`4d6a76c`](https://github.com/pilipilisbot/github-agent-bridge/commit/4d6a76cde5fa23930833c6926483166dbf776f7a))
+
+- Notify users when bridge jobs complete
+  ([`1a4e6af`](https://github.com/pilipilisbot/github-agent-bridge/commit/1a4e6aff4d7750454e7ed7621b6f1859e6a081ae))
+
+- Send bridge completion web pushes
+  ([`b999a49`](https://github.com/pilipilisbot/github-agent-bridge/commit/b999a49bb26020fe650573bd16fda44230d87fc1))
+
+
+## v0.48.1 (2026-06-25)
+
+### Bug Fixes
+
+- Classify intents from semantic main request
+  ([`c2da9f2`](https://github.com/pilipilisbot/github-agent-bridge/commit/c2da9f26db604d1f2c361eb02a86b39e14285111))
+
+
+## v0.48.0 (2026-06-24)
+
+### Bug Fixes
+
+- Clarify public MCP dashboard URLs
+  ([`17a51eb`](https://github.com/pilipilisbot/github-agent-bridge/commit/17a51eb1e30e89744f4ca3678172e02831fbbab8))
+
+- Remove local MCP fallback guidance
+  ([`590a448`](https://github.com/pilipilisbot/github-agent-bridge/commit/590a448924787c42de605ff67c97eda70e8ea7a8))
+
+### Features
+
+- Expose MCP over HTTP
+  ([`fc19100`](https://github.com/pilipilisbot/github-agent-bridge/commit/fc191008035cf9ecfebe96a480a75e08a3a38deb))
+
+
+## v0.47.0 (2026-06-23)
+
+### Bug Fixes
+
+- Share public MCP dashboard URL
+  ([`d3467e4`](https://github.com/pilipilisbot/github-agent-bridge/commit/d3467e4c016f7d9a67ce4a54a9cd0ee38b7e3330))
+
+- Use MCP stdio message framing
+  ([`99af205`](https://github.com/pilipilisbot/github-agent-bridge/commit/99af2056a58499e61c76bb82d0b4049d6a23f3b9))
+
+### Documentation
+
+- Mention MCP in main README
+  ([`01ba7ce`](https://github.com/pilipilisbot/github-agent-bridge/commit/01ba7ce3f49bc1386876fa03848a67ecc93675f8))
+
+### Features
+
+- Add dashboard MCP token panel
+  ([`3e84f06`](https://github.com/pilipilisbot/github-agent-bridge/commit/3e84f063e67dc40d3393019a02c054f31edafb50))
+
+- Add MCP setup guide
+  ([`b56f38a`](https://github.com/pilipilisbot/github-agent-bridge/commit/b56f38a81d6fc3ea9cc056c340cd16deaf71d2c0))
+
+- Add read-only MCP knowledge server
+  ([`6aa21a6`](https://github.com/pilipilisbot/github-agent-bridge/commit/6aa21a6713a0ed870bd6365ae3a492dac8b56f35))
+
+
+## v0.46.1 (2026-06-23)
+
+### Bug Fixes
+
+- Render intent classifier prompt safely
+  ([`1169c98`](https://github.com/pilipilisbot/github-agent-bridge/commit/1169c988b8a6d13055f528e01502d4256ae52929))
+
+
+## v0.46.0 (2026-06-22)
+
+### Bug Fixes
+
+- Classify all human GitHub comment intents
+  ([`9ac800d`](https://github.com/pilipilisbot/github-agent-bridge/commit/9ac800d9cba9acd87bbabb1cfb2d542d2c57a005))
+
+- Classify issue creation requests as work
+  ([`9fa2a4e`](https://github.com/pilipilisbot/github-agent-bridge/commit/9fa2a4efc44ae5bfd2cc8b98f9449887b1ccfd27))
+
+- Isolate intent classifier sessions
+  ([`18ef1fb`](https://github.com/pilipilisbot/github-agent-bridge/commit/18ef1fbd7f8b81686240fae21e47d87cf420dd8a))
+
+### Documentation
+
+- Document intent classifier policy
+  ([`829158e`](https://github.com/pilipilisbot/github-agent-bridge/commit/829158ed91839d2a891b17ec80c74fe58271fcd7))
+
+### Features
+
+- Add optional LLM intent classifier
+  ([`6addd08`](https://github.com/pilipilisbot/github-agent-bridge/commit/6addd08c97a5bf7e1b0a294b15ada83d5af54843))
+
+
+## v0.45.1 (2026-06-19)
+
+### Bug Fixes
+
+- Make rule scope edits explicit
+  ([`902a5fe`](https://github.com/pilipilisbot/github-agent-bridge/commit/902a5fed097b3eba205b22d436f62af8f814dbdd))
+
+
+## v0.45.0 (2026-06-18)
+
+### Documentation
+
+- Add bridge operations skill
+  ([`d05b146`](https://github.com/pilipilisbot/github-agent-bridge/commit/d05b1460a146bf6d1b6863ef1caea5d7b0709167))
+
+### Features
+
+- Add dashboard rule scope editing
+  ([#136](https://github.com/pilipilisbot/github-agent-bridge/pull/136),
+  [`06325df`](https://github.com/pilipilisbot/github-agent-bridge/commit/06325df73c21e1d0073caae33685d2757663e099))
+
+
+## v0.44.2 (2026-06-17)
+
+### Bug Fixes
+
+- Avoid ambiguous review comment fallback
+  ([`0bcd1bc`](https://github.com/pilipilisbot/github-agent-bridge/commit/0bcd1bc4ac424f42b6d1924fd8db6d067334101c))
+
+- Resolve feedback review comments
+  ([`befc1a1`](https://github.com/pilipilisbot/github-agent-bridge/commit/befc1a11a4dd76a523f7cc2f5d249e5564ef1c64))
+
+
+## v0.44.1 (2026-06-17)
+
+### Bug Fixes
+
+- Avoid treating merged comments as sync events
+  ([`4f8b94f`](https://github.com/pilipilisbot/github-agent-bridge/commit/4f8b94fc60946c18fe5e47ec80d3f6ee8e567875))
+
+
+## v0.44.0 (2026-06-17)
+
+### Features
+
+- Render repository rules for external agents
+  ([`9905ad1`](https://github.com/pilipilisbot/github-agent-bridge/commit/9905ad12e0d1fed1d6b1de2d5152f84461e03593))
+
+
+## v0.43.0 (2026-06-15)
+
+### Features
+
+- Finish safe autoupdate migrations
+  ([`be6bb7c`](https://github.com/pilipilisbot/github-agent-bridge/commit/be6bb7c78cad17f194fb3cc6b7d808b8b32f17d2))
+
+
+## v0.42.2 (2026-06-12)
+
+### Bug Fixes
+
+- Preserve jobs list state from detail
+  ([`5e7b39f`](https://github.com/pilipilisbot/github-agent-bridge/commit/5e7b39f584650441ce24a567d60f0553336d2125))
+
+
+## v0.42.1 (2026-06-11)
+
+### Bug Fixes
+
+- **dashboard**: Remove model route from jobs list
+  ([`92c5ea4`](https://github.com/pilipilisbot/github-agent-bridge/commit/92c5ea496b50397b300b122c2013e3fc32dbb59f))
+
+
+## v0.42.0 (2026-06-11)
+
+### Features
+
+- Show job model routes in dashboard
+  ([`b1422a5`](https://github.com/pilipilisbot/github-agent-bridge/commit/b1422a5eb453050ccd2f66f4057d0324453696f9))
+
+
+## v0.41.0 (2026-06-10)
+
+### Bug Fixes
+
+- Gate dashboard autoupdate completion
+  ([`ec268fa`](https://github.com/pilipilisbot/github-agent-bridge/commit/ec268fa7bf779e07ff2e8f43baadee19b037cbcd))
+
+### Features
+
+- Add dashboard autoupdate actions
+  ([`78fb299`](https://github.com/pilipilisbot/github-agent-bridge/commit/78fb299c0054a1187f484f6f4b0c3384e32bddb3))
+
+
+## v0.40.1 (2026-06-10)
+
+### Bug Fixes
+
+- Accept review and duplicate-skip followups
+  ([`919b007`](https://github.com/pilipilisbot/github-agent-bridge/commit/919b0077b3cec117899dbbda7133a1ac2064b7dd))
+
+
+## v0.40.0 (2026-06-09)
+
+### Features
+
+- Complete pending autoupdate reloads
+  ([`734738b`](https://github.com/pilipilisbot/github-agent-bridge/commit/734738b11101cbb824f95d4358b9498bd02d9c8a))
+
+- Retry pending autoupdate reloads
+  ([`579e6a2`](https://github.com/pilipilisbot/github-agent-bridge/commit/579e6a2294e7ac8f28d08fa57f2a0f58acfdf86e))
+
+
+## v0.39.0 (2026-06-09)
+
+### Features
+
+- Add optional sentry integration
+  ([`8ed6bf4`](https://github.com/pilipilisbot/github-agent-bridge/commit/8ed6bf402c407faeb323beffe6d8b79e8165ef83))
+
+### Testing
+
+- Isolate sentry env injection
+  ([`36faa18`](https://github.com/pilipilisbot/github-agent-bridge/commit/36faa1841fe3b4c7caaeb74050c5d8e1c64d61bf))
+
+
+## v0.38.0 (2026-06-09)
+
+### Features
+
+- Show feedback proposal provenance
+  ([`96d34ea`](https://github.com/pilipilisbot/github-agent-bridge/commit/96d34ea72741fe4b255e19044ab237a95959f1e0))
+
+
+## v0.37.2 (2026-06-09)
+
+### Bug Fixes
+
+- Make job detail header sticky
+  ([`252220a`](https://github.com/pilipilisbot/github-agent-bridge/commit/252220a2fa01c4116ac47701eebc321bd06ee5a7))
+
+- Make mobile job loading explicit
+  ([`21cec7e`](https://github.com/pilipilisbot/github-agent-bridge/commit/21cec7e3a689f473a29c787a1746095495c1a9d2))
+
+- Move job detail github links to top
+  ([`7a17156`](https://github.com/pilipilisbot/github-agent-bridge/commit/7a171563b96b19083a79fadd5574fa2004acce94))
+
+- Retry failed feedback classifications
+  ([`6e78168`](https://github.com/pilipilisbot/github-agent-bridge/commit/6e781684935ec32b118d643f683c61e6641d7ddc))
+
+
+## v0.37.1 (2026-06-08)
+
+### Bug Fixes
+
+- Harden OpenClaw dispatch session recovery
+  ([`3924f2a`](https://github.com/pilipilisbot/github-agent-bridge/commit/3924f2aefb9ee309e3e3b6ea89f546ff7708e9b8))
+
+- Keep OpenClaw session keys stable
+  ([`313ee6f`](https://github.com/pilipilisbot/github-agent-bridge/commit/313ee6f8253565c77b3b304d779c83a9f00f7e57))
+
+
+## v0.37.0 (2026-06-08)
+
+### Features
+
+- Lazy load dashboard jobs
+  ([`63cf6d4`](https://github.com/pilipilisbot/github-agent-bridge/commit/63cf6d4c7b82707ecded2ed209907493fae65e89))
+
+
 ## v0.36.0 (2026-06-06)
 
 ### Features

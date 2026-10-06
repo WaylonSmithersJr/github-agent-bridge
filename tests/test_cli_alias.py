@@ -18,6 +18,49 @@ def test_feedback_rules_cli_lists_rules(tmp_path, capsys):
     assert '"rules": []' in captured.out
 
 
+def test_rules_cli_renders_applicable_rules_as_prompt_text(tmp_path, capsys):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    cli.feedback.add_rule(db, "global", "operating_rule", "Global rule.", 0.9)
+    cli.feedback.add_rule(db, "org:gisce", "style_preference", "Org rule.", 0.9)
+    cli.feedback.add_rule(db, "repo:gisce/erp", "technical_criterion", "Repo rule.", 0.9)
+
+    cli.main(["--db", str(db), "rules", "--repo", "gisce/erp", "--min-confidence", "0.8"])
+
+    captured = capsys.readouterr()
+    assert "# Feedback learning rule" in captured.out
+    assert "Repository: `repo:gisce/erp`" in captured.out
+    assert "Minimum confidence: `0.8`" in captured.out
+    assert "[global] operating_rule (confidence 0.90, observations 1): Global rule." in captured.out
+    assert "[org:gisce] style_preference (confidence 0.90, observations 1): Org rule." in captured.out
+    assert "[repo:gisce/erp] technical_criterion (confidence 0.90, observations 1): Repo rule." in captured.out
+    assert '"rules"' not in captured.out
+
+
+def test_rules_cli_uses_policy_threshold_and_prompt_override(tmp_path, capsys):
+    db = tmp_path / "q.sqlite3"
+    policy = tmp_path / "policy.json"
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / "feedback_learning.md").write_text("CUSTOM {repo} {min_confidence}\n{rules}\n")
+    policy.write_text(
+        """{
+          "feedbackLearning": {"minConfidence": 0.85},
+          "promptOverrides": {"rules": {"feedback_learning": "prompts/feedback_learning.md"}}
+        }"""
+    )
+    JobQueue(db)
+    cli.feedback.add_rule(db, "repo:gisce/erp", "technical_criterion", "Included rule.", 0.9)
+    cli.feedback.add_rule(db, "repo:gisce/erp", "technical_criterion", "Filtered rule.", 0.8)
+
+    cli.main(["--db", str(db), "--policy", str(policy), "rules", "--repo", "gisce/erp"])
+
+    captured = capsys.readouterr()
+    assert "CUSTOM gisce/erp 0.85" in captured.out
+    assert "Included rule." in captured.out
+    assert "Filtered rule." not in captured.out
+
+
 def test_update_cli_can_record_pending_reload_state(tmp_path, capsys, monkeypatch):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)
@@ -90,6 +133,32 @@ def test_update_cli_apply_runs_configured_install_command(tmp_path, capsys, monk
     assert calls[0]["install_command"] == ["python", "-m", "pip", "install", "pkg"]
 
 
+def test_update_cli_complete_pending_uses_recorded_state(tmp_path, capsys, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    calls = []
+
+    def fake_complete(db_path, **kwargs):
+        calls.append((db_path, kwargs))
+        return {"completed": True, "blocked": [], "commands": [{"kind": "systemd"}]}
+
+    monkeypatch.setattr("github_agent_bridge.cli.complete_pending_reload", fake_complete)
+
+    assert cli.main([
+        "--db",
+        str(db),
+        "update",
+        "--complete-pending",
+        "--systemctl-bin",
+        "systemctl-test",
+        "--json",
+    ]) == 0
+
+    captured = capsys.readouterr()
+    assert '"completion": {' in captured.out
+    assert calls == [(str(db), {"systemctl_bin": "systemctl-test"})]
+
+
 def test_feedback_rule_add_cli_creates_rule(tmp_path, capsys):
     db = tmp_path / "q.sqlite3"
     JobQueue(db)
@@ -111,6 +180,35 @@ def test_feedback_rule_add_cli_creates_rule(tmp_path, capsys):
     captured = capsys.readouterr()
     assert '"rule": {' in captured.out
     assert "Answer with concrete evidence." in captured.out
+
+
+def test_feedback_rule_add_cli_reacts_to_source_events(tmp_path, capsys, monkeypatch):
+    db = tmp_path / "q.sqlite3"
+    JobQueue(db)
+    reacted = []
+    monkeypatch.setattr(cli.feedback, "react_to_feedback_event", lambda *args, **kwargs: reacted.append((args, kwargs)) or True)
+
+    cli.main([
+        "--db",
+        str(db),
+        "feedback-rule-add",
+        "--scope",
+        "repo:gisce/erp",
+        "--type",
+        "style_preference",
+        "--rule",
+        "Answer with concrete evidence.",
+        "--confidence",
+        "0.8",
+        "--source-event",
+        "event-1",
+        "--gh-bin",
+        "gh-test",
+    ])
+
+    captured = capsys.readouterr()
+    assert '"reacted": 1' in captured.out
+    assert reacted == [((str(db), "event-1"), {"gh_bin": "gh-test"})]
 
 
 def test_feedback_events_cli_lists_events(tmp_path, capsys):

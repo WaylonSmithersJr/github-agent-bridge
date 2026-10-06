@@ -1,3 +1,7 @@
+import threading
+
+import pytest
+
 from github_agent_bridge.dashboard_data import job_session_events
 from github_agent_bridge.dispatch import DispatchResult
 from github_agent_bridge.executor import ExecutorConfig, ExecutorPool
@@ -47,17 +51,54 @@ class FakeGitHub:
 
 
 class RecordingDispatcher:
-    def __init__(self, stdout: str = "ok", stderr: str = ""):
+    def __init__(self, stdout: str = "ok", stderr: str = "", ok: bool = True, returncode: int = 0, timed_out: bool = False):
         self.jobs = []
         self.stdout = stdout
         self.stderr = stderr
+        self.ok = ok
+        self.returncode = returncode
+        self.timed_out = timed_out
 
-    def dispatch(self, job, policy, reaction_ok=None, activity_callback=None):
+    def dispatch(self, job, policy, reaction_ok=None, activity_callback=None, process_callback=None):
         self.jobs.append(job)
+        if process_callback:
+            process_callback(
+                {
+                    "pid": 456,
+                    "ppid": 123,
+                    "pgid": 456,
+                    "sid": 456,
+                    "start_time_ticks": 999,
+                }
+            )
         if activity_callback:
             activity_callback("openclaw_stdout", "OpenClaw CLI output", "thinking about the change")
             activity_callback("openclaw_stderr", "OpenClaw CLI error output", "token=secret ghp_abcdefghijklmnopqrstuvwxyz")
-        return DispatchResult(True, 0, self.stdout, self.stderr, False, reaction_ok, ["openclaw"])
+        return DispatchResult(self.ok, self.returncode, self.stdout, self.stderr, self.timed_out, reaction_ok, ["openclaw"])
+
+
+class CancelableDispatcher:
+    def __init__(self):
+        self.started = threading.Event()
+        self.cancelled = threading.Event()
+
+    def dispatch(self, job, policy, reaction_ok=None, activity_callback=None, process_callback=None):
+        if process_callback:
+            process_callback(
+                {
+                    "pid": 456,
+                    "ppid": 123,
+                    "pgid": 456,
+                    "sid": 456,
+                    "start_time_ticks": 999,
+                }
+            )
+        self.started.set()
+        self.cancelled.wait(timeout=5)
+        return DispatchResult(False, 130, "", "executor shutdown requested", cancelled=True)
+
+    def shutdown(self):
+        self.cancelled.set()
 
 
 def enqueue_pr_review(queue: JobQueue):
@@ -92,6 +133,19 @@ def enqueue_pr_comment(queue: JobQueue):
     return job
 
 
+def enqueue_pr_comment_from(queue: JobQueue, actor: str, uid: int, message_id: str, comment_id: int):
+    notification = Notification(
+        uid=uid,
+        message_id=message_id,
+        subject="Re: [gisce/erp] Permitir caller en los dominios (PR #27315)",
+        from_addr=f"{actor} <notifications@github.com>",
+        body=f"@pilipilisbot fes-ho https://github.com/gisce/erp/pull/27315#issuecomment-{comment_id}",
+    )
+    job, state = queue.enqueue(notification, Policy(trusted_orgs={"gisce"}))
+    assert job is not None
+    return job, state
+
+
 def enqueue_workflow_run_failed(queue: JobQueue):
     notification = Notification(
         uid=3,
@@ -110,19 +164,19 @@ def enqueue_workflow_run_failed(queue: JobQueue):
 def enqueue_sync_after_merge(queue: JobQueue):
     notification = Notification(
         uid=4,
-        message_id="<pilipilisbot/github-agent-bridge/pull/96/merged@github.com>",
-        subject="Re: [pilipilisbot/github-agent-bridge] feat: isolate OpenClaw sessions per work key (PR #96)",
+        message_id="<gisce/github-agent-bridge/pull/96/merged@github.com>",
+        subject="Re: [gisce/github-agent-bridge] feat: isolate OpenClaw sessions per work key (PR #96)",
         from_addr="notifications@github.com",
-        body="Merged #96 into main. https://github.com/pilipilisbot/github-agent-bridge/pull/96",
+        body="Merged #96 into main. https://github.com/gisce/github-agent-bridge/pull/96",
     )
-    job, state = queue.enqueue(notification, Policy(trusted_orgs={"pilipilisbot"}))
+    job, state = queue.enqueue(notification, Policy(trusted_orgs={"gisce"}))
     assert state == "enqueued"
     assert job is not None
     assert job.action == "sync_after_merge"
     return job
 
 
-def test_assigned_pr_comment_upgrades_to_work_allowed(tmp_path):
+def test_assigned_pr_comment_keeps_review_only_without_explicit_write_request(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     enqueue_pr_comment(queue)
     dispatcher = RecordingDispatcher()
@@ -130,10 +184,12 @@ def test_assigned_pr_comment_upgrades_to_work_allowed(tmp_path):
     pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=FakeGitHub(assigned=True), config=ExecutorConfig(run_once=True))
     assert pool.work_one("worker-test") is True
 
-    assert dispatcher.jobs[0].work_intent == "work_allowed"
+    assert dispatcher.jobs[0].work_intent == "review_only"
     stored = queue.get(dispatcher.jobs[0].id)
     assert stored is not None
-    assert stored.work_intent == "work_allowed"
+    assert stored.work_intent == "review_only"
+    event_types = [event["event_type"] for event in job_session_events(queue.path, stored.id)]
+    assert "action_mode_retained" in event_types
 
 
 def test_executor_records_session_activity_events(tmp_path):
@@ -146,9 +202,77 @@ def test_executor_records_session_activity_events(tmp_path):
     assert pool.work_one("worker-test") is True
 
     event_types = [event["event_type"] for event in job_session_events(db, dispatcher.jobs[0].id)]
-    assert event_types == ["claimed", "dispatch_started", "openclaw_stdout", "openclaw_stderr", "dispatch_finished", "done"]
-    stderr_event = job_session_events(db, dispatcher.jobs[0].id)[3]
+    assert event_types == [
+        "claimed",
+        "dispatch_started",
+        "model_route_selected",
+        "process_registered",
+        "openclaw_stdout",
+        "openclaw_stderr",
+        "dispatch_finished",
+        "done",
+    ]
+    route_event = job_session_events(db, dispatcher.jobs[0].id)[2]
+    assert route_event["detail"] == "OpenClaw default model route"
+    stderr_event = job_session_events(db, dispatcher.jobs[0].id)[5]
     assert stderr_event["detail"] == "token=[redacted] [redacted]"
+
+
+def test_dispatched_job_completion_pushes_trigger_actor(tmp_path, monkeypatch):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job, state = enqueue_pr_comment_from(queue, "ecarreras", 1, "<gisce/erp/pull/27315/ecarreras@github.com>", 1)
+    assert state == "enqueued"
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=True)
+    notifications = []
+    monkeypatch.setattr("github_agent_bridge.executor.notify_job_completion", lambda *args, **kwargs: notifications.append((args, kwargs)) or {"sent": 1})
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert notifications[0][0] == (queue.path,)
+    assert notifications[0][1] == {
+        "actors": ["ecarreras"],
+        "job_id": job.id,
+        "work_key": "gisce/erp#27315",
+        "status": "done",
+        "summary": "👀 reaction ok + agent dispatch queued",
+        "detail": "followup_url=https://github.com/gisce/erp/issues/27315#issuecomment-2; ok",
+        "followup_url": "https://github.com/gisce/erp/issues/27315#issuecomment-2",
+    }
+
+
+def test_dispatched_job_completion_pushes_coalesced_trigger_actors(tmp_path, monkeypatch):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job, state = enqueue_pr_comment_from(queue, "ecarreras", 1, "<gisce/erp/pull/27315/ecarreras@github.com>", 1)
+    assert state == "enqueued"
+    _, state = enqueue_pr_comment_from(queue, "marc", 2, "<gisce/erp/pull/27315/marc@github.com>", 2)
+    assert state == "coalesced"
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=True)
+    notifications = []
+    monkeypatch.setattr("github_agent_bridge.executor.notify_job_completion", lambda *args, **kwargs: notifications.append(kwargs) or {"sent": 1})
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert notifications[0]["actors"] == ["ecarreras", "marc"]
+    assert notifications[0]["job_id"] == job.id
+
+
+def test_skipped_job_does_not_emit_completion_push(tmp_path, monkeypatch):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    enqueue_pr_comment_from(queue, "ecarreras", 1, "<gisce/erp/pull/27315/ecarreras@github.com>", 1)
+    dispatcher = RecordingDispatcher()
+    github = FakeGitHub(assigned=False, mentioned=False)
+    notifications = []
+    monkeypatch.setattr("github_agent_bridge.executor.notify_job_completion", lambda *args, **kwargs: notifications.append(kwargs) or {"sent": 1})
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert dispatcher.jobs == []
+    assert notifications == []
 
 
 def test_executor_records_selected_model_route_session_event(tmp_path):
@@ -214,7 +338,49 @@ def test_coalesced_notifications_are_reacted_to_before_dispatch(tmp_path):
     assert 2 in github.eye_comment_ids
 
 
-def test_bot_authored_pr_review_comment_upgrades_to_work_allowed(tmp_path):
+def test_pending_job_is_acknowledged_before_a_worker_claims_it(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    github = FakeGitHub(assigned=False, mentioned=True)
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), RecordingDispatcher(), github=github)
+
+    assert pool.acknowledge_one() is True
+
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "pending"
+    assert stored.attempts == 0
+    assert github.eye_comment_ids == [1]
+    assert queue.acknowledgement_ok(job.id) is True
+
+
+def test_worker_does_not_repeat_a_successful_queued_acknowledgement(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    enqueue_pr_comment(queue)
+    github = FakeGitHub(assigned=False, mentioned=True)
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), RecordingDispatcher(), github=github)
+
+    assert pool.acknowledge_one() is True
+    assert pool.work_one("worker-test") is True
+
+    assert github.eye_comment_ids == [1]
+
+
+def test_failed_queued_acknowledgement_is_retried_once_by_worker(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    enqueue_pr_comment(queue)
+    github = FakeGitHub(assigned=False, mentioned=True)
+    github.react_eyes = lambda ctx: False
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), RecordingDispatcher(), github=github)
+
+    assert pool.acknowledge_one() is True
+    github.react_eyes = lambda ctx: True
+    assert pool.work_one("worker-test") is True
+
+    assert queue.acknowledgement_ok(1) is True
+
+
+def test_bot_authored_pr_review_comment_keeps_review_only_without_explicit_write_request(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     enqueue_pr_comment(queue)
     dispatcher = RecordingDispatcher()
@@ -222,10 +388,12 @@ def test_bot_authored_pr_review_comment_upgrades_to_work_allowed(tmp_path):
     pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=FakeGitHub(assigned=False, mentioned=True, authored=True), config=ExecutorConfig(run_once=True))
     assert pool.work_one("worker-test") is True
 
-    assert dispatcher.jobs[0].work_intent == "work_allowed"
+    assert dispatcher.jobs[0].work_intent == "review_only"
     stored = queue.get(dispatcher.jobs[0].id)
     assert stored is not None
-    assert stored.work_intent == "work_allowed"
+    assert stored.work_intent == "review_only"
+    event_types = [event["event_type"] for event in job_session_events(queue.path, stored.id)]
+    assert "action_mode_retained" in event_types
 
 
 def test_unassigned_unmentioned_pr_comment_reacts_without_dispatch(tmp_path):
@@ -286,6 +454,7 @@ def test_retry_dispatches_even_when_prior_bot_comment_exists(tmp_path):
 def test_work_allowed_dispatch_auto_retries_once_without_visible_github_followup(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     job = enqueue_pr_comment(queue)
+    queue.update_work_intent(job.id, "work_allowed", "explicit implementation request")
     dispatcher = RecordingDispatcher()
     github = FakeGitHub(assigned=True)
     github.followup_url = None
@@ -304,6 +473,7 @@ def test_work_allowed_dispatch_auto_retries_once_without_visible_github_followup
 def test_work_allowed_dispatch_blocks_after_auto_retry_without_visible_github_followup(tmp_path):
     queue = JobQueue(tmp_path / "bridge.sqlite3")
     job = enqueue_pr_comment(queue)
+    queue.update_work_intent(job.id, "work_allowed", "explicit implementation request")
     dispatcher = RecordingDispatcher()
     github = FakeGitHub(assigned=True)
     github.followup_url = None
@@ -318,6 +488,28 @@ def test_work_allowed_dispatch_blocks_after_auto_retry_without_visible_github_fo
     assert stored.status == "blocked"
     assert stored.last_error == "ok"
     assert stored.attempts == 2
+
+
+def test_reply_comment_duplicate_noop_without_followup_is_done(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher(
+        stdout=(
+            "No GitHub follow-up comment was appropriate because the thread already contains "
+            "the same answer. Adding another comment would be duplicate noise."
+        )
+    )
+    github = FakeGitHub(assigned=True)
+    github.followup_url = None
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    assert dispatcher.jobs[0].id == job.id
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
+    assert stored.last_error is None
 
 
 def test_workflow_run_failed_dispatch_does_not_require_thread_followup(tmp_path):
@@ -350,7 +542,7 @@ def test_sync_after_merge_noop_duplicate_followup_is_done(tmp_path):
     github = FakeGitHub(assigned=False, mentioned=False)
     github.followup_url = None
 
-    pool = ExecutorPool(queue, Policy(trusted_orgs={"pilipilisbot"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
     assert pool.work_one("worker-test") is True
 
     assert dispatcher.jobs[0].id == job.id
@@ -358,6 +550,100 @@ def test_sync_after_merge_noop_duplicate_followup_is_done(tmp_path):
     assert stored is not None
     assert stored.status == "done"
     assert stored.last_error is None
+
+
+def test_sync_after_merge_repeat_without_followup_is_done(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_sync_after_merge(queue)
+    dispatcher = RecordingDispatcher(
+        stdout=(
+            "No GitHub follow-up was appropriate because this was a repeat sync-after-merge "
+            "event with no new repository state; the prior cleanup note already covered it."
+        )
+    )
+    github = FakeGitHub(assigned=False, mentioned=False)
+    github.followup_url = None
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
+    assert stored.last_error is None
+
+
+def test_transient_dispatch_failure_is_requeued(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher(
+        stderr="GatewayClientRequestError: Error: CLI transcript compaction failed for openai/gpt-5.5: Summarization failed: Connection error.",
+        ok=False,
+        returncode=1,
+    )
+
+    github = FakeGitHub(assigned=True)
+    github.followup_url = None
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "pending"
+    assert stored.last_error is None
+    assert stored.attempts == 1
+    assert stored.metadata["fresh_session_on_retry"] is True
+
+    assert pool.work_one("worker-test") is True
+    retry = dispatcher.jobs[-1]
+    assert retry.attempts == 2
+    events = job_session_events(queue.path, job.id, limit=50)
+    assert any(event["event_type"] == "session_rescue_selected" for event in events)
+
+
+def test_transient_dispatch_failure_blocks_after_retry_budget(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher(
+        stderr="GatewayClientRequestError: Error: codex app-server client closed before turn completed",
+        ok=False,
+        returncode=1,
+    )
+    config = ExecutorConfig(run_once=True, transient_dispatch_retries=1)
+    github = FakeGitHub(assigned=True)
+    github.followup_url = None
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=config)
+    assert pool.work_one("worker-test") is True
+    assert pool.work_one("worker-test") is True
+
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "blocked"
+    assert "codex app-server client closed" in stored.last_error
+
+
+def test_dispatch_failure_after_visible_followup_is_blocked_without_retry(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = RecordingDispatcher(
+        stderr="GatewayClientRequestError: Error: CLI transcript compaction failed for openai/gpt-5.5: Summarization failed: Connection error.",
+        ok=False,
+        returncode=1,
+    )
+    github = FakeGitHub(assigned=True, answered_url="https://github.com/gisce/erp/issues/27315#issuecomment-2")
+
+    pool = ExecutorPool(queue, Policy(trusted_orgs={"gisce"}), dispatcher, github=github, config=ExecutorConfig(run_once=True))
+    assert pool.work_one("worker-test") is True
+
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "blocked"
+    assert stored.attempts == 1
+    assert "followup_url=https://github.com/gisce/erp/issues/27315#issuecomment-2" in stored.last_error
+    assert "dispatch failed rc=1" in stored.last_error
+    assert "CLI transcript compaction failed" in stored.last_error
 
 
 def test_non_actionable_review_reacts_without_dispatch_even_when_assigned(tmp_path):
@@ -375,3 +661,70 @@ def test_non_actionable_review_reacts_without_dispatch_even_when_assigned(tmp_pa
     stored = queue.get(job.id)
     assert stored is not None
     assert stored.status == "done"
+
+
+def test_run_blocks_orphaned_jobs_before_claiming_new_work(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    queue.claim_next("executor-that-no-longer-exists/worker-0")
+    pool = ExecutorPool(
+        queue,
+        Policy(trusted_orgs={"gisce"}),
+        RecordingDispatcher(),
+        github=FakeGitHub(assigned=True),
+        config=ExecutorConfig(run_once=True),
+    )
+
+    pool.run()
+
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "blocked"
+    assert "No prior executor process owns" in stored.last_error
+
+
+def test_shutdown_cancels_dispatch_and_blocks_job_without_requeue(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    job = enqueue_pr_comment(queue)
+    dispatcher = CancelableDispatcher()
+    github = FakeGitHub(assigned=True)
+    github.followup_url = None
+    pool = ExecutorPool(
+        queue,
+        Policy(trusted_orgs={"gisce"}),
+        dispatcher,
+        github=github,
+        config=ExecutorConfig(workers=1),
+    )
+    thread = threading.Thread(target=pool.run)
+    thread.start()
+    assert dispatcher.started.wait(timeout=5)
+
+    pool._request_shutdown()
+    thread.join(timeout=5)
+
+    assert thread.is_alive() is False
+    stored = queue.get(job.id)
+    assert stored is not None
+    assert stored.status == "blocked"
+    assert stored.attempts == 1
+    assert "executor shutdown requested" in stored.last_error
+
+
+def test_run_raises_when_worker_dies_unexpectedly(tmp_path):
+    queue = JobQueue(tmp_path / "bridge.sqlite3")
+    pool = ExecutorPool(
+        queue,
+        Policy(trusted_orgs={"gisce"}),
+        RecordingDispatcher(),
+        github=FakeGitHub(assigned=True),
+        config=ExecutorConfig(run_once=True),
+    )
+
+    def crash(worker_id=None):
+        raise RuntimeError("worker boom")
+
+    pool.work_one = crash
+
+    with pytest.raises(RuntimeError, match="executor worker terminated unexpectedly: .*worker boom"):
+        pool.run()

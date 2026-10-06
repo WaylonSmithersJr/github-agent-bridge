@@ -4,6 +4,7 @@ import os
 import sys
 
 from .cli import DEFAULT_DB, DEFAULT_POLICY, main as cli_main
+from .observability import configure_sentry
 from .reader import imap_mailbox_arg
 
 
@@ -17,6 +18,7 @@ def main() -> int:
     This small wrapper keeps the systemd unit simple, especially for optional
     mutation flags, which should be omitted completely in shadow deployments.
     """
+    configure_sentry(service="reader")
     source = env("GITHUB_AGENT_BRIDGE_READER_SOURCE", "imap").lower()
     if source == "github":
         argv = [

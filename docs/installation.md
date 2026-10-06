@@ -20,7 +20,7 @@ Install from GitHub. There is no PyPI publish yet.
 
 ```bash
 python3 -m pip install --user \
-  'git+https://github.com/pilipilisbot/github-agent-bridge.git'
+  'git+https://github.com/gisce/github-agent-bridge.git'
 ```
 
 Make sure the script directory is on `PATH` and both installed entrypoints are available:
@@ -35,7 +35,7 @@ For a pinned install, replace `vX.Y.Z` with a release tag:
 
 ```bash
 python3 -m pip install --user \
-  'git+https://github.com/pilipilisbot/github-agent-bridge.git@vX.Y.Z'
+  'git+https://github.com/gisce/github-agent-bridge.git@vX.Y.Z'
 ```
 
 ## Create runtime directories
@@ -58,7 +58,7 @@ Start from the example policy:
 
 ```bash
 curl -fsSL \
-  https://raw.githubusercontent.com/pilipilisbot/github-agent-bridge/main/policy.example.json \
+  https://raw.githubusercontent.com/gisce/github-agent-bridge/main/policy.example.json \
   -o ~/.config/github-agent-bridge/policy.json
 chmod 600 ~/.config/github-agent-bridge/policy.json
 ```
@@ -181,6 +181,19 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
   run --mode live --workers 2
 ```
 
+To dedicate an executor to a specific class of work, add `--work-intent`.
+For example, keep lightweight review/comment jobs moving with:
+
+```bash
+gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
+  --policy ~/.config/github-agent-bridge/policy.json \
+  run --mode live --workers 2 --work-intent review_only
+```
+
+Use `--work-intent work_allowed` for implementation-only capacity, or omit the
+flag for a general pool. The queue still prevents concurrent jobs for the same
+GitHub issue/PR even when multiple pools are running.
+
 Run the reader separately. Add `--mark-seen` only when the bridge should consume GitHub notifications from the configured mailbox:
 
 ```bash
@@ -198,7 +211,7 @@ gab --db ~/.local/state/github-agent-bridge/bridge.sqlite3 \
 Clone the repository if you did not keep a checkout, because the systemd unit files are not installed by `pip`:
 
 ```bash
-git clone https://github.com/pilipilisbot/github-agent-bridge.git /tmp/github-agent-bridge
+git clone https://github.com/gisce/github-agent-bridge.git /tmp/github-agent-bridge
 cd /tmp/github-agent-bridge
 ```
 
@@ -213,16 +226,24 @@ cp systemd/github-agent-bridge-monitor.service ~/.config/systemd/user/
 cp systemd/github-agent-bridge-monitor.timer ~/.config/systemd/user/
 cp systemd/github-agent-bridge-feedback.service ~/.config/systemd/user/
 cp systemd/github-agent-bridge-feedback.timer ~/.config/systemd/user/
+cp systemd/github-agent-bridge-autoupdate.service ~/.config/systemd/user/
+cp systemd/github-agent-bridge-autoupdate.timer ~/.config/systemd/user/
 # Optional dashboard API for operator tooling:
 cp systemd/github-agent-bridge-dashboard.service ~/.config/systemd/user/
+# Recommended for public GitHub webhooks. The socket remains owned by systemd
+# while the small ingress process restarts.
+cp systemd/github-agent-bridge-webhook.service ~/.config/systemd/user/
+cp systemd/github-agent-bridge-webhook.socket ~/.config/systemd/user/
 
 systemctl --user daemon-reload
 systemctl --user enable --now github-agent-bridge.service
 systemctl --user enable --now github-agent-bridge-reader.timer
 systemctl --user enable --now github-agent-bridge-monitor.timer
 systemctl --user enable --now github-agent-bridge-feedback.timer
+systemctl --user enable --now github-agent-bridge-autoupdate.timer
 # Optional:
 # systemctl --user enable --now github-agent-bridge-dashboard.service
+# systemctl --user enable --now github-agent-bridge-webhook.socket
 ```
 
 The reader timer calls the packaged `github-agent-bridge-reader-run` console
@@ -252,6 +273,13 @@ GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_USERS=your-github-login
 GITHUB_AGENT_BRIDGE_DASHBOARD_ALLOWED_TEAMS=
 GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_USERS=your-github-login
 GITHUB_AGENT_BRIDGE_DASHBOARD_ADMIN_TEAMS=
+GITHUB_AGENT_BRIDGE_DASHBOARD_PUBLIC_URL=https://bridge.example.com
+GITHUB_AGENT_BRIDGE_WEB_PUSH_VAPID_PUBLIC_KEY=replace-with-vapid-public-key
+GITHUB_AGENT_BRIDGE_WEB_PUSH_VAPID_PRIVATE_KEY=replace-with-vapid-private-key
+GITHUB_AGENT_BRIDGE_WEB_PUSH_VAPID_CONTACT=mailto:admin@example.com
+GITHUB_AGENT_BRIDGE_GITHUB_APP_ID=your-github-app-id
+GITHUB_AGENT_BRIDGE_GITHUB_APP_SLUG=
+GITHUB_AGENT_BRIDGE_WEB_PUSH_ICON_URL=
 EOF
 ```
 
@@ -261,9 +289,34 @@ the public HTTPS origin when using a reverse proxy. See
 [`dashboard-github-oauth.md`](dashboard-github-oauth.md) for the full GitHub
 setup and security checklist.
 
+Browser push notifications require the public HTTPS origin in
+`GITHUB_AGENT_BRIDGE_DASHBOARD_PUBLIC_URL`, the VAPID key pair above, and a
+dashboard sign-in from each GitHub user who wants job completion notifications.
+Set `GITHUB_AGENT_BRIDGE_GITHUB_APP_ID` or
+`GITHUB_AGENT_BRIDGE_GITHUB_APP_SLUG` when notifications should use the image
+configured on the GitHub App automatically. `GITHUB_AGENT_BRIDGE_WEB_PUSH_ICON_URL`
+can still override the notification icon with an explicit URL.
+
+When webhooks are enabled, start `github-agent-bridge-webhook.socket` and route
+the exact `/api/webhooks/github` path to `127.0.0.1:8766`. systemd owns the
+listening socket and keeps a backlog while `github-agent-bridge-webhook.service`
+is replaced, so dashboard restarts and short ingress restarts do not produce a
+connection-refused window. Do not enable the service directly; enabling the
+socket starts it on demand.
+
+When the dashboard is published through nginx, use the proxy settings from
+[`operations.md`](operations.md#dashboard-api-service) or start from
+[`nginx-dashboard.conf`](nginx-dashboard.conf). The example keeps live SSE
+streams unbuffered and replaces nginx's generic "Bad Gateway" response with an
+auto-refreshing restart page while `github-agent-bridge-dashboard.service` is
+briefly unavailable.
+
 ```bash
 systemctl --user status github-agent-bridge-dashboard.service
+systemctl --user status github-agent-bridge-webhook.socket
+systemctl --user status github-agent-bridge-webhook.service
 curl http://127.0.0.1:8765/api/health
+curl http://127.0.0.1:8766/api/health
 ```
 
 ## Monitor health

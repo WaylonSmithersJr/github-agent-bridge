@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -47,7 +47,8 @@ def parse_utc(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
     except ValueError:
         return None
 
@@ -76,17 +77,95 @@ def coerce_limit(value: int, maximum: int = 200) -> int:
     return max(1, min(value, maximum))
 
 
+def parse_model_route_detail(detail: str | None) -> dict[str, Any]:
+    if not detail:
+        return {
+            "configured": False,
+            "model": None,
+            "thinking": None,
+            "summary": "n/a",
+        }
+    model = None
+    thinking = None
+    for part in detail.split():
+        if part.startswith("model="):
+            model = part.removeprefix("model=") or None
+        elif part.startswith("thinking="):
+            thinking = part.removeprefix("thinking=") or None
+    return {
+        "configured": bool(model or thinking),
+        "model": model,
+        "thinking": thinking,
+        "summary": detail,
+    }
+
+
+def action_mode_for_intent(work_intent: str | None) -> str:
+    return "fix_allowed" if work_intent == "work_allowed" else "review_only"
+
+
+def intent_classifier_summary(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    classifier = metadata.get("intent_classifier")
+    if not isinstance(classifier, dict):
+        return None
+    parser = classifier.get("parser") if isinstance(classifier.get("parser"), dict) else {}
+    llm = classifier.get("llm") if isinstance(classifier.get("llm"), dict) else {}
+    error = classifier.get("error")
+    return {
+        "enabled": bool(classifier.get("enabled")),
+        "parser": parser,
+        "llm": llm,
+        "error": str(error) if error else None,
+    }
+
+
+def jobs_select_sql(con: sqlite3.Connection) -> str:
+    if not table_exists(con, "job_session_events"):
+        return """SELECT jobs.*, (
+            SELECT running.id FROM jobs AS running
+            WHERE jobs.status='pending' AND running.work_key=jobs.work_key AND running.status='running'
+            ORDER BY running.id LIMIT 1
+        ) AS blocked_by_job_id FROM jobs"""
+    return """
+        SELECT jobs.*,
+            (
+                SELECT detail
+                FROM job_session_events
+                WHERE job_id=jobs.id AND event_type='model_route_selected'
+                ORDER BY id DESC
+                LIMIT 1
+            ) AS model_route_detail,
+            (
+                SELECT running.id
+                FROM jobs AS running
+                WHERE jobs.status='pending'
+                  AND running.work_key=jobs.work_key
+                  AND running.status='running'
+                ORDER BY running.id
+                LIMIT 1
+            ) AS blocked_by_job_id
+        FROM jobs
+    """
+
+
 def job_summary(row: sqlite3.Row) -> dict[str, Any]:
     context = json.loads(row["context_json"] or "{}")
+    metadata = json.loads(row["metadata_json"] or "{}")
+    blocked_by_job_id = row_get(row, "blocked_by_job_id")
+    status = row["status"]
     return {
         "id": row["id"],
         "work_key": row["work_key"],
         "repo": row["repo"],
         "thread": row["thread"],
-        "status": row["status"],
+        "status": status,
+        "runnable": status == "pending" and blocked_by_job_id is None,
+        "blocked_by_job_id": blocked_by_job_id,
+        "queue_state": "serialized_by_work_key" if blocked_by_job_id is not None else ("runnable" if status == "pending" else status),
         "action": row["action"],
         "decision": row["decision"],
         "intent": row["work_intent"],
+        "action_mode": action_mode_for_intent(row["work_intent"]),
         "subject": row["subject"],
         "trigger_actor": row_get(row, "trigger_actor"),
         "trigger_actor_avatar_url": row_get(row, "trigger_actor_avatar_url"),
@@ -101,6 +180,8 @@ def job_summary(row: sqlite3.Row) -> dict[str, Any]:
         "queue_wait_seconds": duration_seconds(row["created_at"], row["started_at"]) if row["started_at"] else None,
         "runtime_seconds": duration_seconds(row["started_at"], row["finished_at"]),
         "github_urls": context.get("urls", []),
+        "model_route": parse_model_route_detail(row_get(row, "model_route_detail")),
+        "intent_classifier": intent_classifier_summary(metadata),
     }
 
 
@@ -140,6 +221,7 @@ def inspect_db_read_only(db: str | Path) -> dict[str, Any]:
         if table_exists(con, "state"):
             state = {r["key"]: r["value"] for r in con.execute("SELECT key,value FROM state")}
             out["last_uid"] = state.get("last_uid")
+            out["executor_process_tracking_id"] = state.get("executor_process_tracking_id")
         if table_exists(con, "feedback_rule_proposals"):
             knowledge_counts = {
                 r["status"]: int(r["count"])
@@ -151,13 +233,29 @@ def inspect_db_read_only(db: str | Path) -> dict[str, Any]:
                 "rejected": knowledge_counts.get("rejected", 0),
                 "errors": knowledge_counts.get("error", 0),
             }
+        if table_exists(con, "quarantined_notifications"):
+            unresolved_quarantines = con.execute(
+                "SELECT count(*) count FROM quarantined_notifications WHERE resolved_at IS NULL"
+            ).fetchone()["count"]
+            out["quarantined_notifications"] = int(unresolved_quarantines)
+            latest_quarantine = con.execute(
+                """
+                SELECT id, uid, message_id, subject, reason, error, created_at
+                FROM quarantined_notifications
+                WHERE resolved_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if latest_quarantine:
+                out["latest_quarantined_notification"] = dict(latest_quarantine)
         if table_exists(con, "worklog"):
             last_log = con.execute("SELECT ts, phase, summary FROM worklog ORDER BY id DESC LIMIT 1").fetchone()
             if last_log:
                 out["last_worklog"] = dict(last_log)
         running_rows = con.execute(
             """
-            SELECT id, work_key, work_intent, locked_by, attempts, started_at, updated_at
+            SELECT id, work_key, work_intent, locked_by, attempts, started_at, updated_at, metadata_json
             FROM jobs
             WHERE status='running'
             ORDER BY id
@@ -171,6 +269,7 @@ def inspect_db_read_only(db: str | Path) -> dict[str, Any]:
                 "work_intent": row["work_intent"],
                 "locked_by": row["locked_by"],
                 "attempts": row["attempts"],
+                "runtime_process": json.loads(row["metadata_json"] or "{}").get("runtime_process"),
                 "age_seconds": duration_seconds(row["started_at"]),
                 "idle_seconds": duration_seconds(row["updated_at"]),
                 "last_worklog": _last_worklog(con, int(row["id"])),
@@ -215,7 +314,7 @@ def list_jobs(
             where += " AND created_at <= ?" if where else " WHERE created_at <= ?"
             args.append(until)
         args.append(coerce_limit(limit))
-        rows = con.execute(f"SELECT * FROM jobs{where} ORDER BY {JOB_LIST_ORDER_SQL} LIMIT ?", args).fetchall()
+        rows = con.execute(f"{jobs_select_sql(con)}{where} ORDER BY {JOB_LIST_ORDER_SQL} LIMIT ?", args).fetchall()
     return [job_summary(row) for row in rows]
 
 
@@ -252,6 +351,25 @@ def list_job_actors(db: str | Path, *, limit: int = 100) -> list[dict[str, Any]]
     ]
 
 
+def list_all_job_actor_logins(db: str | Path) -> list[str]:
+    path = Path(db).expanduser()
+    if not path.exists():
+        return []
+    with readonly_connect(path) as con:
+        if not table_exists(con, "jobs") or not column_exists(con, "jobs", "trigger_actor"):
+            return []
+        rows = con.execute(
+            """
+            SELECT lower(trigger_actor) AS login
+            FROM jobs
+            WHERE trigger_actor IS NOT NULL AND trigger_actor != ''
+            GROUP BY lower(trigger_actor)
+            ORDER BY login
+            """
+        ).fetchall()
+    return [str(row["login"]) for row in rows if row["login"]]
+
+
 def get_job_detail(db: str | Path, job_id: int) -> dict[str, Any] | None:
     path = Path(db).expanduser()
     if not path.exists():
@@ -259,7 +377,7 @@ def get_job_detail(db: str | Path, job_id: int) -> dict[str, Any] | None:
     with readonly_connect(path) as con:
         if not table_exists(con, "jobs"):
             return None
-        row = con.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        row = con.execute(f"{jobs_select_sql(con)} WHERE jobs.id=?", (job_id,)).fetchone()
         if row is None:
             return None
         job = job_summary(row)
@@ -279,6 +397,14 @@ def get_job_detail(db: str | Path, job_id: int) -> dict[str, Any] | None:
                 (job_id,),
             ).fetchall()
         ] if table_exists(con, "job_progress") else []
+        job["runs"] = [
+            dict(run)
+            for run in con.execute(
+                """SELECT id, attempt, started_at, finished_at, result, worker_id, session_id, is_estimated
+                FROM job_runs WHERE job_id=? ORDER BY attempt""",
+                (job_id,),
+            ).fetchall()
+        ] if table_exists(con, "job_runs") else []
         job["coalesced_notifications"] = [
             {
                 "id": row["id"],
@@ -587,13 +713,19 @@ def metrics_summary(db: str | Path, *, timezone_name: str = "UTC") -> dict[str, 
         if not table_exists(con, "jobs"):
             return {"db_exists": True, "schema_ok": False, "status_counts": {}, "runtime_seconds": {}}
         rows = con.execute("SELECT status, repo, action, work_intent, created_at, started_at, finished_at FROM jobs").fetchall()
+        run_rows = con.execute(
+            """SELECT job_runs.started_at, job_runs.finished_at, jobs.work_intent
+            FROM job_runs
+            JOIN jobs ON jobs.id=job_runs.job_id
+            WHERE job_runs.finished_at IS NOT NULL"""
+        ).fetchall() if table_exists(con, "job_runs") else rows
     status_counts = Counter(row["status"] for row in rows)
     by_repo = Counter(row["repo"] or "unknown" for row in rows)
     by_action = Counter(row["action"] for row in rows)
     by_intent = Counter(row["work_intent"] for row in rows)
     by_created_day = Counter(day for day in (created_day(row["created_at"], timezone) for row in rows) if day)
     runtimes = sorted(
-        seconds for seconds in (completed_duration_seconds(row["started_at"], row["finished_at"]) for row in rows) if seconds is not None
+        seconds for seconds in (completed_duration_seconds(row["started_at"], row["finished_at"]) for row in run_rows) if seconds is not None
     )
     waits = sorted(
         seconds for seconds in (duration_seconds(row["created_at"], row["started_at"]) for row in rows if row["started_at"]) if seconds is not None
@@ -606,7 +738,7 @@ def metrics_summary(db: str | Path, *, timezone_name: str = "UTC") -> dict[str, 
         "by_action": dict(by_action),
         "by_intent": dict(by_intent),
         "by_created_day": dict(sorted(by_created_day.items())),
-        "runtime_usage": runtime_usage(rows, timezone),
+        "runtime_usage": runtime_usage(run_rows, timezone),
         "runtime_seconds": percentiles(runtimes),
         "queue_wait_seconds": percentiles(waits),
     }
@@ -637,22 +769,54 @@ def runtime_usage(rows: list[sqlite3.Row], timezone: ZoneInfo) -> dict[str, list
         seconds = completed_duration_seconds(row["started_at"], row["finished_at"])
         if started is None or finished is None or seconds is None:
             continue
-        bucket_at = finished
-        local = bucket_at.astimezone(timezone)
-        day = local.date().isoformat()
-        month = f"{local.year:04d}-{local.month:02d}"
-        add_runtime_bucket(daily, day, seconds)
-        add_runtime_bucket(monthly, month, seconds)
+        day = majority_runtime_day(started, finished, timezone)
+        if day is None:
+            continue
+        month = day[:7]
+        mode = runtime_usage_mode(row["work_intent"])
+        add_runtime_bucket(daily, day, seconds, mode)
+        add_runtime_bucket(monthly, month, seconds, mode)
     return {
         "day": runtime_bucket_rows(daily),
         "month": runtime_bucket_rows(monthly),
     }
 
 
-def add_runtime_bucket(buckets: dict[str, dict[str, int]], bucket: str, seconds: int) -> None:
-    current = buckets.setdefault(bucket, {"seconds": 0, "jobs": 0})
+def majority_runtime_day(started: datetime, finished: datetime, timezone: ZoneInfo) -> str | None:
+    """Return the local day containing most elapsed runtime, preferring the start day on ties."""
+    if finished < started:
+        return None
+    start_day = started.astimezone(timezone).date()
+    end_day = finished.astimezone(timezone).date()
+    current_day = start_day
+    best_day = start_day
+    best_seconds = -1.0
+    while current_day <= end_day:
+        day_start = datetime.combine(current_day, time.min, tzinfo=timezone).astimezone(UTC)
+        next_day = current_day + timedelta(days=1)
+        day_end = datetime.combine(next_day, time.min, tzinfo=timezone).astimezone(UTC)
+        overlap_start = max(started, day_start)
+        overlap_end = min(finished, day_end)
+        overlap_seconds = max(0.0, (overlap_end - overlap_start).total_seconds())
+        if overlap_seconds > best_seconds:
+            best_day = current_day
+            best_seconds = overlap_seconds
+        current_day = next_day
+    return best_day.isoformat()
+
+
+def runtime_usage_mode(work_intent: str | None) -> str:
+    return "work" if work_intent == "work_allowed" else "review"
+
+
+def add_runtime_bucket(buckets: dict[str, dict[str, int]], bucket: str, seconds: int, mode: str) -> None:
+    current = buckets.setdefault(bucket, {"seconds": 0, "runs": 0, "jobs": 0, "work_seconds": 0, "review_seconds": 0, "work_runs": 0, "review_runs": 0, "work_jobs": 0, "review_jobs": 0})
     current["seconds"] += seconds
+    current["runs"] += 1
     current["jobs"] += 1
+    current[f"{mode}_seconds"] += seconds
+    current[f"{mode}_runs"] += 1
+    current[f"{mode}_jobs"] += 1
 
 
 def runtime_bucket_rows(buckets: dict[str, dict[str, int]]) -> list[dict[str, Any]]:
@@ -661,7 +825,14 @@ def runtime_bucket_rows(buckets: dict[str, dict[str, int]]) -> list[dict[str, An
             "bucket": bucket,
             "seconds": values["seconds"],
             "minutes": round(values["seconds"] / 60, 2),
+            "runs": values["runs"],
             "jobs": values["jobs"],
+            "work_seconds": values["work_seconds"],
+            "review_seconds": values["review_seconds"],
+            "work_runs": values["work_runs"],
+            "review_runs": values["review_runs"],
+            "work_jobs": values["work_jobs"],
+            "review_jobs": values["review_jobs"],
         }
         for bucket, values in sorted(buckets.items())
     ]

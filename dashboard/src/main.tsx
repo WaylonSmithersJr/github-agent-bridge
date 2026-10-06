@@ -1,9 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, ArrowLeft, Brain, CheckCircle2, ChevronDown, Clock3, Cpu, ExternalLink, Filter, Gauge, Link, RefreshCw, RotateCcw, Search, ShieldCheck, TerminalSquare, TimerReset, Trash2, UserCircle2, X } from "lucide-react";
+import { QueryClient, QueryClientProvider, useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Activity, AlertTriangle, ArrowLeft, Bell, Brain, CheckCircle2, ChevronDown, Clock3, Cpu, Eye, ExternalLink, Filter, Gauge, KeyRound, Link, Pencil, RefreshCw, RotateCcw, Save, Search, ShieldCheck, TerminalSquare, TimerReset, Trash2, UserCircle2, Wrench, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import "./styles.css";
@@ -32,7 +32,14 @@ type RuntimeUsageBucket = {
   bucket: string;
   seconds: number;
   minutes: number;
+  runs?: number;
   jobs: number;
+  work_seconds: number;
+  review_seconds: number;
+  work_runs: number;
+  review_runs: number;
+  work_jobs: number;
+  review_jobs: number;
 };
 
 type Percentiles = {
@@ -50,7 +57,10 @@ type About = {
 type DashboardStatus = {
   service: string;
   read_only: boolean;
+  dashboard_url?: string;
+  dashboard_url_source?: "configured" | "forwarded" | "request";
   admin_actions: string[];
+  webhook_configured?: boolean;
   autoupdate: AutoupdateState;
   metrics?: {
     knowledge?: {
@@ -60,6 +70,149 @@ type DashboardStatus = {
       errors?: number;
     };
   };
+};
+
+type WebhookSummary = {
+  mode: string;
+  configured: boolean;
+  receipts: Record<string, number>;
+  duplicate_deliveries: number;
+  cross_source_matches: number;
+  enqueue?: Record<string, number>;
+  totals?: { hooks: number; deliveries: number };
+  coverage?: {
+    both: number;
+    imap_only: number;
+    webhook_only: number;
+    imap_eligible: number;
+    ratio?: number | null;
+    mean_match_delay_ms?: number | null;
+    window_start?: string;
+    window_end?: string;
+    grace_seconds?: number;
+  };
+};
+
+type WebhookException = {
+  kind: "imap_only" | "webhook_only" | "unmatchable";
+  event_key?: string | null;
+  reference: string;
+  created_at: string;
+  repository?: string | null;
+};
+
+type WebhookExceptionsResponse = { exceptions: WebhookException[] };
+
+type WebhookSection = "overview" | "hooks" | "deliveries";
+
+type WebhookTimeseriesResponse = {
+  from: string;
+  to: string;
+  bucket: "hour" | "day";
+  points: WebhookTimeseriesPoint[];
+};
+
+type WebhookHooksResponse = {
+  hooks: WebhookHook[];
+  next_cursor?: string | null;
+};
+
+type WebhookDeliveriesResponse = {
+  deliveries: WebhookDelivery[];
+  next_cursor?: string | null;
+};
+
+type WebhookTimeseriesPoint = {
+  bucket: string;
+  observed: number;
+  duplicate: number;
+  unsupported: number;
+};
+
+type WebhookHook = {
+  id: string;
+  target: string;
+  target_type: "organization" | "repository";
+  name?: string | null;
+  active: boolean;
+  events: string[];
+  content_type?: string | null;
+  ssl_verify?: boolean | null;
+  delivery_url?: string | null;
+  github_api_url?: string | null;
+  ping_url?: string | null;
+  deliveries_url?: string | null;
+  github_created_at?: string | null;
+  github_updated_at?: string | null;
+  last_ping_at?: string | null;
+  last_event_at?: string | null;
+  last_delivery_id?: string | null;
+  last_event_name?: string | null;
+  last_action?: string | null;
+  last_repository?: string | null;
+  last_result?: string | null;
+  status: "receiving" | "quiet" | "inactive" | "never_seen" | "stale_config";
+  admin_url?: string | null;
+};
+
+type WebhookHookDetailResponse = {
+  hook: WebhookHook;
+  stats: { deliveries: number; duplicates: number; unsupported: number };
+  recent_deliveries: WebhookDelivery[];
+  recent_actions?: WebhookHookAction[];
+};
+
+type WebhookHookAction = {
+  id: number;
+  action: "ping";
+  actor: string;
+  status: "requested" | "succeeded" | "failed";
+  detail?: string | null;
+  created_at: string;
+  completed_at?: string | null;
+};
+
+type WebhookDeliveryDetailResponse = {
+  delivery: WebhookDelivery;
+  payload_hash: string;
+  payload: unknown | null;
+  job: {
+    id: number;
+    work_key: string;
+    status: string;
+    action: string;
+    decision: string;
+    work_intent: string;
+    updated_at: string;
+  } | null;
+};
+
+type WebhookDeliveryFilters = {
+  hook_id: string;
+  event_name: string;
+  repository: string;
+  result: string;
+  enqueue_status: string;
+};
+
+type WebhookDelivery = {
+  delivery_id: string;
+  created_at: string;
+  hook_id?: string | null;
+  event_name: string;
+  action?: string | null;
+  repository?: string | null;
+  status: string;
+  enqueue_status?: string | null;
+  job_id?: number | null;
+  event_key?: string | null;
+  duplicate_count?: number;
+  hook?: {
+    id: string;
+    target?: string | null;
+    target_type?: "organization" | "repository" | null;
+    admin_url?: string | null;
+  } | null;
 };
 
 type AutoupdateState = {
@@ -76,6 +229,7 @@ type AutoupdateState = {
   };
   decision?: string;
   executor_reload_pending?: boolean;
+  dashboard_applied_at?: string;
   blocked_reason?: string;
   queue?: {
     active_counts?: Record<string, number>;
@@ -95,9 +249,14 @@ type Job = {
   repo: string | null;
   thread: number | null;
   status: string;
+  runnable?: boolean;
+  blocked_by_job_id?: number | null;
+  queue_state?: string;
   action: string;
   decision: string;
   intent: string;
+  action_mode?: string;
+  intent_classifier?: IntentClassifierSummary | null;
   subject: string;
   trigger_actor: string | null;
   trigger_actor_avatar_url: string | null;
@@ -112,7 +271,36 @@ type Job = {
   queue_wait_seconds: number | null;
   runtime_seconds: number | null;
   github_urls: string[];
+  model_route?: JobModelRoute;
   worklog?: WorklogEntry[];
+};
+
+type JobModelRoute = {
+  configured: boolean;
+  model: string | null;
+  thinking: string | null;
+  summary: string;
+};
+
+type IntentClassifierSummary = {
+  enabled: boolean;
+  parser?: {
+    action?: string;
+    work_intent?: string;
+  };
+  llm?: {
+    action?: string;
+    work_intent?: string;
+    addressed_to_agent?: boolean;
+    write_permission?: string;
+    scope?: string;
+    main_request?: string;
+    subordinate_reason?: string;
+    confidence?: number;
+    reason?: string;
+    applied?: boolean;
+  };
+  error?: string | null;
 };
 
 type WorklogEntry = {
@@ -311,6 +499,8 @@ type KnowledgeProposal = {
   reason: string;
   model: string;
   error: string | null;
+  source_event: KnowledgeEvent | null;
+  can_manage?: boolean;
 };
 
 type KnowledgeRule = {
@@ -324,6 +514,7 @@ type KnowledgeRule = {
   source_events: string[];
   source_event_details: KnowledgeEvent[];
   observations: number;
+  can_manage?: boolean;
 };
 
 type KnowledgeEvent = {
@@ -345,6 +536,7 @@ type KnowledgeEvent = {
   classification: string;
   confidence: number;
   memorable: boolean;
+  can_manage?: boolean;
 };
 
 type KnowledgeResponse = {
@@ -356,6 +548,64 @@ type KnowledgeResponse = {
 };
 
 type KnowledgeTab = "proposals" | "rules" | "events";
+
+type McpTokenRecord = {
+  id: string;
+  name: string;
+  user_login: string | null;
+  created_by: string | null;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  expires_at: string | null;
+};
+
+type McpTokenCreateResponse = {
+  token: string;
+  record: McpTokenRecord;
+  detail: string;
+};
+
+type McpUsersResponse = {
+  users: UserProfile[];
+};
+
+type WebPushSubscriptionStatus = {
+  enabled: boolean;
+  subscriptions: Array<{
+    id: number;
+    endpoint: string;
+    updated_at: string;
+    last_success_at: string | null;
+    last_error: string | null;
+  }>;
+};
+
+type WebPushConfig = {
+  public_key: string;
+  configured: boolean;
+  status: WebPushSubscriptionStatus;
+};
+
+type WebPushPayload = {
+  title?: string;
+  body?: string;
+  url?: string;
+  job_url?: string;
+  github_url?: string | null;
+  followup_url?: string | null;
+  job_id?: number;
+  work_key?: string;
+  status?: string;
+  summary?: string;
+  detail?: string | null;
+  timestamp?: string;
+};
+
+type InAppPushNotification = WebPushPayload & {
+  id: number;
+  receivedAt: number;
+};
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -592,6 +842,41 @@ function buildKnowledgeQuery(repo: string, status: string, limit = 50) {
   return `/api/knowledge?${params.toString()}`;
 }
 
+function webhookQuerySelection(section: WebhookSection) {
+  return {
+    timeseries: section === "overview",
+    hooks: section === "hooks",
+    deliveries: section === "deliveries",
+  };
+}
+
+function webhookTimeseriesPath(from: string, to: string, bucket: "hour" | "day" = "day") {
+  const params = new URLSearchParams({ from, to, bucket });
+  return `/api/webhooks/github/timeseries?${params.toString()}`;
+}
+
+function webhookHooksPath(limit = 50, cursor?: string | null) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  return `/api/webhooks/github/hooks?${params.toString()}`;
+}
+
+function webhookDeliveriesPath(limit = 50, cursor?: string | null, filters?: Partial<WebhookDeliveryFilters>) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  for (const [key, value] of Object.entries(filters ?? {})) {
+    if (value?.trim()) params.set(key, value.trim());
+  }
+  return `/api/webhooks/github/deliveries?${params.toString()}`;
+}
+
+function webhookMonitoringWindow(now = new Date()) {
+  return {
+    from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+    to: now.toISOString(),
+  };
+}
+
 function metricsSummaryPath(timezone = dashboardTimeZone) {
   return `/api/metrics/summary?timezone=${encodeURIComponent(timezone)}`;
 }
@@ -603,6 +888,25 @@ function safeExternalUrl(value: string) {
   } catch {
     return "#";
   }
+}
+
+function supportsWebPush() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+function isWebPushMessage(value: unknown): value is { type: "github-agent-bridge:push"; payload: WebPushPayload } {
+  return Boolean(value && typeof value === "object" && "type" in value && (value as { type?: unknown }).type === "github-agent-bridge:push");
+}
+
+function urlBase64ToUint8Array(value: string) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(base64);
+  const output = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) {
+    output[index] = raw.charCodeAt(index);
+  }
+  return output;
 }
 
 function jobPath(jobId: number) {
@@ -637,7 +941,17 @@ function shouldRefreshJobForSessionEvent(eventType: string) {
 }
 
 function isRetryableStatus(status: string) {
+  return status === "blocked";
+}
+
+function isDismissableStatus(status: string) {
   return ["blocked", "denied", "waiting_approval"].includes(status);
+}
+
+function canCancelJob(job: Job, user?: UserProfile) {
+  if (job.status !== "running") return false;
+  if (user?.is_admin) return true;
+  return Boolean(user?.login && job.trigger_actor && user.login.toLowerCase() === job.trigger_actor.toLowerCase());
 }
 
 function selectedJobIdFromPath(pathname = window.location.pathname) {
@@ -649,8 +963,26 @@ function isKnowledgePath(pathname = window.location.pathname) {
   return /^\/knowledge\/?$/.test(pathname);
 }
 
+function isMcpPath(pathname = window.location.pathname) {
+  return /^\/mcp\/?$/.test(pathname);
+}
+
 function isSystemPath(pathname = window.location.pathname) {
   return /^\/system\/?$/.test(pathname);
+}
+
+function selectedWebhookHookIdFromPath(pathname = window.location.pathname) {
+  const match = pathname.match(/^\/webhooks\/hooks\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function selectedWebhookDeliveryIdFromPath(pathname = window.location.pathname) {
+  const match = pathname.match(/^\/webhooks\/deliveries\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function isWebhooksPath(pathname = window.location.pathname) {
+  return /^\/webhooks(?:\/(?:hooks|deliveries)\/[^/]+)?\/?$/.test(pathname);
 }
 
 function repoFromScope(scope: string) {
@@ -661,32 +993,119 @@ function hasActiveJobFilters(filters: JobFilters) {
   return Object.values(filters).some((value) => value.trim() !== "");
 }
 
+function activeJobFilterChips(filters: JobFilters) {
+  return [
+    { key: "status", label: "Status", value: filters.status },
+    { key: "repo", label: "Repo", value: filters.repo },
+    { key: "thread", label: "Thread", value: filters.thread },
+    { key: "action", label: "Action", value: filters.action },
+    { key: "actor", label: "Actor", value: filters.actor.trim() ? `@${filters.actor.trim().replace(/^@/, "")}` : "" },
+    { key: "intent", label: "Intent", value: filters.intent },
+  ].filter((chip) => chip.value.trim() !== "");
+}
+
 function App() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = React.useState<JobFilters>(emptyJobFilters);
   const [jobLimit, setJobLimit] = React.useState(initialJobLimit);
+  const jobLoadPendingRef = React.useRef(false);
   const [knowledgeRepo, setKnowledgeRepo] = React.useState("");
   const [knowledgeStatus, setKnowledgeStatus] = React.useState("proposed");
+  const [webhookSection, setWebhookSection] = React.useState<WebhookSection>("overview");
+  const [webhookDeliveryFilters, setWebhookDeliveryFilters] = React.useState<WebhookDeliveryFilters>({
+    hook_id: "", event_name: "", repository: "", result: "", enqueue_status: "",
+  });
+  const [webhookWindow, setWebhookWindow] = React.useState(() => webhookMonitoringWindow());
+  const [autoupdateAction, setAutoupdateAction] = React.useState<"refresh" | "apply" | "complete" | null>(null);
+  const [autoupdateError, setAutoupdateError] = React.useState("");
   const [pathname, setPathname] = React.useState(() => window.location.pathname);
+  const [inAppPush, setInAppPush] = React.useState<InAppPushNotification | null>(null);
   const jobRouteId = selectedJobIdFromPath(pathname);
   const isJobDetailRoute = jobRouteId !== null;
   const isKnowledgeRoute = isKnowledgePath(pathname);
+  const isMcpRoute = isMcpPath(pathname);
   const isSystemRoute = isSystemPath(pathname);
-  const isDashboardRoute = !isJobDetailRoute && !isKnowledgeRoute && !isSystemRoute;
+  const isWebhooksRoute = isWebhooksPath(pathname);
+  const selectedWebhookHookId = selectedWebhookHookIdFromPath(pathname);
+  const selectedWebhookDeliveryId = selectedWebhookDeliveryIdFromPath(pathname);
+  const isDashboardRoute = !isJobDetailRoute && !isKnowledgeRoute && !isMcpRoute && !isSystemRoute && !isWebhooksRoute;
   const selectedJobId = jobRouteId;
   const metrics = useQuery({ queryKey: ["metrics", dashboardTimeZone], queryFn: () => api<{ metrics: MetricsSummary }>(metricsSummaryPath()), enabled: isDashboardRoute || isSystemRoute });
   const dashboardStatus = useQuery({ queryKey: ["dashboard-status"], queryFn: () => api<DashboardStatus>("/api/status") });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: UserProfile }>("/api/me"), refetchInterval: false });
+  const webhookEnabled = isWebhooksRoute && Boolean(me.data?.user?.is_admin && dashboardStatus.data?.webhook_configured);
+  const webhookQuery = webhookQuerySelection(webhookSection);
+  const webPush = useQuery({ queryKey: ["web-push-config"], queryFn: () => api<WebPushConfig>("/api/web-push/config"), enabled: Boolean(me.data?.user) });
   const about = useQuery({ queryKey: ["about"], queryFn: () => api<About>("/api/about") });
   const actorOptions = useQuery({ queryKey: ["job-actors"], queryFn: () => api<{ actors: JobActor[] }>("/api/jobs/actors"), enabled: isDashboardRoute });
-  const jobs = useQuery({ queryKey: ["jobs", filters, jobLimit], queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters, jobLimit)), enabled: isDashboardRoute });
+  const jobs = useQuery({
+    queryKey: ["jobs", filters, jobLimit],
+    queryFn: () => api<{ jobs: Job[] }>(buildJobQuery(filters, jobLimit)),
+    enabled: isDashboardRoute,
+    placeholderData: (previousData) => previousData,
+  });
   const processes = useQuery({ queryKey: ["processes"], queryFn: () => api<ProcessesResponse>("/api/processes"), enabled: isSystemRoute });
   const systemd = useQuery({ queryKey: ["systemd"], queryFn: () => api<SystemdResponse>("/api/systemd"), enabled: isSystemRoute });
   const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => api<{ alerts: AlertRecord[] }>("/api/alerts"), enabled: isSystemRoute });
+  const webhookSummary = useQuery({
+    queryKey: ["webhook-summary"],
+    queryFn: () => api<WebhookSummary>("/api/webhooks/github/summary"),
+    enabled: webhookEnabled,
+  });
+  const webhookTimeseries = useQuery({
+    queryKey: ["webhook-timeseries", webhookWindow.from, webhookWindow.to, "day"],
+    queryFn: () => api<WebhookTimeseriesResponse>(webhookTimeseriesPath(webhookWindow.from, webhookWindow.to)),
+    enabled: webhookEnabled && webhookQuery.timeseries,
+  });
+  const webhookExceptions = useQuery({
+    queryKey: ["webhook-exceptions"],
+    queryFn: () => api<WebhookExceptionsResponse>("/api/webhooks/github/exceptions"),
+    enabled: webhookEnabled && webhookQuery.timeseries,
+  });
+  const webhookHooks = useInfiniteQuery({
+    queryKey: ["webhook-hooks"],
+    queryFn: ({ pageParam }) => api<WebhookHooksResponse>(webhookHooksPath(50, pageParam)),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    enabled: webhookEnabled && webhookQuery.hooks && selectedWebhookHookId === null && selectedWebhookDeliveryId === null,
+  });
+  const webhookDeliveries = useInfiniteQuery({
+    queryKey: ["webhook-deliveries", webhookDeliveryFilters],
+    queryFn: ({ pageParam }) => api<WebhookDeliveriesResponse>(webhookDeliveriesPath(50, pageParam, webhookDeliveryFilters)),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    enabled: webhookEnabled && webhookQuery.deliveries && selectedWebhookHookId === null && selectedWebhookDeliveryId === null,
+  });
+  const webhookHookDetail = useQuery({
+    queryKey: ["webhook-hook", selectedWebhookHookId],
+    queryFn: () => api<WebhookHookDetailResponse>(`/api/webhooks/github/hooks/${encodeURIComponent(selectedWebhookHookId ?? "")}`),
+    enabled: webhookEnabled && selectedWebhookHookId !== null,
+  });
+  const pingWebhookHook = React.useCallback(async (hookId: string) => {
+    const result = await api<{ detail: string }>(`/api/webhooks/github/hooks/${encodeURIComponent(hookId)}/ping`, { method: "POST" });
+    void webhookHookDetail.refetch();
+    window.setTimeout(() => void webhookHookDetail.refetch(), 1500);
+    return result.detail;
+  }, [webhookHookDetail]);
+  const webhookDeliveryDetail = useQuery({
+    queryKey: ["webhook-delivery", selectedWebhookDeliveryId],
+    queryFn: () => api<WebhookDeliveryDetailResponse>(`/api/webhooks/github/deliveries/${encodeURIComponent(selectedWebhookDeliveryId ?? "")}`),
+    enabled: webhookEnabled && selectedWebhookDeliveryId !== null,
+  });
   const knowledge = useQuery({
     queryKey: ["knowledge", knowledgeRepo, knowledgeStatus],
     queryFn: () => api<KnowledgeResponse>(buildKnowledgeQuery(knowledgeRepo, knowledgeStatus)),
     enabled: isKnowledgeRoute,
+  });
+  const mcpTokens = useQuery({
+    queryKey: ["mcp-tokens"],
+    queryFn: () => api<{ tokens: McpTokenRecord[] }>("/api/mcp/tokens"),
+    enabled: isMcpRoute && Boolean(me.data?.user),
+  });
+  const mcpUsers = useQuery({
+    queryKey: ["mcp-users"],
+    queryFn: () => api<McpUsersResponse>("/api/mcp/users"),
+    enabled: isMcpRoute && Boolean(me.data?.user),
   });
   const detail = useQuery({
     queryKey: ["job", selectedJobId],
@@ -720,6 +1139,13 @@ function App() {
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
     queryClient.invalidateQueries({ queryKey: ["metrics"] });
   }, [queryClient]);
+  const cancelJob = React.useCallback(async (jobId: number, reason?: string) => {
+    const payload = await api<{ job: Job }>(`/api/jobs/${jobId}/cancel`, { method: "POST", body: JSON.stringify({ reason: reason || "" }) });
+    queryClient.setQueryData<{ job: Job }>(["job", jobId], { job: payload.job });
+    queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["metrics"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-status"] });
+  }, [queryClient]);
   const moderateKnowledgeProposal = React.useCallback(async (proposalId: string, action: "approve" | "reject") => {
     await api<{ proposal: KnowledgeProposal }>(`/api/knowledge/proposals/${encodeURIComponent(proposalId)}/${action}`, { method: "POST" });
     queryClient.invalidateQueries({ queryKey: ["knowledge"] });
@@ -729,6 +1155,93 @@ function App() {
     await api<{ detail: string }>(`/api/knowledge/rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" });
     queryClient.invalidateQueries({ queryKey: ["knowledge"] });
   }, [queryClient]);
+
+  const updateKnowledgeRuleScope = React.useCallback(async (ruleId: string, scope: string) => {
+    await api<{ rule: KnowledgeRule }>(`/api/knowledge/rules/${encodeURIComponent(ruleId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope }),
+    });
+    queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+  }, [queryClient]);
+  const createMcpToken = React.useCallback(async (name: string, userLogin?: string) => {
+    const created = await api<McpTokenCreateResponse>("/api/mcp/tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, user_login: userLogin || undefined }),
+    });
+    queryClient.invalidateQueries({ queryKey: ["mcp-tokens"] });
+    return created;
+  }, [queryClient]);
+  const updateMcpTokenOwner = React.useCallback(async (tokenId: string, userLogin: string) => {
+    await api<{ token: McpTokenRecord }>(`/api/mcp/tokens/${encodeURIComponent(tokenId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_login: userLogin }),
+    });
+    queryClient.invalidateQueries({ queryKey: ["mcp-tokens"] });
+    queryClient.invalidateQueries({ queryKey: ["mcp-users"] });
+  }, [queryClient]);
+  const revokeMcpToken = React.useCallback(async (tokenId: string) => {
+    await api<{ detail: string }>(`/api/mcp/tokens/${encodeURIComponent(tokenId)}`, { method: "DELETE" });
+    queryClient.invalidateQueries({ queryKey: ["mcp-tokens"] });
+  }, [queryClient]);
+  const runAutoupdateAction = React.useCallback(async (action: "refresh" | "apply" | "complete") => {
+    const path = {
+      refresh: "/api/autoupdate/refresh",
+      apply: "/api/autoupdate/apply",
+      complete: "/api/autoupdate/complete-pending",
+    }[action];
+    setAutoupdateAction(action);
+    setAutoupdateError("");
+    try {
+      await api(path, { method: "POST" });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-status"] });
+    } catch (error) {
+      queryClient.invalidateQueries({ queryKey: ["dashboard-status"] });
+      setAutoupdateError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAutoupdateAction(null);
+    }
+  }, [queryClient]);
+  const enableWebPush = React.useCallback(async () => {
+    const publicKey = webPush.data?.public_key;
+    if (!publicKey) throw new Error("web_push_not_configured");
+    if (!supportsWebPush()) throw new Error("web_push_not_supported");
+    const permission = await window.Notification.requestPermission();
+    if (permission !== "granted") throw new Error("notification_permission_denied");
+    const registration = await navigator.serviceWorker.register("/service-worker.js");
+    const existing = await registration.pushManager.getSubscription();
+    const subscription = existing ?? await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+    await api("/api/web-push/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(subscription.toJSON()),
+    });
+    queryClient.invalidateQueries({ queryKey: ["web-push-config"] });
+  }, [queryClient, webPush.data?.public_key]);
+  const disableWebPush = React.useCallback(async () => {
+    if (!supportsWebPush()) return;
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return;
+    const endpoint = subscription.endpoint;
+    await subscription.unsubscribe();
+    await api("/api/web-push/subscriptions", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint }),
+    });
+    queryClient.invalidateQueries({ queryKey: ["web-push-config"] });
+  }, [queryClient]);
+
+  React.useEffect(() => {
+    if (!webPush.data?.status.enabled || !supportsWebPush()) return;
+    void navigator.serviceWorker.register("/service-worker.js").catch(() => undefined);
+  }, [webPush.data?.status.enabled]);
 
   React.useEffect(() => {
     if (selectedJobId === null) return;
@@ -761,27 +1274,76 @@ function App() {
 
   React.useEffect(() => {
     const syncFromPath = () => {
+      if (isWebhooksPath(window.location.pathname)) setWebhookWindow(webhookMonitoringWindow());
       setPathname(window.location.pathname);
     };
     window.addEventListener("popstate", syncFromPath);
     return () => window.removeEventListener("popstate", syncFromPath);
   }, []);
 
+  React.useEffect(() => {
+    if (!("serviceWorker" in navigator)) return undefined;
+    const onMessage = (event: MessageEvent) => {
+      if (!isWebPushMessage(event.data)) return;
+      const notification = { ...event.data.payload, id: Date.now(), receivedAt: Date.now() };
+      setInAppPush(notification);
+      if (notification.job_id) {
+        queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        queryClient.invalidateQueries({ queryKey: ["job", notification.job_id] });
+        queryClient.invalidateQueries({ queryKey: ["metrics"] });
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [queryClient]);
+
+  React.useEffect(() => {
+    if (!inAppPush) return undefined;
+    const timer = window.setTimeout(() => setInAppPush(null), 12000);
+    return () => window.clearTimeout(timer);
+  }, [inAppPush]);
+
   const viewJob = React.useCallback((jobId: number) => {
     window.history.pushState({}, "", jobPath(jobId));
+    setPathname(window.location.pathname);
+  }, []);
+  const navigateDashboard = React.useCallback((path: string) => {
+    window.history.pushState({}, "", path);
+    if (isWebhooksPath(path)) setWebhookWindow(webhookMonitoringWindow());
     setPathname(window.location.pathname);
   }, []);
 
   const counts = metrics.data?.metrics.status_counts ?? {};
   const jobRows = jobs.data?.jobs ?? [];
+  const systemUpdateAvailable = Boolean(me.data?.user?.is_admin && hasActionableAutoupdate(dashboardStatus.data?.autoupdate));
   const applyFilters = React.useCallback((nextFilters: JobFilters) => {
     setFilters(nextFilters);
     setJobLimit(initialJobLimit);
+    jobLoadPendingRef.current = false;
+  }, []);
+  React.useEffect(() => {
+    if (!jobs.isFetching) jobLoadPendingRef.current = false;
+  }, [jobs.isFetching]);
+  const loadMoreJobs = React.useCallback(() => {
+    if (jobLoadPendingRef.current) return;
+    jobLoadPendingRef.current = true;
+    setJobLimit((current) => current + jobLimitStep);
   }, []);
   const selectedJob = selectedJobId ? (detail.data?.job ?? null) : null;
   const hasLiveJob = jobRows.some((job) => job.status === "running" || job.status === "pending") || selectedJob?.status === "running" || selectedJob?.status === "pending" || Boolean(processes.data?.running_jobs.length);
   const now = useNow(hasLiveJob);
   const detailStatus = <JobDetailStatus selectedJobId={selectedJobId} selectedJob={selectedJob} loading={detail.isLoading} error={detail.error} session={session.data?.session} sessionEvents={sessionEvents.data?.events} transcript={transcript.data?.entries} now={now} />;
+  const webhookHookRows = webhookHooks.data?.pages.flatMap((page) => page.hooks) ?? [];
+  const webhookDeliveryRows = webhookDeliveries.data?.pages.flatMap((page) => page.deliveries) ?? [];
+  const webhookSectionLoading = webhookSection === "overview" ? webhookTimeseries.isLoading : webhookSection === "hooks" ? webhookHooks.isLoading : webhookDeliveries.isLoading;
+  const webhookSectionError = webhookSection === "overview" ? webhookTimeseries.error : webhookSection === "hooks" ? webhookHooks.error : webhookDeliveries.error;
+  const refreshWebhooks = () => {
+    webhookSummary.refetch();
+    if (webhookSection === "overview") webhookExceptions.refetch();
+    if (webhookSection === "overview") setWebhookWindow(webhookMonitoringWindow());
+    if (webhookSection === "hooks") webhookHooks.refetch();
+    if (webhookSection === "deliveries") webhookDeliveries.refetch();
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -791,20 +1353,26 @@ function App() {
             <h1 className="truncate text-xl font-semibold">GitHub Agent Bridge</h1>
             <ProductMeta about={about.data} />
           </div>
-          <UserMenu user={me.data?.user} loading={me.isLoading} />
+          <div className="flex shrink-0 items-center gap-2">
+            <WebPushControl config={webPush.data} loading={webPush.isLoading} onEnable={enableWebPush} onDisable={disableWebPush} />
+            <UserMenu user={me.data?.user} loading={me.isLoading} />
+          </div>
         </div>
       </header>
 
       <main className="mx-auto grid w-full max-w-[1440px] gap-4 px-3 py-4 sm:px-4 md:px-6 md:py-5">
-        <SectionNav isDashboardRoute={isDashboardRoute} isSystemRoute={isSystemRoute} isKnowledgeRoute={isKnowledgeRoute} knowledgeBadgeCount={dashboardStatus.data?.metrics?.knowledge?.proposed ?? 0} />
+        <SectionNav isDashboardRoute={isDashboardRoute} isSystemRoute={isSystemRoute} isKnowledgeRoute={isKnowledgeRoute} isMcpRoute={isMcpRoute} isWebhooksRoute={isWebhooksRoute} showWebhooks={Boolean(me.data?.user?.is_admin && dashboardStatus.data?.webhook_configured)} knowledgeBadgeCount={dashboardStatus.data?.metrics?.knowledge?.proposed ?? 0} systemUpdateAvailable={systemUpdateAvailable} onNavigate={navigateDashboard} />
+        <WebPushToast notification={inAppPush} onDismiss={() => setInAppPush(null)} onNavigate={navigateDashboard} />
         {jobRouteId !== null ? (
           <JobDetailPage
             jobId={jobRouteId}
             detail={detailStatus}
             selectedJob={selectedJob}
             user={me.data?.user}
+            onBackToDashboard={() => navigateDashboard("/")}
             onRetry={retryJob}
             onDismiss={dismissJob}
+            onCancel={cancelJob}
             onRefresh={() => {
               detail.refetch();
               session.refetch();
@@ -825,30 +1393,106 @@ function App() {
             onStatusChange={setKnowledgeStatus}
             onApprove={(proposalId) => moderateKnowledgeProposal(proposalId, "approve")}
             onReject={(proposalId) => moderateKnowledgeProposal(proposalId, "reject")}
+            onUpdateRuleScope={updateKnowledgeRuleScope}
             onDeleteRule={deleteKnowledgeRule}
             onRefresh={() => knowledge.refetch()}
           />
-        ) : isSystemRoute ? (
-          <SystemPage
-            processes={processes.data}
-            processesLoading={processes.isLoading}
-            processesError={processes.error}
-            systemd={systemd.data}
-            systemdLoading={systemd.isLoading}
-            systemdError={systemd.error}
-            alerts={alerts.data?.alerts}
-            alertsLoading={alerts.isLoading}
-            alertsError={alerts.error}
+        ) : isMcpRoute ? (
+          <McpPage
+            tokens={mcpTokens.data?.tokens}
+            loading={mcpTokens.isLoading}
+            error={mcpTokens.error}
+            user={me.data?.user}
+            ownerOptions={mcpUsers.data?.users ?? []}
+            dashboardUrl={dashboardStatus.data?.dashboard_url}
+            dashboardUrlSource={dashboardStatus.data?.dashboard_url_source}
             now={now}
-            onRefreshProcesses={() => processes.refetch()}
-            onRefreshSystemd={() => systemd.refetch()}
-            onRefreshAlerts={() => alerts.refetch()}
+            onCreate={createMcpToken}
+            onUpdateOwner={updateMcpTokenOwner}
+            onRevoke={revokeMcpToken}
+            onRefresh={() => mcpTokens.refetch()}
           />
+        ) : isWebhooksRoute ? (
+          selectedWebhookDeliveryId ? (
+            <WebhookDeliveryDetailPage
+              data={webhookDeliveryDetail.data}
+              loading={webhookDeliveryDetail.isLoading}
+              error={webhookDeliveryDetail.error}
+              onBack={() => {
+                setWebhookSection("deliveries");
+                navigateDashboard("/webhooks");
+              }}
+              onRefresh={() => webhookDeliveryDetail.refetch()}
+              onViewHook={(hookId) => navigateDashboard(`/webhooks/hooks/${encodeURIComponent(hookId)}`)}
+              onViewJob={viewJob}
+            />
+          ) : selectedWebhookHookId ? (
+            <WebhookHookDetailPage
+              data={webhookHookDetail.data}
+              loading={webhookHookDetail.isLoading}
+              error={webhookHookDetail.error}
+              onBack={() => {
+                setWebhookSection("hooks");
+                navigateDashboard("/webhooks");
+              }}
+              onRefresh={() => webhookHookDetail.refetch()}
+              onViewHook={(hookId) => navigateDashboard(`/webhooks/hooks/${encodeURIComponent(hookId)}`)}
+              onViewDelivery={(deliveryId) => navigateDashboard(`/webhooks/deliveries/${encodeURIComponent(deliveryId)}`)}
+              onPing={pingWebhookHook}
+            />
+          ) : (
+            <WebhookPage
+              summary={webhookSummary.data}
+              timeseries={webhookTimeseries.data?.points}
+              exceptions={webhookExceptions.data?.exceptions}
+              hooks={webhookHookRows}
+              deliveries={webhookDeliveryRows}
+              section={webhookSection}
+              summaryLoading={webhookSummary.isLoading}
+              sectionLoading={webhookSectionLoading}
+              loadingMore={webhookSection === "hooks" ? webhookHooks.isFetchingNextPage : webhookDeliveries.isFetchingNextPage}
+              hasMore={webhookSection === "hooks" ? webhookHooks.hasNextPage : webhookDeliveries.hasNextPage}
+              deliveryFilters={webhookDeliveryFilters}
+              error={webhookSummary.error ?? webhookSectionError}
+              onSectionChange={setWebhookSection}
+              onLoadMore={() => webhookSection === "hooks" ? webhookHooks.fetchNextPage() : webhookDeliveries.fetchNextPage()}
+              onDeliveryFiltersChange={setWebhookDeliveryFilters}
+              onViewHook={(hookId) => navigateDashboard(`/webhooks/hooks/${encodeURIComponent(hookId)}`)}
+              onViewDelivery={(deliveryId) => navigateDashboard(`/webhooks/deliveries/${encodeURIComponent(deliveryId)}`)}
+              onRefresh={refreshWebhooks}
+            />
+          )
+        ) : isSystemRoute ? (
+          <>
+            <AutoupdateNotice
+              state={dashboardStatus.data?.autoupdate}
+              isAdmin={Boolean(me.data?.user?.is_admin)}
+              runningAction={autoupdateAction}
+              actionError={autoupdateError}
+              onRefresh={() => runAutoupdateAction("refresh")}
+              onApply={() => runAutoupdateAction("apply")}
+              onCompletePending={() => runAutoupdateAction("complete")}
+            />
+            <SystemPage
+              processes={processes.data}
+              processesLoading={processes.isLoading}
+              processesError={processes.error}
+              systemd={systemd.data}
+              systemdLoading={systemd.isLoading}
+              systemdError={systemd.error}
+              alerts={alerts.data?.alerts}
+              alertsLoading={alerts.isLoading}
+              alertsError={alerts.error}
+              now={now}
+              onRefreshProcesses={() => processes.refetch()}
+              onRefreshSystemd={() => systemd.refetch()}
+              onRefreshAlerts={() => alerts.refetch()}
+            />
+          </>
         ) : (
           <>
             {metrics.error ? <Banner tone="error" text={metrics.error.message} /> : null}
             {dashboardStatus.error ? <Banner tone="error" text={dashboardStatus.error.message} /> : null}
-            <AutoupdateNotice state={dashboardStatus.data?.autoupdate} isAdmin={Boolean(me.data?.user?.is_admin)} />
             <section className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Summary metrics">
               <Metric title="Pending" value={counts.pending ?? 0} icon={<Clock3 className="h-5 w-5" />} />
               <Metric title="Running" value={counts.running ?? 0} icon={<Activity className="h-5 w-5" />} />
@@ -861,14 +1505,19 @@ function App() {
               <Panel title="Recent jobs" flushHeader>
                 <Filters filters={filters} actorOptions={actorOptions.data?.actors ?? []} onChange={applyFilters} />
                 {jobs.error ? <Banner tone="error" text={jobs.error.message} /> : null}
-                <JobsList jobs={jobRows} loading={jobs.isLoading} onViewJob={viewJob} now={now} user={me.data?.user} onRetry={retryJob} onDismiss={dismissJob} />
-                {jobRows.length >= jobLimit ? (
-                  <div className="mt-3 flex justify-center">
-                    <button className="inline-flex h-9 items-center justify-center rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" type="button" onClick={() => setJobLimit((current) => current + jobLimitStep)}>
-                      Load more jobs
-                    </button>
-                  </div>
-                ) : null}
+                <JobsList
+                  jobs={jobRows}
+                  loading={jobs.isLoading}
+                  loadingMore={jobs.isFetching && !jobs.isLoading}
+                  hasMore={jobRows.length >= jobLimit}
+                  onLoadMore={loadMoreJobs}
+                  onViewJob={viewJob}
+                  now={now}
+                  user={me.data?.user}
+                  onRetry={retryJob}
+                  onDismiss={dismissJob}
+                  onCancel={cancelJob}
+                />
               </Panel>
               <Panel title="Runtime usage" action={<RefreshButton onClick={() => metrics.refetch()} />}>
                 <RuntimeUsageChart usage={metrics.data?.metrics.runtime_usage} loading={metrics.isLoading} totalJobs={totalJobs(counts)} />
@@ -909,16 +1558,38 @@ function ProductMeta({ about }: { about: About | undefined }) {
   );
 }
 
-function AutoupdateNotice({ state, isAdmin }: { state: AutoupdateState | undefined; isAdmin: boolean }) {
-  if (!state) return null;
+function hasActionableAutoupdate(state: AutoupdateState | undefined) {
+  return Boolean(state?.target?.tag_name?.trim() && state.decision !== "noop");
+}
+
+function AutoupdateNotice({
+  state,
+  isAdmin,
+  runningAction = null,
+  actionError = "",
+  onRefresh,
+  onApply,
+  onCompletePending,
+}: {
+  state: AutoupdateState | undefined;
+  isAdmin: boolean;
+  runningAction?: "refresh" | "apply" | "complete" | null;
+  actionError?: string;
+  onRefresh?: () => Promise<void> | void;
+  onApply?: () => Promise<void> | void;
+  onCompletePending?: () => Promise<void> | void;
+}) {
+  if (!state || !hasActionableAutoupdate(state)) return null;
   const targetTag = state?.target?.tag_name?.trim();
-  if (!isAdmin || !targetTag || state?.decision === "noop") return null;
+  if (!isAdmin || !targetTag) return null;
   const decision = autoupdateDecisionLabel(state.decision);
   const activeTotal = state.queue?.active_total ?? 0;
   const risk = autoupdateRiskLabel(state.classification?.risk);
   const changelog = changelogMarkdown(state.target?.body);
   const migrationCount = state.classification?.migration_files?.length ?? 0;
   const riskyCount = state.classification?.risky_files?.length ?? 0;
+  const canComplete = Boolean(state.executor_reload_pending && state.dashboard_applied_at && onCompletePending);
+  const canApply = Boolean(onApply && migrationCount === 0);
 
   return (
     <section className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 shadow-sm" aria-label="Update available">
@@ -939,6 +1610,44 @@ function AutoupdateNotice({ state, isAdmin }: { state: AutoupdateState | undefin
             {decision}
             {state.installed_tag ? <span className="font-mono"> from {state.installed_tag}</span> : null}
           </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {onRefresh ? (
+              <button
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-amber-300 bg-white px-2.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                disabled={runningAction !== null}
+                onClick={onRefresh}
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", runningAction === "refresh" && "animate-spin")} aria-hidden />
+                {runningAction === "refresh" ? "Checking..." : "Check now"}
+              </button>
+            ) : null}
+            {canApply ? (
+              <button
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-amber-800 px-2.5 text-xs font-semibold text-white hover:bg-amber-900 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                disabled={runningAction !== null}
+                onClick={() => {
+                  if (!window.confirm(`Apply ${targetTag}? This can restart bridge services according to the recorded safe plan.`)) return;
+                  onApply?.();
+                }}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                {runningAction === "apply" ? "Applying..." : "Apply update"}
+              </button>
+            ) : null}
+            {canComplete ? (
+              <button
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-amber-300 bg-white px-2.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                disabled={runningAction !== null}
+                onClick={onCompletePending}
+              >
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+                {runningAction === "complete" ? "Completing..." : "Complete reload"}
+              </button>
+            ) : null}
+          </div>
         </div>
         <div className="grid gap-2 text-xs sm:grid-cols-3 lg:min-w-[420px]">
           <AutoupdateStat label="Impact" value={risk} />
@@ -961,6 +1670,7 @@ function AutoupdateNotice({ state, isAdmin }: { state: AutoupdateState | undefin
         </div>
       ) : null}
       {state.warnings?.length ? <div className="mt-2 font-mono text-xs text-amber-800">{state.warnings[0]}</div> : null}
+      {actionError ? <div className="mt-2 rounded-sm border border-amber-300 bg-white px-2 py-1 font-mono text-xs text-amber-900">Action failed: {actionError}</div> : null}
     </section>
   );
 }
@@ -1032,24 +1742,51 @@ function SectionNav({
   isDashboardRoute,
   isSystemRoute = false,
   isKnowledgeRoute,
+  isMcpRoute = false,
+  isWebhooksRoute = false,
+  showWebhooks = false,
   knowledgeBadgeCount = 0,
+  systemUpdateAvailable = false,
+  onNavigate,
 }: {
   isDashboardRoute: boolean;
   isSystemRoute?: boolean;
   isKnowledgeRoute: boolean;
+  isMcpRoute?: boolean;
+  isWebhooksRoute?: boolean;
+  showWebhooks?: boolean;
   knowledgeBadgeCount?: number;
+  systemUpdateAvailable?: boolean;
+  onNavigate?: (path: string) => void;
 }) {
   return (
     <nav className="flex min-w-0 rounded-lg border border-border bg-panel p-1 shadow-sm" aria-label="Dashboard sections">
-      <SectionLink href="/" active={isDashboardRoute}>
+      <SectionLink href="/" active={isDashboardRoute} onNavigate={onNavigate}>
         <TerminalSquare className="h-4 w-4" aria-hidden />
         <span>Jobs</span>
       </SectionLink>
-      <SectionLink href="/system" active={isSystemRoute}>
+      <SectionLink href="/system" active={isSystemRoute} onNavigate={onNavigate}>
         <Gauge className="h-4 w-4" aria-hidden />
         <span>System</span>
+        {systemUpdateAvailable ? (
+          <span
+            className={cn(
+              "inline-flex h-5 min-w-5 items-center justify-center rounded-full border px-1 font-mono text-[11px] leading-none",
+              isSystemRoute ? "border-white/40 bg-white/15 text-white" : "border-amber-200 bg-amber-100 text-amber-800",
+            )}
+            aria-label="System update available"
+          >
+            !
+          </span>
+        ) : null}
       </SectionLink>
-      <SectionLink href="/knowledge" active={isKnowledgeRoute}>
+      {showWebhooks ? (
+        <SectionLink href="/webhooks" active={isWebhooksRoute} onNavigate={onNavigate}>
+          <Activity className="h-4 w-4" aria-hidden />
+          <span>Webhooks</span>
+        </SectionLink>
+      ) : null}
+      <SectionLink href="/knowledge" active={isKnowledgeRoute} onNavigate={onNavigate}>
         <Brain className="h-4 w-4" aria-hidden />
         <span>Knowledge</span>
         {knowledgeBadgeCount > 0 ? (
@@ -1064,8 +1801,201 @@ function SectionNav({
           </span>
         ) : null}
       </SectionLink>
+      <SectionLink href="/mcp" active={isMcpRoute} onNavigate={onNavigate}>
+        <KeyRound className="h-4 w-4" aria-hidden />
+        <span>MCP</span>
+      </SectionLink>
     </nav>
   );
+}
+
+type WebhookPageProps = {
+  summary?: WebhookSummary;
+  timeseries?: WebhookTimeseriesPoint[];
+  exceptions?: WebhookException[];
+  hooks?: WebhookHook[];
+  deliveries?: WebhookDelivery[];
+  section: WebhookSection;
+  summaryLoading: boolean;
+  sectionLoading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  deliveryFilters: WebhookDeliveryFilters;
+  error: Error | null;
+  onSectionChange: (section: WebhookSection) => void;
+  onLoadMore: () => void;
+  onDeliveryFiltersChange: (filters: WebhookDeliveryFilters) => void;
+  onViewHook: (hookId: string) => void;
+  onViewDelivery?: (deliveryId: string) => void;
+  onRefresh: () => void;
+};
+
+function WebhookLoadingState({ text }: { text: string }) {
+  return <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted"><RefreshCw className="h-4 w-4 animate-spin" aria-hidden />{text}</div>;
+}
+
+function WebhookPage({
+  summary,
+  timeseries,
+  exceptions,
+  hooks,
+  deliveries,
+  section,
+  summaryLoading,
+  sectionLoading,
+  loadingMore,
+  hasMore,
+  deliveryFilters,
+  error,
+  onSectionChange,
+  onLoadMore,
+  onDeliveryFiltersChange,
+  onViewHook,
+  onViewDelivery = () => undefined,
+  onRefresh,
+}: WebhookPageProps) {
+  const observed = Object.values(summary?.receipts ?? {}).reduce((total, count) => total + count, 0);
+  const sections = [
+    { id: "overview" as const, label: "Overview" },
+    { id: "hooks" as const, label: "Hooks", count: summary?.totals?.hooks },
+    { id: "deliveries" as const, label: "Deliveries", count: summary?.totals?.deliveries },
+  ];
+  return (
+    <section className="grid gap-4">
+      <PageTitle icon={<Activity className="h-5 w-5 text-muted" aria-hidden />} title="GitHub webhooks" subtitle={summary?.mode === "primary" ? "Primary webhook ingestion. IMAP remains active as an idempotent safety net." : summary?.mode === "canary" ? "Canary ingestion health. Only the webhook canary allowlist may create jobs." : "Shadow ingestion health. Deliveries are observed but do not create jobs."} action={<RefreshButton onClick={onRefresh} />} />
+      {error ? <Banner tone="error" text={error.message} /> : null}
+      <div className="flex max-w-full flex-wrap rounded-md border border-border bg-white p-1" role="tablist" aria-label="Webhook dashboard section">
+        {sections.map((item) => <button key={item.id} type="button" role="tab" aria-label={item.count === undefined ? item.label : `${item.label} (${item.count} total)`} aria-selected={section === item.id} className={cn("inline-flex h-8 items-center gap-2 rounded px-3 text-sm font-semibold", section === item.id ? "bg-primary text-white" : "text-muted hover:bg-slate-50 hover:text-foreground")} onClick={() => onSectionChange(item.id)}>{item.label}{item.count !== undefined ? <span className="rounded border border-current/30 px-1 font-mono text-[10px]">{item.count}</span> : null}</button>)}
+      </div>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label="Webhook status">
+        <Metric title="Receipts" value={observed} icon={<Activity className="h-5 w-5" />} />
+        <Metric title="Duplicates" value={summary?.duplicate_deliveries ?? 0} icon={<RefreshCw className="h-5 w-5" />} />
+        <Metric title="Cross-source matches" value={summary?.cross_source_matches ?? 0} icon={<Link className="h-5 w-5" />} />
+        <Metric title="Mode" value={summaryLoading ? "…" : summary?.mode ?? "unknown"} icon={<Eye className="h-5 w-5" />} />
+      </div>
+      {section === "overview" ? <>
+        <Panel title="Delivery activity">
+          {sectionLoading ? <WebhookLoadingState text="Loading delivery activity…" /> : timeseries?.length ? <div className="h-72" aria-label="Webhook deliveries over time"><ResponsiveContainer width="100%" height="100%"><BarChart data={timeseries}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="bucket" /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="observed" stackId="deliveries" fill="#2563eb" /><Bar dataKey="duplicate" stackId="deliveries" fill="#f59e0b" /><Bar dataKey="unsupported" stackId="deliveries" fill="#94a3b8" /></BarChart></ResponsiveContainer></div> : <EmptyState text="No webhook activity in the selected 30-day window." />}
+        </Panel>
+        <Panel title="Receipt states">
+          {summaryLoading ? <WebhookLoadingState text="Loading webhook summary…" /> : Object.keys(summary?.receipts ?? {}).length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(summary?.receipts ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => <MiniStat key={state} label={state} value={count} />)}</div> : <EmptyState text="No webhook deliveries observed yet." />}
+        </Panel>
+        <Panel title="Cross-source coverage">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <MiniStat label="Both sources" value={summary?.coverage?.both ?? 0} />
+            <MiniStat label="IMAP only" value={summary?.coverage?.imap_only ?? 0} />
+            <MiniStat label="Webhook only" value={summary?.coverage?.webhook_only ?? 0} />
+            <MiniStat label="Coverage" value={summary?.coverage?.ratio == null ? "not measurable" : `${Math.round(summary.coverage.ratio * 100)}%`} />
+          </div>
+          {summary?.coverage?.window_start && summary.coverage.window_end ? <p className="mt-3 font-mono text-xs text-muted">Comparable canonical events from <TimeText value={summary.coverage.window_start} /> to <TimeText value={summary.coverage.window_end} />; newest {summary.coverage.grace_seconds ?? 0}s excluded.</p> : null}
+        </Panel>
+        {Object.keys(summary?.enqueue ?? {}).length ? <Panel title="Canary ingestion decisions"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{Object.entries(summary?.enqueue ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => <MiniStat key={state} label={state} value={count} />)}</div></Panel> : null}
+        <Panel title="Exceptions requiring review">
+          {exceptions?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-xs text-muted"><tr><th className="px-3 py-2">Type</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Reference</th><th className="px-3 py-2">Observed</th></tr></thead><tbody>{exceptions.map((item) => <tr key={`${item.kind}:${item.reference}`} className="border-b border-border/70 last:border-0"><td className="px-3 py-2 font-semibold">{item.kind}</td><td className="px-3 py-2 font-mono text-xs">{item.repository ?? "unknown"}</td><td className="px-3 py-2 font-mono text-xs">{item.event_key ?? item.reference}</td><td className="px-3 py-2 font-mono text-xs text-muted"><TimeText value={item.created_at} compact /></td></tr>)}</tbody></table></div> : <EmptyState text="No cross-source exceptions in retained data." />}
+        </Panel>
+      </> : null}
+      {section === "hooks" ? <Panel title="Hook inventory">
+        {sectionLoading ? <WebhookLoadingState text="Loading hook inventory…" /> : hooks?.length ? <LazyScrollFrame noun="hooks" hasMore={hasMore} loading={loadingMore} onLoadMore={onLoadMore}><table className="w-full min-w-[920px] text-left text-sm"><thead><tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted"><th className="px-3 py-2">Target</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Configuration</th><th className="px-3 py-2">Last delivery</th><th className="px-3 py-2">Last ping</th></tr></thead><tbody>{hooks.map((hook) => <tr key={hook.id} className="cursor-pointer border-b border-border/70 last:border-0 hover:bg-slate-50" onClick={() => onViewHook(hook.id)}><td className="px-3 py-3"><button type="button" className="text-left font-semibold text-primary hover:underline" onClick={(event) => { event.stopPropagation(); onViewHook(hook.id); }}>{hook.target}</button><div className="font-mono text-xs text-muted">{hook.target_type} · #{hook.id}</div></td><td className="px-3 py-3"><span className={cn("rounded border px-2 py-1 text-xs font-semibold", hook.status === "receiving" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : hook.status === "inactive" ? "border-red-200 bg-red-50 text-red-700" : "border-slate-200 bg-slate-50 text-slate-600")}>{hook.status}</span></td><td className="max-w-sm px-3 py-3 text-xs"><div>{hook.events.join(", ") || "No event snapshot"}</div><div className="mt-1 font-mono text-muted">{hook.content_type ?? "content type unknown"} · SSL {hook.ssl_verify === null || hook.ssl_verify === undefined ? "unknown" : hook.ssl_verify ? "verified" : "disabled"}</div></td><td className="px-3 py-3 text-xs"><div className="font-semibold">{hook.last_event_name ?? "Never"}{hook.last_action ? ` · ${hook.last_action}` : ""}</div><div className="mt-1 font-mono text-muted">{hook.last_repository ?? "No repository"}{hook.last_event_at ? <> · <TimeText value={hook.last_event_at} compact /></> : null}</div></td><td className="px-3 py-3 font-mono text-xs text-muted">{hook.last_ping_at ? <TimeText value={hook.last_ping_at} compact /> : "Never"}</td></tr>)}</tbody></table></LazyScrollFrame> : <EmptyState text="No hook inventory is available. Redeliver a signed ping from GitHub to create the sanitized configuration snapshot." />}
+      </Panel> : null}
+      {section === "deliveries" ? <Panel title="Recent deliveries">
+        <WebhookDeliveryFiltersForm filters={deliveryFilters} onChange={onDeliveryFiltersChange} />
+        {sectionLoading ? <WebhookLoadingState text="Loading deliveries…" /> : deliveries?.length ? <LazyScrollFrame noun="deliveries" hasMore={hasMore} loading={loadingMore} onLoadMore={onLoadMore}><WebhookDeliveriesTable deliveries={deliveries} onViewHook={onViewHook} onViewDelivery={onViewDelivery} /></LazyScrollFrame> : <EmptyState text="No deliveries match the current filters." />}
+      </Panel> : null}
+    </section>
+  );
+}
+
+function WebhookDeliveryFiltersForm({ filters, onChange }: { filters: WebhookDeliveryFilters; onChange: (filters: WebhookDeliveryFilters) => void }) {
+  const fields: Array<{ key: keyof WebhookDeliveryFilters; label: string; placeholder: string }> = [
+    { key: "hook_id", label: "Hook ID", placeholder: "690954530" },
+    { key: "event_name", label: "Event", placeholder: "issue_comment" },
+    { key: "repository", label: "Repository", placeholder: "gisce/repository" },
+    { key: "result", label: "Result", placeholder: "observed" },
+    { key: "enqueue_status", label: "Ingestion", placeholder: "enqueued" },
+  ];
+  return <div className="grid gap-2 border-b border-border p-3 sm:grid-cols-2 xl:grid-cols-5">{fields.map((field) => <label key={field.key} className="grid gap-1 text-xs font-semibold text-muted">{field.label}<input className="h-9 rounded-md border border-border bg-white px-2 font-mono text-xs text-foreground" value={filters[field.key]} placeholder={field.placeholder} onChange={(event) => onChange({ ...filters, [field.key]: event.target.value })} /></label>)}</div>;
+}
+
+function WebhookDeliveriesTable({ deliveries, onViewHook, onViewDelivery = () => undefined }: { deliveries: WebhookDelivery[]; onViewHook: (hookId: string) => void; onViewDelivery?: (deliveryId: string) => void }) {
+  return <table className="w-full min-w-[1120px] text-left text-sm"><thead><tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted"><th className="px-3 py-2">Received</th><th className="px-3 py-2">Hook</th><th className="px-3 py-2">Event</th><th className="px-3 py-2">Repository</th><th className="px-3 py-2">Result</th><th className="px-3 py-2">Ingestion</th><th className="px-3 py-2">Delivery</th></tr></thead><tbody>{deliveries.map((delivery) => <tr key={delivery.delivery_id} className="border-b border-border/70 last:border-0 hover:bg-slate-50"><td className="px-3 py-3 font-mono text-xs text-muted"><TimeText value={delivery.created_at} compact /></td><td className="px-3 py-3">{delivery.hook_id ? <button type="button" className="text-left text-primary hover:underline" onClick={() => onViewHook(delivery.hook_id!)}><span className="block font-semibold">{delivery.hook?.target ?? `Hook #${delivery.hook_id}`}</span><span className="font-mono text-xs">#{delivery.hook_id}</span></button> : <span className="text-xs text-muted">Unknown (legacy)</span>}</td><td className="px-3 py-3 font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</td><td className="px-3 py-3">{delivery.repository ?? "—"}</td><td className="px-3 py-3"><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.status}</span>{delivery.duplicate_count ? <span className="ml-2 font-mono text-xs text-muted">{delivery.duplicate_count} retries</span> : null}</td><td className="px-3 py-3">{delivery.enqueue_status ? <><span className="rounded border border-border bg-slate-50 px-2 py-1 text-xs font-semibold">{delivery.enqueue_status}</span>{delivery.job_id ? <a className="ml-2 font-mono text-xs font-semibold text-primary hover:underline" href={`/jobs/${delivery.job_id}`}>Job #{delivery.job_id}</a> : null}</> : <span className="text-xs text-muted">shadow</span>}</td><td className="max-w-[14rem] px-3 py-3"><button type="button" className="block max-w-full truncate font-mono text-xs font-semibold text-primary hover:underline" title={delivery.delivery_id} onClick={() => onViewDelivery(delivery.delivery_id)}>{delivery.delivery_id}</button></td></tr>)}</tbody></table>;
+}
+
+function LazyScrollFrame({ noun, hasMore, loading, onLoadMore, children, className }: { noun: string; hasMore: boolean; loading: boolean; onLoadMore?: () => void; children: React.ReactNode; className?: string }) {
+  return <div data-testid={`lazy-scroll-${noun}`} className={cn("max-h-[640px] overflow-auto rounded-md border border-border", className)}>{children}<LazyLoadSentinel noun={noun} hasMore={hasMore} loading={loading} onLoadMore={onLoadMore} /></div>;
+}
+
+function LazyLoadSentinel({ noun, hasMore, loading, onLoadMore }: { noun: string; hasMore: boolean; loading: boolean; onLoadMore?: () => void }) {
+  const ref = React.useRef<HTMLDivElement | null>(null);
+  const requested = React.useRef(false);
+  React.useEffect(() => {
+    if (!loading) requested.current = false;
+  }, [loading]);
+  React.useEffect(() => {
+    const node = ref.current;
+    if (!node || !hasMore || loading || !onLoadMore) return;
+    const requestMore = () => {
+      if (requested.current) return;
+      requested.current = true;
+      onLoadMore();
+    };
+    if (!("IntersectionObserver" in window)) {
+      requestMore();
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) requestMore();
+    }, { rootMargin: "240px 0px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, loading, noun, onLoadMore]);
+  if (!hasMore && !loading) return null;
+  return <div ref={ref} className="flex min-h-10 items-center justify-center border-t border-border px-3 py-2 text-xs font-medium text-muted" aria-live="polite">{loading ? `Loading more ${noun}...` : `Scroll for more ${noun}`}</div>;
+}
+
+function WebhookHookDetailPage({ data, loading, error, onBack, onRefresh, onViewHook, onViewDelivery = () => undefined, onPing }: { data?: WebhookHookDetailResponse; loading: boolean; error: Error | null; onBack: () => void; onRefresh: () => void; onViewHook: (hookId: string) => void; onViewDelivery?: (deliveryId: string) => void; onPing?: (hookId: string) => Promise<string> }) {
+  const [pingPending, setPingPending] = React.useState(false);
+  const [pingResult, setPingResult] = React.useState("");
+  const [pingError, setPingError] = React.useState("");
+  if (loading) return <WebhookLoadingState text="Loading hook detail…" />;
+  if (error) return <div className="grid gap-3"><Banner tone="error" text={error.message} /><button type="button" className="w-fit rounded border border-border px-3 py-2 text-sm font-semibold" onClick={onBack}>Back to hooks</button></div>;
+  if (!data) return <EmptyState text="Hook detail is not available." />;
+  const rawHook = data.hook;
+  const hook = {
+    ...rawHook,
+    github_created_at: rawHook.github_created_at ? <TimeText value={rawHook.github_created_at} /> : "unknown",
+    github_updated_at: rawHook.github_updated_at ? <TimeText value={rawHook.github_updated_at} /> : "unknown",
+    last_ping_at: rawHook.last_ping_at ? <TimeText value={rawHook.last_ping_at} /> : "never",
+    last_event_at: rawHook.last_event_at ? <TimeText value={rawHook.last_event_at} /> : "never",
+  };
+  const requestPing = async () => {
+    if (!onPing || pingPending) return;
+    setPingPending(true);
+    setPingResult("");
+    setPingError("");
+    try {
+      setPingResult(await onPing(hook.id));
+    } catch (err) {
+      setPingError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPingPending(false);
+    }
+  };
+  const recentActions = (data.recent_actions ?? []).map((action) => ({
+    ...action,
+    created_at: <TimeText value={action.created_at} compact />,
+  }));
+  return <section className="grid gap-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><button type="button" className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline" onClick={onBack}><ArrowLeft className="h-4 w-4" aria-hidden />Back to hooks</button><h2 className="text-xl font-semibold">{hook.target}</h2><p className="font-mono text-xs text-muted">{hook.target_type} webhook #{hook.id}</p></div><div className="flex flex-wrap gap-2">{hook.ping_url && onPing ? <button type="button" className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60" disabled={pingPending} onClick={() => void requestPing()}><Activity className={cn("h-4 w-4", pingPending && "animate-pulse")} aria-hidden />{pingPending ? "Sending ping…" : "Send ping"}</button> : null}<RefreshButton onClick={onRefresh} />{hook.admin_url ? <a className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold hover:bg-slate-50" href={safeExternalUrl(hook.admin_url)} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" aria-hidden />Open in GitHub</a> : null}</div></div>{pingError ? <Banner tone="error" text={pingError} /> : null}{pingResult ? <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{pingResult}</div> : null}<div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric title="State" value={hook.status} icon={<Activity className="h-5 w-5" />} /><Metric title="Deliveries" value={data.stats.deliveries} icon={<Link className="h-5 w-5" />} /><Metric title="Retries" value={data.stats.duplicates} icon={<RefreshCw className="h-5 w-5" />} /><Metric title="Unsupported" value={data.stats.unsupported} icon={<AlertTriangle className="h-5 w-5" />} /></div><Panel title="Sanitized configuration"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Active" value={hook.active ? "yes" : "no"} /><MiniStat label="Content type" value={hook.content_type ?? "unknown"} /><MiniStat label="SSL verification" value={hook.ssl_verify === null || hook.ssl_verify === undefined ? "unknown" : hook.ssl_verify ? "enabled" : "disabled"} /><MiniStat label="Destination URL" value={hook.delivery_url ?? "unknown"} /><MiniStat label="GitHub created" value={hook.github_created_at ?? "unknown"} /><MiniStat label="GitHub updated" value={hook.github_updated_at ?? "unknown"} /><MiniStat label="Last ping" value={hook.last_ping_at ?? "never"} /><MiniStat label="Last delivery" value={hook.last_event_at ?? "never"} /><MiniStat label="Last result" value={hook.last_result ?? "unknown"} /></div><div className="mt-3 rounded-md border border-border p-3"><div className="text-xs font-semibold text-muted">Subscribed events</div><div className="mt-2 flex flex-wrap gap-1.5">{hook.events.length ? hook.events.map((event) => <span key={event} className="rounded border border-border bg-slate-50 px-2 py-1 font-mono text-xs">{event}</span>) : <span className="text-sm text-muted">No event snapshot; send a ping to refresh it.</span>}</div></div></Panel><Panel title="Latest observed delivery"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Event" value={hook.last_event_name ? `${hook.last_event_name}${hook.last_action ? ` · ${hook.last_action}` : ""}` : "none"} /><MiniStat label="Repository" value={hook.last_repository ?? "none"} /><MiniStat label="Delivery ID" value={hook.last_delivery_id ?? "none"} /></div></Panel><Panel title="Recent administrative actions">{recentActions.length ? <div className="divide-y divide-border rounded-md border border-border">{recentActions.map((action) => <div key={action.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"><div><span className="font-semibold">{action.action}</span><span className="ml-2 text-muted">by @{action.actor}</span></div><span className="font-mono text-xs text-muted">{action.status} · {action.created_at}</span></div>)}</div> : <EmptyState text="No administrative actions recorded for this hook." />}</Panel><Panel title="Recent deliveries">{data.recent_deliveries.length ? <WebhookDeliveriesTable deliveries={data.recent_deliveries} onViewHook={onViewHook} onViewDelivery={onViewDelivery} /> : <EmptyState text="This hook has no retained deliveries." />}</Panel></section>;
+}
+
+function WebhookDeliveryDetailPage({ data, loading, error, onBack, onRefresh, onViewHook, onViewJob }: { data?: WebhookDeliveryDetailResponse; loading: boolean; error: Error | null; onBack: () => void; onRefresh: () => void; onViewHook: (hookId: string) => void; onViewJob: (jobId: number) => void }) {
+  if (loading) return <WebhookLoadingState text="Loading delivery detail…" />;
+  if (error) return <div className="grid gap-3"><Banner tone="error" text={error.message} /><button type="button" className="w-fit rounded border border-border px-3 py-2 text-sm font-semibold" onClick={onBack}>Back to deliveries</button></div>;
+  if (!data) return <EmptyState text="Delivery detail is not available." />;
+  const delivery = {
+    ...data.delivery,
+    created_at: <TimeText value={data.delivery.created_at} />,
+  };
+  return <section className="grid gap-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><button type="button" className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline" onClick={onBack}><ArrowLeft className="h-4 w-4" aria-hidden />Back to deliveries</button><h2 className="text-xl font-semibold">{delivery.event_name}{delivery.action ? ` · ${delivery.action}` : ""}</h2><p className="font-mono text-xs text-muted">Delivery {delivery.delivery_id}</p></div><RefreshButton onClick={onRefresh} /></div><Panel title="Delivery"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Received" value={delivery.created_at} /><MiniStat label="Repository" value={delivery.repository ?? "unknown"} /><MiniStat label="Result" value={delivery.status} /><MiniStat label="Event key" value={delivery.event_key ?? "unmatchable"} /><MiniStat label="Payload SHA-256" value={data.payload_hash} /><MiniStat label="Retries" value={delivery.duplicate_count ?? 0} /></div>{delivery.hook_id ? <button type="button" className="mt-3 text-sm font-semibold text-primary hover:underline" onClick={() => onViewHook(delivery.hook_id!)}>View hook #{delivery.hook_id}</button> : null}</Panel><Panel title="Generated job">{data.job ? <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-semibold">{data.job.work_key}</div><div className="mt-1 font-mono text-xs text-muted">Job #{data.job.id} · {data.job.status} · {data.job.action} · {data.job.work_intent}</div></div><button type="button" className="rounded-md border border-border px-3 py-2 text-sm font-semibold hover:bg-slate-50" onClick={() => onViewJob(data.job!.id)}>Open job</button></div> : <EmptyState text="This delivery did not generate or coalesce into a job." />}</Panel><Panel title="Full payload">{data.payload === null ? <EmptyState text="Payload was not retained for this legacy delivery." /> : <pre className="max-h-[640px] overflow-auto rounded-md border border-border bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-100">{JSON.stringify(data.payload, null, 2)}</pre>}</Panel></section>;
 }
 
 function SystemPage({
@@ -1115,9 +2045,17 @@ function SystemPage({
   );
 }
 
-function SectionLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+function SectionLink({ href, active, children, onNavigate }: { href: string; active: boolean; children: React.ReactNode; onNavigate?: (path: string) => void }) {
   return (
-    <a className={cn("inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md px-3 text-sm font-semibold sm:flex-none", active ? "bg-primary text-white shadow-sm" : "text-muted hover:bg-slate-50 hover:text-foreground")} href={href}>
+    <a
+      className={cn("inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1.5 text-xs font-semibold sm:flex-none sm:gap-1.5 sm:px-3 sm:text-sm [&>span]:truncate [&>svg]:shrink-0", active ? "bg-primary text-white shadow-sm" : "text-muted hover:bg-slate-50 hover:text-foreground")}
+      href={href}
+      onClick={(event) => {
+        if (!onNavigate || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+        event.preventDefault();
+        onNavigate(href);
+      }}
+    >
       {children}
     </a>
   );
@@ -1128,27 +2066,43 @@ function JobDetailPage({
   detail,
   selectedJob,
   user,
+  onBackToDashboard,
   onRetry,
   onDismiss,
+  onCancel,
   onRefresh,
 }: {
   jobId: number;
   detail: React.ReactNode;
   selectedJob: Job | null;
   user: UserProfile | undefined;
+  onBackToDashboard: () => void;
   onRetry: (jobId: number) => Promise<void>;
   onDismiss: (jobId: number) => Promise<void>;
+  onCancel: (jobId: number, reason?: string) => Promise<void>;
   onRefresh: () => void;
 }) {
   const [retrying, setRetrying] = React.useState(false);
   const [dismissing, setDismissing] = React.useState(false);
-  const canRetry = Boolean(user?.is_admin && selectedJob && isRetryableStatus(selectedJob.status));
+  const [cancelling, setCancelling] = React.useState(false);
+  const canRetry = Boolean(user?.is_admin && selectedJob && isRetryableStatus(selectedJob.status) && selectedJob.decision === "auto_trusted");
+  const canDismiss = Boolean(user?.is_admin && selectedJob && isDismissableStatus(selectedJob.status));
+  const canCancel = Boolean(selectedJob && canCancelJob(selectedJob, user));
   const retryLabel = retrying ? "Retrying..." : "Retry";
   const dismissLabel = dismissing ? "Dismissing..." : "Dismiss";
+  const cancelLabel = cancelling ? "Cancelling..." : "Cancel";
   return (
     <div className="grid min-w-0 gap-3 sm:gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <a className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50" href="/">
+        <a
+          className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50"
+          href="/"
+          onClick={(event) => {
+            if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+            event.preventDefault();
+            onBackToDashboard();
+          }}
+        >
           <ArrowLeft className="h-4 w-4" aria-hidden />
           Dashboard
         </a>
@@ -1172,7 +2126,7 @@ function JobDetailPage({
               {retryLabel}
             </button>
           ) : null}
-          {canRetry ? (
+          {canDismiss ? (
             <button
               className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-semibold text-foreground hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               type="button"
@@ -1189,6 +2143,26 @@ function JobDetailPage({
             >
               <CheckCircle2 className="h-4 w-4" aria-hidden />
               {dismissLabel}
+            </button>
+          ) : null}
+          {canCancel ? (
+            <button
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              disabled={cancelling}
+              onClick={async () => {
+                const reason = window.prompt(`Cancel job #${jobId}? Optional reason:`);
+                if (reason === null) return;
+                setCancelling(true);
+                try {
+                  await onCancel(jobId, reason);
+                } finally {
+                  setCancelling(false);
+                }
+              }}
+            >
+              <X className="h-4 w-4" aria-hidden />
+              {cancelLabel}
             </button>
           ) : null}
           <RefreshButton onClick={onRefresh} />
@@ -1238,6 +2212,7 @@ function KnowledgePage({
   onStatusChange,
   onApprove,
   onReject,
+  onUpdateRuleScope,
   onDeleteRule,
   onRefresh,
 }: {
@@ -1252,6 +2227,7 @@ function KnowledgePage({
   onStatusChange: (status: string) => void;
   onApprove: (proposalId: string) => Promise<void>;
   onReject: (proposalId: string) => Promise<void>;
+  onUpdateRuleScope: (ruleId: string, scope: string) => Promise<void>;
   onDeleteRule: (ruleId: string) => Promise<void>;
   onRefresh: () => void;
 }) {
@@ -1330,7 +2306,7 @@ function KnowledgePage({
         }
       >
         {activeTab === "proposals" ? <KnowledgeProposals proposals={data?.proposals ?? []} loading={loading} isAdmin={Boolean(user?.is_admin)} now={now} onApprove={onApprove} onReject={onReject} /> : null}
-        {activeTab === "rules" ? <KnowledgeRules rules={data?.rules ?? []} loading={loading} isAdmin={Boolean(user?.is_admin)} now={now} onDeleteRule={onDeleteRule} /> : null}
+        {activeTab === "rules" ? <KnowledgeRules rules={data?.rules ?? []} loading={loading} now={now} onUpdateRuleScope={onUpdateRuleScope} onDeleteRule={onDeleteRule} /> : null}
         {activeTab === "events" ? <KnowledgeEvents events={data?.events ?? []} loading={loading} now={now} /> : null}
       </Panel>
     </div>
@@ -1362,6 +2338,7 @@ function KnowledgeProposals({
           <KnowledgeRowHeader scope={proposal.scope} type={proposal.type} confidence={proposal.confidence} status={proposal.status} timestamp={proposal.updated_at} now={now} />
           <p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">{proposal.rule || proposal.reason || "No reusable rule proposed."}</p>
           {proposal.reason ? <p className="min-w-0 break-words text-xs text-muted [overflow-wrap:anywhere]">{proposal.reason}</p> : null}
+          {proposal.source_event ? <KnowledgeSourceEvent event={proposal.source_event} /> : <p className="font-mono text-xs text-muted">Source event {proposal.event_id}</p>}
           {proposal.error ? <Banner tone="error" text={proposal.error} /> : null}
           {isAdmin && proposal.status === "proposed" ? (
             <div className="flex flex-wrap gap-2">
@@ -1405,8 +2382,54 @@ function KnowledgeProposals({
   );
 }
 
-function KnowledgeRules({ rules, loading, isAdmin, now, onDeleteRule }: { rules: KnowledgeRule[]; loading: boolean; isAdmin: boolean; now: number; onDeleteRule: (ruleId: string) => Promise<void> }) {
+function KnowledgeSourceEvent({ event }: { event: KnowledgeEvent }) {
+  const actor = event.trigger_actor || (event.actor !== "github" ? event.actor : null);
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border border-border bg-slate-50 px-2 py-1.5">
+      <ActorLabel actor={actor} avatarUrl={event.trigger_actor_avatar_url} framed />
+      {event.source_job_id ? (
+        <a className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground hover:bg-slate-50" href={jobPath(event.source_job_id)}>
+          <Link className="h-3.5 w-3.5" aria-hidden />
+          Job #{event.source_job_id}
+        </a>
+      ) : null}
+      {event.github_urls.length > 0 ? <GitHubLinkList urls={event.github_urls} compact /> : <span className="font-mono text-xs text-muted">No GitHub link</span>}
+    </div>
+  );
+}
+
+function knowledgeRuleScopeOptions(scope: string) {
+  const options = [{ value: "global", label: "global" }];
+  if (scope.startsWith("repo:")) {
+    const repo = scope.slice("repo:".length);
+    const [owner, name] = repo.split("/", 2);
+    if (owner && name) {
+      options.push({ value: `org:${owner}`, label: `org:${owner}` });
+      options.push({ value: `repo:${owner}/${name}`, label: `repo:${owner}/${name}` });
+    }
+  } else if (scope.startsWith("org:")) {
+    options.push({ value: scope, label: scope });
+  }
+  if (!options.some((option) => option.value === scope)) options.push({ value: scope, label: scope });
+  return options;
+}
+
+function KnowledgeRules({
+  rules,
+  loading,
+  now,
+  onUpdateRuleScope,
+  onDeleteRule,
+}: {
+  rules: KnowledgeRule[];
+  loading: boolean;
+  now: number;
+  onUpdateRuleScope: (ruleId: string, scope: string) => Promise<void>;
+  onDeleteRule: (ruleId: string) => Promise<void>;
+}) {
   const [busyId, setBusyId] = React.useState<string | null>(null);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [draftScope, setDraftScope] = React.useState("");
   if (loading && rules.length === 0) return <EmptyState text="Loading curated rules..." />;
   if (rules.length === 0) return <EmptyState text="No curated rules match the current filters." />;
   return (
@@ -1416,28 +2439,96 @@ function KnowledgeRules({ rules, loading, isAdmin, now, onDeleteRule }: { rules:
         const primarySource = sources[0];
         const actor = primarySource ? primarySource.trigger_actor || (primarySource.actor !== "github" ? primarySource.actor : null) : null;
         const sourceUrls = sources.flatMap((source) => source.github_urls ?? []);
+        const scopeOptions = knowledgeRuleScopeOptions(rule.scope);
+        const isEditing = editingId === rule.id;
+        const isBusy = busyId === rule.id;
+        const canManage = Boolean(rule.can_manage);
         return (
           <article key={rule.id} className="grid min-w-0 gap-2 rounded-md border border-border bg-white p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <KnowledgeRowHeader scope={rule.scope} type={rule.type} confidence={rule.confidence} status={`${rule.observations} observation${rule.observations === 1 ? "" : "s"}`} timestamp={rule.last_seen} now={now} />
-              {isAdmin ? (
-                <button
-                  className="inline-flex h-8 items-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
-                  type="button"
-                  disabled={busyId === rule.id}
-                  onClick={async () => {
-                    if (!window.confirm("Delete this curated rule?")) return;
-                    setBusyId(rule.id);
-                    try {
-                      await onDeleteRule(rule.id);
-                    } finally {
-                      setBusyId(null);
-                    }
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" aria-hidden />
-                  Delete
-                </button>
+              {canManage ? (
+                <div className="flex flex-wrap items-end gap-2">
+                  {isEditing ? (
+                    <>
+                      <Field label="Scope">
+                        <select
+                          className="control h-8 min-w-[180px] py-1 text-xs"
+                          value={draftScope}
+                          disabled={isBusy}
+                          onChange={(event) => setDraftScope(event.target.value)}
+                        >
+                          {scopeOptions.map((option) => (
+                            <option value={option.value} key={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </Field>
+                      <button
+                        className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50 disabled:opacity-60"
+                        type="button"
+                        disabled={isBusy || draftScope === rule.scope}
+                        title="Save scope"
+                        onClick={async () => {
+                          if (draftScope === rule.scope) return;
+                          setBusyId(rule.id);
+                          try {
+                            await onUpdateRuleScope(rule.id, draftScope);
+                            setEditingId(null);
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}
+                      >
+                        <Save className="h-4 w-4" aria-hidden />
+                        Save
+                      </button>
+                      <button
+                        className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-muted hover:bg-slate-50 disabled:opacity-60"
+                        type="button"
+                        disabled={isBusy}
+                        title="Cancel scope edit"
+                        onClick={() => {
+                          setEditingId(null);
+                          setDraftScope("");
+                        }}
+                      >
+                        <X className="h-4 w-4" aria-hidden />
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold text-foreground hover:bg-slate-50 disabled:opacity-60"
+                      type="button"
+                      disabled={isBusy}
+                      title="Edit scope"
+                      onClick={() => {
+                        setEditingId(rule.id);
+                        setDraftScope(rule.scope);
+                      }}
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden />
+                      Edit
+                    </button>
+                  )}
+                  <button
+                    className="inline-flex h-8 items-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={async () => {
+                      if (!window.confirm("Delete this curated rule?")) return;
+                      setBusyId(rule.id);
+                      try {
+                        await onDeleteRule(rule.id);
+                      } finally {
+                        setBusyId(null);
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden />
+                    Delete
+                  </button>
+                </div>
               ) : null}
             </div>
             <p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">{rule.rule}</p>
@@ -1501,6 +2592,370 @@ function KnowledgeEvents({ events, loading, now }: { events: KnowledgeEvent[]; l
   );
 }
 
+function McpPage({
+  tokens,
+  loading,
+  error,
+  user,
+  ownerOptions,
+  dashboardUrl,
+  dashboardUrlSource,
+  now,
+  onCreate,
+  onUpdateOwner,
+  onRevoke,
+  onRefresh,
+}: {
+  tokens: McpTokenRecord[] | undefined;
+  loading: boolean;
+  error: Error | null;
+  user: UserProfile | undefined;
+  ownerOptions: UserProfile[];
+  dashboardUrl?: string;
+  dashboardUrlSource?: "configured" | "forwarded" | "request";
+  now: number;
+  onCreate: (name: string, userLogin?: string) => Promise<McpTokenCreateResponse>;
+  onUpdateOwner: (tokenId: string, userLogin: string) => Promise<void>;
+  onRevoke: (tokenId: string) => Promise<void>;
+  onRefresh: () => void;
+}) {
+  const [name, setName] = React.useState("");
+  const [userLogin, setUserLogin] = React.useState("");
+  const [creating, setCreating] = React.useState(false);
+  const [revokingId, setRevokingId] = React.useState<string | null>(null);
+  const [updatingOwnerId, setUpdatingOwnerId] = React.useState<string | null>(null);
+  const [createdToken, setCreatedToken] = React.useState<McpTokenCreateResponse | null>(null);
+  const [actionError, setActionError] = React.useState("");
+  const activeTokens = tokens ?? [];
+  const selectedOwner = ownerOptions.find((option) => option.login === userLogin);
+  React.useEffect(() => {
+    if (!user?.is_admin) return;
+    if (userLogin && ownerOptions.some((option) => option.login === userLogin)) return;
+    setUserLogin(user?.login || ownerOptions[0]?.login || "");
+  }, [ownerOptions, user?.is_admin, user?.login, userLogin]);
+  const publicBaseUrl = (dashboardUrl || (typeof window === "undefined" ? "" : window.location.origin)).replace(/\/$/, "");
+  const mcpDashboardUrl = `${publicBaseUrl}/mcp`;
+  const mcpEndpointUrl = `${publicBaseUrl}/api/mcp`;
+  return (
+    <div className="grid min-w-0 gap-4">
+      <PageTitle icon={<KeyRound className="h-5 w-5 text-muted" aria-hidden />} title="MCP access" subtitle={user?.is_admin ? "Issue and revoke read-only tokens for any dashboard user." : "Issue and revoke read-only tokens linked to your user."} action={<RefreshButton onClick={onRefresh} />} />
+      {error ? <Banner tone="error" text={error.message} /> : null}
+      {actionError ? <Banner tone="error" text={actionError} /> : null}
+      <McpSetupGuide dashboardUrl={mcpDashboardUrl} endpointUrl={mcpEndpointUrl} dashboardUrlSource={dashboardUrlSource ?? "request"} />
+      {createdToken ? (
+        <section className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-emerald-950" aria-label="Created MCP token">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Token created</h2>
+              <p className="mt-1 text-xs text-emerald-800">This secret is shown once. Store it in the local agent environment before leaving this page.</p>
+            </div>
+            <button className="inline-flex h-8 items-center gap-2 rounded-md border border-emerald-300 bg-white px-3 text-sm font-semibold text-emerald-900 hover:bg-emerald-100" type="button" onClick={() => setCreatedToken(null)}>
+              <X className="h-4 w-4" aria-hidden />
+              Hide
+            </button>
+          </div>
+          <pre className="mt-3 overflow-auto rounded bg-emerald-950 px-3 py-2 font-mono text-xs text-emerald-50">{createdToken.token}</pre>
+        </section>
+      ) : null}
+      <Panel title="Create token">
+        <form
+          className={user?.is_admin ? "grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(12rem,16rem)_auto]" : "grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]"}
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const cleanName = name.trim();
+            if (!cleanName) return;
+            setCreating(true);
+            setActionError("");
+            try {
+              const created = await onCreate(cleanName, user?.is_admin ? userLogin : undefined);
+              setCreatedToken(created);
+              setName("");
+            } catch (err) {
+              setActionError(err instanceof Error ? err.message : String(err));
+            } finally {
+              setCreating(false);
+            }
+          }}
+        >
+          <Field label="Token name">
+            <input className="control" value={name} placeholder="local agent" disabled={creating} onChange={(event) => setName(event.target.value)} />
+          </Field>
+          {user?.is_admin ? (
+            <Field label="Owner">
+              <McpUserSelect
+                ariaLabel="Owner"
+                value={userLogin}
+                ownerOptions={ownerOptions}
+                disabled={creating || ownerOptions.length === 0}
+                selectedSuffix={(option) => option.login === user?.login ? " (you)" : ""}
+                emptyLabel="No known users"
+                onChange={setUserLogin}
+              />
+              {selectedOwner ? <span className="font-normal text-muted">Token will be linked to @{selectedOwner.login}.</span> : null}
+            </Field>
+          ) : null}
+          <button className="inline-flex h-9 items-center justify-center gap-2 self-end rounded-md bg-primary px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={creating || !name.trim() || Boolean(user?.is_admin && !userLogin)}>
+            <KeyRound className="h-4 w-4" aria-hidden />
+            {creating ? "Creating..." : "Create token"}
+          </button>
+        </form>
+      </Panel>
+      <Panel title="Active tokens">
+        <McpTokenList tokens={activeTokens} loading={loading} now={now} ownerOptions={ownerOptions} canManageOwners={Boolean(user?.is_admin)} revokingId={revokingId} updatingOwnerId={updatingOwnerId} onUpdateOwner={async (tokenId, owner) => {
+          setUpdatingOwnerId(tokenId);
+          setActionError("");
+          try {
+            await onUpdateOwner(tokenId, owner);
+          } catch (err) {
+            setActionError(err instanceof Error ? err.message : String(err));
+          } finally {
+            setUpdatingOwnerId(null);
+          }
+        }} onRevoke={async (tokenId) => {
+          if (!window.confirm("Revoke this MCP token?")) return;
+          setRevokingId(tokenId);
+          setActionError("");
+          try {
+            await onRevoke(tokenId);
+          } catch (err) {
+            setActionError(err instanceof Error ? err.message : String(err));
+          } finally {
+            setRevokingId(null);
+          }
+        }} />
+      </Panel>
+    </div>
+  );
+}
+
+function McpSetupGuide({ dashboardUrl, endpointUrl, dashboardUrlSource }: { dashboardUrl: string; endpointUrl: string; dashboardUrlSource: "configured" | "forwarded" | "request" }) {
+  const sourceLabel = dashboardUrlSource === "configured" ? "Configured public URL" : dashboardUrlSource === "forwarded" ? "Forwarded public URL" : "Needs public URL";
+  const needsPublicUrlConfig = dashboardUrlSource === "request";
+  const displayDashboardUrl = needsPublicUrlConfig ? "Set GITHUB_AGENT_BRIDGE_DASHBOARD_PUBLIC_URL or forward X-Forwarded-* headers" : dashboardUrl;
+  const displayEndpointUrl = needsPublicUrlConfig ? "Public dashboard URL required before connecting remote agents" : endpointUrl;
+  const configEndpointUrl = needsPublicUrlConfig ? "https://bridge.example.com/api/mcp" : endpointUrl;
+  const agentConfig = `{
+  "mcpServers": {
+    "github-agent-bridge": {
+      "url": "${configEndpointUrl}",
+      "headers": {
+        "Authorization": "Bearer \${GITHUB_AGENT_BRIDGE_MCP_TOKEN}"
+      }
+    }
+  }
+}`;
+  return (
+    <Panel title="Connect an agent">
+      {needsPublicUrlConfig ? (
+        <Banner tone="warning" text="Set GITHUB_AGENT_BRIDGE_DASHBOARD_PUBLIC_URL, or forward X-Forwarded-* headers from the proxy, before connecting remote agents." />
+      ) : null}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="grid min-w-0 gap-3">
+          <div className="min-w-0 rounded-md border border-border bg-white p-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+              <ExternalLink className="h-4 w-4 text-muted" aria-hidden />
+              Public dashboard URL
+              <span className="rounded-sm border border-border bg-slate-50 px-1.5 py-0.5 font-mono text-[11px] font-normal text-muted">{sourceLabel}</span>
+            </div>
+            <p className="mt-1 text-xs text-muted">Share this page URL with bridge admins only after it resolves to the external dashboard origin.</p>
+            <pre className="mt-3 overflow-auto rounded-md bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100">{displayDashboardUrl}</pre>
+          </div>
+          <div className="min-w-0 rounded-md border border-border bg-white p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <ExternalLink className="h-4 w-4 text-muted" aria-hidden />
+              HTTP MCP endpoint
+            </div>
+            <p className="mt-1 text-xs text-muted">Remote agents connect directly with a bearer token; no local `gab` binary is required on the agent host.</p>
+            <pre className="mt-3 overflow-auto rounded-md bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100">{displayEndpointUrl}</pre>
+          </div>
+        </div>
+        <div className="grid min-w-0 gap-3">
+          <div className="min-w-0 rounded-md border border-border bg-white p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <KeyRound className="h-4 w-4 text-muted" aria-hidden />
+              Agent config
+            </div>
+            <p className="mt-1 text-xs text-muted">Create a token below, then store the one-time secret as `GITHUB_AGENT_BRIDGE_MCP_TOKEN` for the agent.</p>
+            <pre className="mt-3 max-h-64 overflow-auto rounded-md bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-100">{agentConfig}</pre>
+          </div>
+          <div className="min-w-0 rounded-md border border-border bg-white p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Brain className="h-4 w-4 text-muted" aria-hidden />
+              Agent prompt
+            </div>
+            <p className="mt-1 text-xs text-muted">Ask the agent to use the read-only bridge knowledge server before acting on repository work.</p>
+            <pre className="mt-3 max-h-40 overflow-auto rounded-md bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-100">Use the github-agent-bridge MCP server for repository knowledge. Query list_repositories and list_knowledge before making repository decisions.</pre>
+          </div>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function PageTitle({ icon, title, subtitle, action }: { icon: React.ReactNode; title: string; subtitle: string; action?: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          {icon}
+          {title}
+        </h2>
+        <p className="text-xs text-muted">{subtitle}</p>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function McpTokenList({
+  tokens,
+  loading,
+  now,
+  ownerOptions,
+  canManageOwners,
+  revokingId,
+  updatingOwnerId,
+  onUpdateOwner,
+  onRevoke,
+}: {
+  tokens: McpTokenRecord[];
+  loading: boolean;
+  now: number;
+  ownerOptions: UserProfile[];
+  canManageOwners: boolean;
+  revokingId: string | null;
+  updatingOwnerId: string | null;
+  onUpdateOwner: (tokenId: string, userLogin: string) => Promise<void>;
+  onRevoke: (tokenId: string) => Promise<void>;
+}) {
+  if (loading && tokens.length === 0) return <EmptyState text="Loading MCP tokens..." />;
+  if (tokens.length === 0) return <EmptyState text="No active MCP tokens." />;
+  return (
+    <>
+      <div className="grid gap-2 md:hidden">
+        {tokens.map((token) => (
+          <article key={token.id} className="grid min-w-0 gap-3 rounded-md border border-border bg-white p-3">
+            <div className="min-w-0">
+              <h3 className="break-words text-sm font-semibold [overflow-wrap:anywhere]">{token.name}</h3>
+              <div className="mt-1 break-all font-mono text-xs text-muted">{token.id}</div>
+              {canManageOwners ? <McpOwnerSelect token={token} ownerOptions={ownerOptions} disabled={updatingOwnerId === token.id} onUpdateOwner={onUpdateOwner} /> : token.user_login ? <div className="mt-1 text-xs text-muted">Owner: @{token.user_login}</div> : null}
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <MiniStat label="Created" value={<TimeText value={token.created_at} relative now={now} />} />
+              <MiniStat label="Last used" value={token.last_used_at ? <TimeText value={token.last_used_at} relative now={now} /> : "never"} />
+            </div>
+            <button className="inline-flex h-8 items-center justify-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={revokingId === token.id} onClick={() => onRevoke(token.id)}>
+              <Trash2 className="h-4 w-4" aria-hidden />
+              {revokingId === token.id ? "Revoking..." : "Revoke"}
+            </button>
+          </article>
+        ))}
+      </div>
+      <div className="hidden overflow-auto rounded-md border border-border md:block">
+        <table className="min-w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-border bg-slate-50 text-left text-xs text-muted">
+              <th className="px-3 py-2 font-semibold">Name</th>
+              <th className="px-3 py-2 font-semibold">Owner</th>
+              <th className="px-3 py-2 font-semibold">Created</th>
+              <th className="px-3 py-2 font-semibold">Last used</th>
+              <th className="px-3 py-2 font-semibold">ID</th>
+              <th className="px-3 py-2 text-right font-semibold">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tokens.map((token) => (
+              <tr key={token.id} className="border-b border-border last:border-b-0">
+                <td className="px-3 py-3 font-semibold">{token.name}</td>
+                <td className="px-3 py-3 text-xs text-muted">
+                  {canManageOwners ? <McpOwnerSelect token={token} ownerOptions={ownerOptions} disabled={updatingOwnerId === token.id} onUpdateOwner={onUpdateOwner} /> : token.user_login ? `@${token.user_login}` : "unassigned"}
+                </td>
+                <td className="px-3 py-3 font-mono text-xs"><TimeText value={token.created_at} relative now={now} /></td>
+                <td className="px-3 py-3 font-mono text-xs">{token.last_used_at ? <TimeText value={token.last_used_at} relative now={now} /> : "never"}</td>
+                <td className="px-3 py-3 font-mono text-xs text-muted">{token.id}</td>
+                <td className="px-3 py-3 text-right">
+                  <button className="inline-flex h-8 items-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={revokingId === token.id} onClick={() => onRevoke(token.id)}>
+                    <Trash2 className="h-4 w-4" aria-hidden />
+                    {revokingId === token.id ? "Revoking..." : "Revoke"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function McpOwnerSelect({ token, ownerOptions, disabled, onUpdateOwner }: { token: McpTokenRecord; ownerOptions: UserProfile[]; disabled: boolean; onUpdateOwner: (tokenId: string, userLogin: string) => Promise<void> }) {
+  const value = token.user_login ?? "";
+  return (
+    <McpUserSelect
+      ariaLabel={`Owner for ${token.name}`}
+      value={value}
+      ownerOptions={ownerOptions}
+      disabled={disabled || ownerOptions.length === 0}
+      emptyLabel="Select owner"
+      size="compact"
+      onChange={(nextOwner) => {
+        if (!nextOwner || nextOwner === token.user_login) return;
+        void onUpdateOwner(token.id, nextOwner);
+      }}
+    />
+  );
+}
+
+function McpUserSelect({
+  value,
+  ownerOptions,
+  disabled,
+  onChange,
+  ariaLabel,
+  selectedSuffix,
+  emptyLabel,
+  size = "default",
+}: {
+  value: string;
+  ownerOptions: UserProfile[];
+  disabled: boolean;
+  onChange: (userLogin: string) => void;
+  ariaLabel: string;
+  selectedSuffix?: (option: UserProfile) => string;
+  emptyLabel: string;
+  size?: "default" | "compact";
+}) {
+  const selected = ownerOptions.find((option) => option.login === value);
+  const selectedLabel = selected ? `@${selected.login}${selectedSuffix?.(selected) ?? ""}` : emptyLabel;
+  return (
+    <div className={cn("relative flex min-w-0 items-center gap-2 rounded-md border border-border bg-panel text-foreground focus-within:border-primary focus-within:ring-1 focus-within:ring-primary", disabled ? "opacity-60" : "", size === "compact" ? "h-8 w-44 max-w-full px-2" : "h-9 w-full px-2.5")}>
+      <span className={cn("pointer-events-none flex shrink-0 items-center justify-center", size === "compact" ? "h-5 w-5" : "h-6 w-6")}>
+        {selected?.avatar_url ? (
+          <img className="h-full w-full rounded-full bg-slate-100" src={safeExternalUrl(selected.avatar_url)} alt="" referrerPolicy="no-referrer" />
+        ) : (
+          <UserCircle2 className={cn("text-muted", size === "compact" ? "h-4 w-4" : "h-5 w-5")} aria-hidden />
+        )}
+      </span>
+      <span className={cn("pointer-events-none min-w-0 flex-1 truncate font-mono", selected ? "text-foreground" : "text-muted", size === "compact" ? "text-xs" : "text-sm")}>{selectedLabel}</span>
+      <select
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+        aria-label={ariaLabel}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {ownerOptions.length === 0 || !value ? <option value="">{emptyLabel}</option> : null}
+        {ownerOptions.map((option) => (
+          <option key={option.login} value={option.login}>
+            @{option.login}{selectedSuffix?.(option) ?? ""}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className={cn("pointer-events-none shrink-0 text-muted", size === "compact" ? "h-3.5 w-3.5" : "h-4 w-4")} aria-hidden />
+    </div>
+  );
+}
+
 function GitHubLinkList({ urls, compact = false }: { urls: string[]; compact?: boolean }) {
   const visible = compact ? urls.slice(0, 2) : urls;
   const extra = urls.length - visible.length;
@@ -1514,6 +2969,7 @@ function GitHubLinkList({ urls, compact = false }: { urls: string[]; compact?: b
             compact ? "h-7 px-2 text-xs" : "min-h-7 px-2 py-1 text-xs",
           )}
           href={safeExternalUrl(url)}
+          aria-label={url}
           rel="noreferrer"
           target="_blank"
         >
@@ -1576,6 +3032,95 @@ function UserMenu({ user, loading }: { user: UserProfile | undefined; loading: b
   );
 }
 
+function WebPushControl({
+  config,
+  loading,
+  onEnable,
+  onDisable,
+}: {
+  config: WebPushConfig | undefined;
+  loading: boolean;
+  onEnable: () => Promise<void>;
+  onDisable: () => Promise<void>;
+}) {
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const enabled = Boolean(config?.status.enabled);
+  const supported = typeof navigator !== "undefined" && typeof window !== "undefined" && supportsWebPush();
+  const disabled = loading || busy || !config?.configured || !supported;
+  const title = !supported ? "Notifications unavailable" : !config?.configured ? "Notifications not configured" : enabled ? "Disable notifications" : "Enable notifications";
+
+  return (
+    <div className="relative">
+      <button
+        className={cn(
+          "inline-flex h-9 w-9 items-center justify-center rounded-md border text-sm font-semibold",
+          enabled ? "border-emerald-400 bg-emerald-50 text-emerald-700" : "border-slate-700 bg-slate-900 text-slate-200",
+          disabled && "cursor-not-allowed opacity-60",
+        )}
+        type="button"
+        aria-label={title}
+        title={error || title}
+        disabled={disabled}
+        onClick={async () => {
+          setBusy(true);
+          setError("");
+          try {
+            if (enabled) await onDisable();
+            else await onEnable();
+          } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Bell className={cn("h-4 w-4", busy && "animate-live-pulse")} aria-hidden />
+      </button>
+    </div>
+  );
+}
+
+function WebPushToast({ notification, onDismiss, onNavigate }: { notification: InAppPushNotification | null; onDismiss: () => void; onNavigate: (path: string) => void }) {
+  if (!notification) return null;
+  const title = notification.title || "GitHub Agent Bridge";
+  const body = notification.body || notification.summary || "Bridge job finished";
+  const url = notification.url || notification.job_url || (notification.job_id ? jobPath(notification.job_id) : "/");
+  const isInternal = url.startsWith("/");
+
+  return (
+    <aside className="fixed right-3 top-20 z-50 w-[min(calc(100vw-1.5rem),28rem)] rounded-md border border-emerald-300 bg-white shadow-xl shadow-slate-950/15" aria-live="assertive" aria-label="Bridge notification">
+      <div className="flex items-start gap-3 p-3">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+          <Bell className="h-4 w-4" aria-hidden />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <h2 className="min-w-0 break-words text-sm font-semibold text-foreground">{title}</h2>
+            <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-slate-100 hover:text-foreground" type="button" aria-label="Dismiss notification" onClick={onDismiss}>
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+          <p className="mt-1 min-w-0 break-words text-sm text-muted">{body}</p>
+          {notification.detail ? <p className="mt-1 line-clamp-2 min-w-0 break-words text-xs text-muted">{notification.detail}</p> : null}
+          <button
+            className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-semibold text-foreground hover:bg-slate-50"
+            type="button"
+            onClick={() => {
+              onDismiss();
+              if (isInternal) onNavigate(url);
+              else window.open(safeExternalUrl(url), "_blank", "noopener,noreferrer");
+            }}
+          >
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+            Open
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 function JobsHeader({ count, limit, loading, onRefresh }: { count: number; limit: number; loading: boolean; onRefresh: () => void }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-white px-3 py-3 shadow-sm md:px-4">
@@ -1602,7 +3147,7 @@ function Panel({ title, action, children, className, flushHeader = false }: { ti
   );
 }
 
-function Metric({ title, value, icon }: { title: string; value: number; icon: React.ReactNode }) {
+function Metric({ title, value, icon }: { title: string; value: number | string; icon: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-border bg-panel p-3 shadow-sm md:p-4">
       <div className="flex items-center justify-between text-muted">
@@ -1617,6 +3162,7 @@ function Metric({ title, value, icon }: { title: string; value: number; icon: Re
 function Filters({ filters, actorOptions, onChange }: { filters: JobFilters; actorOptions: JobActor[]; onChange: (filters: JobFilters) => void }) {
   const [draft, setDraft] = React.useState(filters);
   React.useEffect(() => setDraft(filters), [filters]);
+  const activeChips = activeJobFilterChips(filters);
   const canClear = hasActiveJobFilters(filters) || hasActiveJobFilters(draft);
   const clearFilters = () => {
     setDraft(emptyJobFilters);
@@ -1625,12 +3171,40 @@ function Filters({ filters, actorOptions, onChange }: { filters: JobFilters; act
 
   return (
     <details className="my-3 rounded-md border border-border bg-slate-50/70">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-semibold marker:hidden">
-        <span className="inline-flex items-center gap-2">
-          <Filter className="h-4 w-4 text-muted" aria-hidden />
-          Filters
+      <summary className="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-sm font-semibold marker:hidden">
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="inline-flex shrink-0 items-center gap-2">
+            <Filter className="h-4 w-4 text-muted" aria-hidden />
+            Filters
+          </span>
+          {activeChips.length > 0 ? (
+            <span className="flex min-w-0 flex-wrap items-center gap-1.5" aria-label="Applied filters">
+              {activeChips.map((chip) => (
+                <span key={chip.key} className="inline-flex max-w-full items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                  <span className="text-blue-700/70">{chip.label}</span>
+                  <span className="max-w-40 truncate font-mono">{chip.value.trim()}</span>
+                </span>
+              ))}
+            </span>
+          ) : null}
         </span>
-        <ChevronDown className="h-4 w-4 text-muted" aria-hidden />
+        <span className="inline-flex shrink-0 items-center gap-2">
+          {canClear ? (
+            <button
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-white px-2.5 text-xs font-semibold text-foreground hover:bg-slate-50"
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                clearFilters();
+              }}
+            >
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+              Clear filters
+            </button>
+          ) : null}
+          <ChevronDown className="h-4 w-4 text-muted" aria-hidden />
+        </span>
       </summary>
       <form
         className="grid gap-3 border-t border-border bg-white p-3 md:grid-cols-3 xl:grid-cols-9"
@@ -1757,24 +3331,44 @@ function Field({ label, children, className }: { label: string; children: React.
 function JobsList({
   jobs,
   loading,
+  loadingMore = false,
+  hasMore = false,
+  onLoadMore,
   onViewJob,
   now,
   user,
   onRetry,
   onDismiss,
+  onCancel,
 }: {
   jobs: Job[];
   loading: boolean;
+  loadingMore?: boolean;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
   onViewJob: (id: number) => void;
   now: number;
   user?: UserProfile;
   onRetry?: (jobId: number) => Promise<void>;
   onDismiss?: (jobId: number) => Promise<void>;
+  onCancel?: (jobId: number, reason?: string) => Promise<void>;
 }) {
   const [retryingJobId, setRetryingJobId] = React.useState<number | null>(null);
   const [dismissingJobId, setDismissingJobId] = React.useState<number | null>(null);
+  const [cancellingJobId, setCancellingJobId] = React.useState<number | null>(null);
+  const loadMoreRequestedRef = React.useRef(false);
+  const wasLoadingMoreRef = React.useRef(loadingMore);
   const canRetryFromList = Boolean(user?.is_admin && onRetry);
   const canDismissFromList = Boolean(user?.is_admin && onDismiss);
+  React.useEffect(() => {
+    if (wasLoadingMoreRef.current && !loadingMore) loadMoreRequestedRef.current = false;
+    wasLoadingMoreRef.current = loadingMore;
+  }, [loadingMore]);
+  const requestMoreJobs = React.useCallback(() => {
+    if (loadMoreRequestedRef.current) return;
+    loadMoreRequestedRef.current = true;
+    onLoadMore?.();
+  }, [onLoadMore]);
   const retryJobFromList = React.useCallback(async (jobId: number) => {
     if (!onRetry) return;
     setRetryingJobId(jobId);
@@ -1793,6 +3387,15 @@ function JobsList({
       setDismissingJobId(null);
     }
   }, [onDismiss]);
+  const cancelJobFromList = React.useCallback(async (jobId: number, reason?: string) => {
+    if (!onCancel) return;
+    setCancellingJobId(jobId);
+    try {
+      await onCancel(jobId, reason);
+    } finally {
+      setCancellingJobId(null);
+    }
+  }, [onCancel]);
 
   if (loading && jobs.length === 0) return <EmptyState text="Loading jobs..." />;
   if (jobs.length === 0) return <EmptyState text="No jobs match the current filters." />;
@@ -1805,69 +3408,152 @@ function JobsList({
             job={job}
             onViewJob={onViewJob}
             now={now}
-            canRetry={canRetryFromList && isRetryableStatus(job.status)}
+            canRetry={canRetryFromList && isRetryableStatus(job.status) && job.decision === "auto_trusted"}
             retrying={retryingJobId === job.id}
             onRetry={retryJobFromList}
-            canDismiss={canDismissFromList && isRetryableStatus(job.status)}
+            canDismiss={canDismissFromList && isDismissableStatus(job.status)}
             dismissing={dismissingJobId === job.id}
             onDismiss={dismissJobFromList}
+            canCancel={Boolean(onCancel && canCancelJob(job, user))}
+            cancelling={cancellingJobId === job.id}
+            onCancel={cancelJobFromList}
           />
         ))}
+        <MobileLoadMoreJobs hasMore={hasMore} loading={loadingMore} onLoadMore={requestMoreJobs} />
       </div>
-      <div className="hidden max-h-[640px] overflow-auto rounded-md border border-border md:block">
-        <table className="min-w-full border-collapse text-sm">
+      <LazyScrollFrame noun="jobs" hasMore={hasMore} loading={loadingMore} onLoadMore={requestMoreJobs} className="hidden md:block">
+        <table className="min-w-[1080px] table-fixed border-collapse text-sm">
           <thead>
             <tr className="sticky top-0 z-10 border-b border-border bg-panel text-left text-xs text-muted">
-              <th className="px-2 py-2 font-semibold">ID</th>
-              <th className="px-2 py-2 font-semibold">Status</th>
-              <th className="px-2 py-2 font-semibold">Repo / thread</th>
-              <th className="px-2 py-2 font-semibold">Action</th>
-              <th className="px-2 py-2 font-semibold">Actor</th>
-              <th className="px-2 py-2 font-semibold">Attempts</th>
-              <th className="px-2 py-2 font-semibold">Queue wait</th>
-              <th className="px-2 py-2 font-semibold">Runtime</th>
-              <th className="px-2 py-2 font-semibold">Updated</th>
-              <th className="px-2 py-2 text-right font-semibold">Actions</th>
+              <th className="w-[42%] px-3 py-2 font-semibold">Job</th>
+              <th className="w-32 px-3 py-2 font-semibold">Status</th>
+              <th className="w-40 px-3 py-2 font-semibold">Action</th>
+              <th className="w-36 px-3 py-2 font-semibold">Actor</th>
+              <th className="w-36 px-3 py-2 font-semibold">Timing</th>
+              <th className="w-28 px-3 py-2 font-semibold">Updated</th>
+              <th className="w-24 px-3 py-2 text-right font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody>
             {jobs.map((job) => (
-              <tr
+              <DesktopJobRow
                 key={job.id}
-                className="cursor-pointer border-b border-border hover:bg-slate-50"
-                onClick={() => onViewJob(job.id)}
-              >
-                <td className="px-2 py-3 font-mono">#{job.id}</td>
-                <td className="px-2 py-3">
-                  <StatusBadge status={job.status} />
-                </td>
-                <td className="px-2 py-3">
-                  <div className="font-mono">{job.repo ?? job.work_key}</div>
-                  <div className="text-xs text-muted">thread {job.thread ?? "n/a"}</div>
-                </td>
-                <td className="px-2 py-3">
-                  <div>{job.action}</div>
-                  <div className="text-xs text-muted">{job.intent}</div>
-                </td>
-                <td className="px-2 py-3">
-                  <ActorLabel actor={job.trigger_actor} avatarUrl={job.trigger_actor_avatar_url} />
-                </td>
-                <td className="px-2 py-3">{job.attempts}</td>
-                <td className="px-2 py-3">{formatSeconds(queueWaitSeconds(job, now))}</td>
-                <td className="px-2 py-3">{formatSeconds(jobRuntimeSeconds(job, now))}</td>
-                <td className="px-2 py-3 font-mono text-xs"><TimeText value={job.updated_at} compact relative now={now} /></td>
-                <td className="px-2 py-3 text-right">
-                  <div className="inline-flex items-center gap-1">
-                    <RetryJobButton jobId={job.id} canRetry={canRetryFromList && isRetryableStatus(job.status)} retrying={retryingJobId === job.id} onRetry={retryJobFromList} compact />
-                    <DismissJobButton jobId={job.id} canDismiss={canDismissFromList && isRetryableStatus(job.status)} dismissing={dismissingJobId === job.id} onDismiss={dismissJobFromList} compact />
-                  </div>
-                </td>
-              </tr>
+                job={job}
+                now={now}
+                onViewJob={onViewJob}
+                canRetry={canRetryFromList && isRetryableStatus(job.status) && job.decision === "auto_trusted"}
+                retrying={retryingJobId === job.id}
+                onRetry={retryJobFromList}
+                canDismiss={canDismissFromList && isDismissableStatus(job.status)}
+                dismissing={dismissingJobId === job.id}
+                onDismiss={dismissJobFromList}
+                canCancel={Boolean(onCancel && canCancelJob(job, user))}
+                cancelling={cancellingJobId === job.id}
+                onCancel={cancelJobFromList}
+              />
             ))}
           </tbody>
         </table>
-      </div>
+      </LazyScrollFrame>
     </>
+  );
+}
+
+function DesktopJobRow({
+  job,
+  now,
+  onViewJob,
+  canRetry,
+  retrying,
+  onRetry,
+  canDismiss,
+  dismissing,
+  onDismiss,
+  canCancel,
+  cancelling,
+  onCancel,
+}: {
+  job: Job;
+  now: number;
+  onViewJob: (id: number) => void;
+  canRetry: boolean;
+  retrying: boolean;
+  onRetry: (jobId: number) => Promise<void>;
+  canDismiss: boolean;
+  dismissing: boolean;
+  onDismiss: (jobId: number) => Promise<void>;
+  canCancel: boolean;
+  cancelling: boolean;
+  onCancel: (jobId: number, reason?: string) => Promise<void>;
+}) {
+  return (
+    <tr className="cursor-pointer border-b border-border align-top hover:bg-slate-50" onClick={() => onViewJob(job.id)}>
+      <td className="min-w-0 px-3 py-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="mt-0.5 shrink-0 font-mono text-xs font-semibold text-muted">#{job.id}</span>
+          <div className="min-w-0 space-y-1">
+            <div className="line-clamp-2 text-sm font-semibold leading-snug text-foreground [overflow-wrap:anywhere]" title={job.subject}>
+              {job.subject}
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+              <span className="min-w-0 max-w-full truncate font-mono">{job.repo ?? job.work_key}</span>
+              <span className="shrink-0">thread {job.thread ?? "n/a"}</span>
+            </div>
+          </div>
+        </div>
+      </td>
+      <td className="px-3 py-3">
+        <StatusBadge status={job.status} />
+      </td>
+      <td className="px-3 py-3">
+        <div className="min-w-0 truncate text-sm text-foreground" title={job.action}>{job.action}</div>
+        <div className="mt-1">
+          <ActionModeBadge intent={job.intent} actionMode={job.action_mode} display="intent" compact />
+        </div>
+      </td>
+      <td className="px-3 py-3">
+        <ActorLabel actor={job.trigger_actor} avatarUrl={job.trigger_actor_avatar_url} />
+      </td>
+      <td className="px-3 py-3 text-xs text-muted">
+        <div className="flex items-center justify-between gap-2">
+          <span>wait</span>
+          <span className="font-mono text-foreground">{formatSeconds(queueWaitSeconds(job, now))}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <span>run</span>
+          <span className="font-mono text-foreground">{formatSeconds(jobRuntimeSeconds(job, now))}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <span>tries</span>
+          <span className="font-mono text-foreground">{job.attempts}</span>
+        </div>
+      </td>
+      <td className="px-3 py-3 font-mono text-xs">
+        <TimeText value={job.updated_at} compact relative now={now} />
+      </td>
+      <td className="px-3 py-3 text-right">
+        <div className="inline-flex items-center gap-1">
+          <RetryJobButton jobId={job.id} canRetry={canRetry} retrying={retrying} onRetry={onRetry} compact />
+          <DismissJobButton jobId={job.id} canDismiss={canDismiss} dismissing={dismissing} onDismiss={onDismiss} compact />
+          <CancelJobButton jobId={job.id} canCancel={canCancel} cancelling={cancelling} onCancel={onCancel} compact />
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function MobileLoadMoreJobs({ hasMore, loading, onLoadMore }: { hasMore: boolean; loading: boolean; onLoadMore?: () => void }) {
+  if (!hasMore && !loading) return null;
+  return (
+    <button
+      className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-semibold text-foreground hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 md:hidden"
+      type="button"
+      disabled={loading || !hasMore}
+      onClick={() => onLoadMore?.()}
+    >
+      <ChevronDown className="h-4 w-4" aria-hidden />
+      {loading ? "Loading more jobs..." : "Load more jobs"}
+    </button>
   );
 }
 
@@ -1881,6 +3567,9 @@ function JobCard({
   canDismiss,
   dismissing,
   onDismiss,
+  canCancel,
+  cancelling,
+  onCancel,
 }: {
   job: Job;
   onViewJob: (id: number) => void;
@@ -1891,6 +3580,9 @@ function JobCard({
   canDismiss: boolean;
   dismissing: boolean;
   onDismiss: (jobId: number) => Promise<void>;
+  canCancel: boolean;
+  cancelling: boolean;
+  onCancel: (jobId: number, reason?: string) => Promise<void>;
 }) {
   return (
     <article className="rounded-md border border-border bg-white shadow-[0_1px_0_rgba(15,23,42,0.03)]">
@@ -1904,6 +3596,7 @@ function JobCard({
             <div className="line-clamp-2 text-sm leading-snug text-foreground">{job.subject}</div>
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
               <span>thread {job.thread ?? "n/a"} · {job.action}</span>
+              <ActionModeBadge intent={job.intent} actionMode={job.action_mode} compact display="intent" />
               <ActorLabel actor={job.trigger_actor} avatarUrl={job.trigger_actor_avatar_url} />
             </div>
           </div>
@@ -1915,10 +3608,11 @@ function JobCard({
           <MiniStat label="Updated" value={<TimeText value={job.updated_at} compact relative now={now} />} />
         </div>
       </button>
-      {canRetry || canDismiss ? (
+      {canRetry || canDismiss || canCancel ? (
         <div className="flex flex-wrap gap-2 border-t border-border px-3 py-2">
           <RetryJobButton jobId={job.id} canRetry={canRetry} retrying={retrying} onRetry={onRetry} />
           <DismissJobButton jobId={job.id} canDismiss={canDismiss} dismissing={dismissing} onDismiss={onDismiss} />
+          <CancelJobButton jobId={job.id} canCancel={canCancel} cancelling={cancelling} onCancel={onCancel} />
         </div>
       ) : null}
     </article>
@@ -1999,6 +3693,44 @@ function DismissJobButton({
   );
 }
 
+function CancelJobButton({
+  jobId,
+  canCancel,
+  cancelling,
+  onCancel,
+  compact = false,
+}: {
+  jobId: number;
+  canCancel: boolean;
+  cancelling: boolean;
+  onCancel: (jobId: number, reason?: string) => Promise<void>;
+  compact?: boolean;
+}) {
+  if (!canCancel) return null;
+  const label = cancelling ? "Cancelling..." : "Cancel";
+  return (
+    <button
+      className={cn(
+        "inline-flex h-8 items-center justify-center gap-2 rounded-md border border-red-200 bg-red-50 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60",
+        compact ? "w-8 px-0" : "px-3",
+      )}
+      type="button"
+      disabled={cancelling}
+      aria-label={`Cancel job #${jobId}`}
+      title={`Cancel job #${jobId}`}
+      onClick={async (event) => {
+        event.stopPropagation();
+        const reason = window.prompt(`Cancel job #${jobId}? Optional reason:`);
+        if (reason === null) return;
+        await onCancel(jobId, reason);
+      }}
+    >
+      <X className="h-4 w-4" aria-hidden />
+      <span className={cn(compact && "sr-only")}>{label}</span>
+    </button>
+  );
+}
+
 function ActorLabel({ actor, avatarUrl, framed = false }: { actor: string | null | undefined; avatarUrl?: string | null; framed?: boolean }) {
   const avatar = avatarUrl ? (
     <img className="h-4 w-4 shrink-0 rounded-full bg-slate-100" src={safeExternalUrl(avatarUrl)} alt={actor ? `${actor} avatar` : ""} referrerPolicy="no-referrer" />
@@ -2017,6 +3749,67 @@ function ActorLabel({ actor, avatarUrl, framed = false }: { actor: string | null
   return <span className="inline-flex min-w-0 max-w-full items-center gap-1 font-mono text-xs text-muted">{content}</span>;
 }
 
+function modelRouteLabel(route: JobModelRoute | null | undefined) {
+  if (!route) return "n/a";
+  if (route.model && route.thinking) return `${route.model} · ${route.thinking}`;
+  if (route.model) return route.model;
+  if (route.thinking) return `thinking ${route.thinking}`;
+  return route.summary || "OpenClaw default";
+}
+
+function modelRouteModel(route: JobModelRoute | null | undefined) {
+  return route?.model ?? "OpenClaw default";
+}
+
+function modelRouteThinking(route: JobModelRoute | null | undefined) {
+  return route?.thinking ?? "OpenClaw default";
+}
+
+function modelRouteSource(route: JobModelRoute | null | undefined) {
+  if (!route) return "n/a";
+  return route.configured ? "configured" : route.summary;
+}
+
+function ModelRoutePill({ route }: { route: JobModelRoute | null | undefined }) {
+  const label = modelRouteLabel(route);
+  const title = route?.summary || label;
+  return (
+    <span className="inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md border border-border bg-white px-2 text-xs font-semibold text-muted" title={title}>
+      <Brain className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="truncate font-mono">{label}</span>
+    </span>
+  );
+}
+
+function actionModeLabel(intent: string | null | undefined, actionMode?: string | null) {
+  const mode = actionMode || (intent === "work_allowed" ? "fix_allowed" : "review_only");
+  const isWork = mode === "fix_allowed" || (!actionMode && intent === "work_allowed");
+  if (isWork) return { mode, intentLabel: "work_allowed", title: "Work allowed" };
+  return { mode, intentLabel: "review_only", title: "Review only" };
+}
+
+function ActionModeBadge({ intent, actionMode, compact = false, display = "mode" }: { intent: string | null | undefined; actionMode?: string | null; compact?: boolean; display?: "mode" | "intent" }) {
+  const mode = actionModeLabel(intent, actionMode);
+  const Icon = mode.intentLabel === "work_allowed" ? Wrench : Eye;
+  const text = display === "intent" ? mode.intentLabel : mode.mode;
+  return (
+    <span
+      className={cn(
+        "inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md border px-2 text-xs font-semibold",
+        mode.intentLabel === "work_allowed"
+          ? "border-blue-200 bg-blue-50 text-blue-700"
+          : "border-violet-200 bg-violet-50 text-violet-700",
+        compact && "min-h-5 px-1.5 text-[11px]",
+      )}
+      title={`${mode.title}: ${mode.mode}`}
+      aria-label={`${mode.title}: ${text}`}
+    >
+      <Icon className={cn("h-3.5 w-3.5 shrink-0", compact && "h-3 w-3")} aria-hidden />
+      <span className="truncate font-mono">{text}</span>
+    </span>
+  );
+}
+
 function JobDetail({ job, session, sessionEvents, transcript, now, compact = false }: { job: Job; session: SessionCorrelation | undefined; sessionEvents: SessionEvent[] | undefined; transcript: TranscriptEntry[] | undefined; now: number; compact?: boolean }) {
   const shareHref = jobPath(job.id);
   const eventRows = sessionEvents ?? [];
@@ -2027,23 +3820,40 @@ function JobDetail({ job, session, sessionEvents, transcript, now, compact = fal
   const liveWait = queueWaitSeconds(job, now);
   return (
     <div className="grid min-w-0 gap-4">
-      <div className="grid gap-2">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="sticky top-0 z-20 -mx-3 -mt-3 grid gap-2 border-b border-border bg-panel/95 px-3 py-2 shadow-sm backdrop-blur sm:-mx-4 sm:-mt-4 sm:px-4" aria-label="Sticky job header">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <StatusBadge status={job.status} />
-          <a className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-xs font-semibold text-foreground hover:bg-slate-50" href={shareHref}>
+          <a className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-white px-2 text-xs font-semibold text-foreground hover:bg-slate-50" href={shareHref}>
             <Link className="h-3.5 w-3.5" aria-hidden />
             Job #{job.id}
           </a>
           <ActorLabel actor={job.trigger_actor} avatarUrl={job.trigger_actor_avatar_url} framed />
+          <span className="min-w-0 break-words font-mono text-xs text-muted [overflow-wrap:anywhere]">{job.work_key}</span>
         </div>
-        <div className="min-w-0 break-words font-mono text-sm [overflow-wrap:anywhere]">{job.work_key}</div>
-        <p className="min-w-0 break-words text-sm text-muted [overflow-wrap:anywhere]">{job.subject}</p>
+        <div className="grid min-w-0 gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(280px,auto)] lg:items-start">
+          <p className="min-w-0 break-words text-sm text-muted [overflow-wrap:anywhere]">{job.subject}</p>
+          <div className="grid min-w-0 gap-1">
+            <h3 className="text-xs font-semibold text-muted">GitHub links</h3>
+            {job.github_urls.length > 0 ? <GitHubLinkList urls={job.github_urls} compact /> : <p className="text-xs text-muted">No links recorded.</p>}
+          </div>
+        </div>
       </div>
       <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-3")}>
         <MiniStat label="Queue wait" value={formatSeconds(liveWait)} />
         <MiniStat label={job.status === "running" ? "Running for" : "Runtime"} value={formatSeconds(liveRuntime)} />
         <MiniStat label="Coalesced" value={String(job.coalesced_count)} />
       </div>
+      {job.queue_state === "serialized_by_work_key" ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Serialized behind running job #{job.blocked_by_job_id} for this work key.
+        </p>
+      ) : null}
+      <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-3")}>
+        <MiniStat label="Model" value={modelRouteModel(job.model_route)} />
+        <MiniStat label="Reasoning" value={modelRouteThinking(job.model_route)} />
+        <MiniStat label="Route" value={modelRouteSource(job.model_route)} />
+      </div>
+      <IntentClassifierPanel job={job} compact={compact} />
       <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-2 xl:grid-cols-4")}>
         <MiniStat label="Created" value={<TimeText value={job.created_at} compact relative now={now} />} />
         <MiniStat label="Started" value={job.started_at ? <TimeText value={job.started_at} compact relative now={now} /> : "n/a"} />
@@ -2108,23 +3918,59 @@ function JobDetail({ job, session, sessionEvents, transcript, now, compact = fal
           )}
         </div>
       </div>
-      <div>
-        <h3 className="mb-2 text-sm font-semibold">GitHub links</h3>
-        <ul className="grid gap-2 text-sm">
-          {job.github_urls.length > 0 ? (
-            job.github_urls.map((url) => (
-              <li key={url}>
-                <a className="break-all text-primary hover:underline [overflow-wrap:anywhere]" href={safeExternalUrl(url)} rel="noreferrer" target="_blank">
-                  <ExternalLink className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
-                  {url}
-                </a>
-              </li>
-            ))
-          ) : (
-            <li className="text-muted">No links recorded.</li>
-          )}
-        </ul>
+    </div>
+  );
+}
+
+function IntentClassifierPanel({ job, compact = false }: { job: Job; compact?: boolean }) {
+  const classifier = job.intent_classifier ?? null;
+  const llm = classifier?.llm ?? {};
+  const parser = classifier?.parser ?? {};
+  const confidence = typeof llm.confidence === "number" ? `${Math.round(llm.confidence * 100)}%` : "n/a";
+  return (
+    <div className="grid gap-2">
+      <h3 className="text-sm font-semibold">Action mode</h3>
+      <div className={cn("grid gap-2 text-sm sm:gap-3", compact ? "grid-cols-1" : "grid-cols-2 xl:grid-cols-4")}>
+        <MiniStat label="Mode" value={<ActionModeBadge intent={job.intent} actionMode={job.action_mode} />} />
+        <MiniStat label="Intent" value={job.intent} />
+        <MiniStat label="Addressed" value={classifier ? yesNo(llm.addressed_to_agent) : "n/a"} />
+        <MiniStat label="Write" value={classifier ? llm.write_permission ?? "none" : job.intent === "work_allowed" ? "allowed" : "none"} />
       </div>
+      {classifier ? (
+        <div className="grid gap-2 rounded-md border border-border bg-panel p-3 text-xs">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <DetailPair label="Classifier" value={classifier.enabled ? "enabled" : "disabled"} />
+            <DetailPair label="Applied" value={yesNo(llm.applied)} />
+            <DetailPair label="Confidence" value={confidence} />
+            <DetailPair label="Parser" value={`${parser.action ?? "n/a"} / ${parser.work_intent ?? "n/a"}`} />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <DetailPair label="LLM" value={`${llm.action ?? "n/a"} / ${llm.work_intent ?? "n/a"}`} />
+            <DetailPair label="Scope" value={llm.scope || "n/a"} />
+          </div>
+          {llm.main_request ? <DetailPair label="Main request" value={llm.main_request} /> : null}
+          {llm.subordinate_reason ? <DetailPair label="Subordinate reason" value={llm.subordinate_reason} /> : null}
+          {llm.reason ? <DetailPair label="Reason" value={llm.reason} /> : null}
+          {classifier.error ? <DetailPair label="Error" value={classifier.error} tone="danger" /> : null}
+        </div>
+      ) : (
+        <p className="text-xs text-muted">No intent classifier metadata recorded for this job.</p>
+      )}
+    </div>
+  );
+}
+
+function yesNo(value: boolean | undefined) {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  return "n/a";
+}
+
+function DetailPair({ label, value, tone = "neutral" }: { label: string; value: React.ReactNode; tone?: "neutral" | "danger" }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] font-semibold uppercase text-muted">{label}</div>
+      <div className={cn("mt-0.5 min-w-0 break-words font-mono text-xs [overflow-wrap:anywhere]", tone === "danger" ? "text-red-700" : "text-foreground")}>{value}</div>
     </div>
   );
 }
@@ -2233,6 +4079,7 @@ function RuntimeUsageChart({ usage, loading, totalJobs }: { usage: RuntimeUsage 
     label: runtimeBucketLabel(row.bucket, grouping),
   }));
   const totalSeconds = rows.reduce((total, row) => total + row.seconds, 0);
+  const totalRuns = rows.reduce((total, row) => total + (row.runs ?? row.jobs), 0);
   if (loading && data.length === 0) return <EmptyState text="Loading runtime usage..." />;
   if (data.length === 0) return <EmptyState text={totalJobs > 0 ? "No jobs have recorded runtime yet." : "No job history available."} />;
   return (
@@ -2240,7 +4087,7 @@ function RuntimeUsageChart({ usage, loading, totalJobs }: { usage: RuntimeUsage 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm text-muted">
           <TimerReset className="h-4 w-4" aria-hidden />
-          <span>{formatRuntimeUsageSeconds(totalSeconds)} consumed across {rows.reduce((total, row) => total + row.jobs, 0)} job{rows.reduce((total, row) => total + row.jobs, 0) === 1 ? "" : "s"}</span>
+          <span>{formatRuntimeUsageSeconds(totalSeconds)} consumed across {totalRuns} run{totalRuns === 1 ? "" : "s"}</span>
         </div>
         <div className="inline-flex h-8 rounded-md border border-border bg-white p-0.5" aria-label="Runtime grouping">
           {(["day", "month"] as const).map((value) => (
@@ -2261,14 +4108,17 @@ function RuntimeUsageChart({ usage, loading, totalJobs }: { usage: RuntimeUsage 
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="label" minTickGap={16} tick={{ fontSize: 11 }} />
             <YAxis tickFormatter={(value) => formatRuntimeUsageSeconds(Number(value))} />
+            <Legend />
             <Tooltip
               formatter={(value, name) => {
-                if (name === "seconds") return [formatRuntimeUsageSeconds(Number(value)), "runtime"];
+                if (name === "Work") return [formatRuntimeUsageSeconds(Number(value)), "work"];
+                if (name === "Review") return [formatRuntimeUsageSeconds(Number(value)), "review"];
                 return [Number(value), String(name)];
               }}
               labelFormatter={(label) => String(label)}
             />
-            <Bar dataKey="seconds" fill="#0969da" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+            <Bar dataKey="work_seconds" name="Work" stackId="runtime" fill="#0969da" isAnimationActive={false} />
+            <Bar dataKey="review_seconds" name="Review" stackId="runtime" fill="#8250df" radius={[4, 4, 0, 0]} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -2678,8 +4528,8 @@ function EmptyState({ text }: { text: string }) {
   return <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted">{text}</div>;
 }
 
-function Banner({ tone, text }: { tone: "error"; text: string }) {
-  return <div className={cn("rounded-md border p-3 text-sm", tone === "error" && "border-red-300 bg-red-50 text-red-700")}>{text}</div>;
+function Banner({ tone, text }: { tone: "error" | "warning"; text: string }) {
+  return <div className={cn("rounded-md border p-3 text-sm", tone === "error" && "border-red-300 bg-red-50 text-red-700", tone === "warning" && "border-amber-300 bg-amber-50 text-amber-800")}>{text}</div>;
 }
 
 function RefreshButton({ onClick, compactOnMobile = false }: { onClick: () => void; compactOnMobile?: boolean }) {
@@ -2701,21 +4551,34 @@ function RefreshButton({ onClick, compactOnMobile = false }: { onClick: () => vo
 
 export {
   ActorFilter,
+  App,
   AutoupdateNotice,
   Filters,
+  JobDetail,
+  JobDetailPage,
   JobsList,
   ProductMeta,
   SectionNav,
   StatusBadge,
   SystemdUnits,
   UserMenu,
+  WebPushControl,
+  WebhookDeliveryDetailPage,
   KnowledgePage,
   KnowledgeProposals,
+  KnowledgeRules,
+  McpPage,
+  McpTokenList,
   buildJobQuery,
   buildKnowledgeQuery,
   changelogMarkdown,
+  hasActionableAutoupdate,
   isKnowledgePath,
+  isMcpPath,
   isSystemPath,
+  isWebhooksPath,
+  selectedWebhookHookIdFromPath,
+  selectedWebhookDeliveryIdFromPath,
   isRetryableStatus,
   groupSessionEvents,
   groupTranscriptEntries,
@@ -2724,6 +4587,13 @@ export {
   runtimeBucketLabel,
   selectedJobIdFromPath,
   shouldRefreshJobForSessionEvent,
+  urlBase64ToUint8Array,
+  webhookDeliveriesPath,
+  webhookHooksPath,
+  webhookQuerySelection,
+  webhookTimeseriesPath,
+  WebhookPage,
+  WebhookHookDetailPage,
 };
 
 const root = document.getElementById("root");

@@ -4,18 +4,23 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
+
+from jsonschema import Draft202012Validator
 
 from .models import GitHubContext, Notification
 
 ALLOWED_REPO_ROLES = {"owner", "maintainer", "contributor", "reviewer"}
 ALLOWED_THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max"}
+ALLOWED_COMPLEXITIES = {"mechanical", "substantive"}
 ALLOWED_PROMPT_INTENTS = {"review_only"}
 ALLOWED_PROMPT_RULES = {
     "comment_value",
     "feedback_classifier",
     "feedback_learning",
     "human_reviewer",
+    "intent_classifier",
     "pr_metadata",
     "pr_review",
     "prompt_injection",
@@ -25,6 +30,29 @@ ALLOWED_PROMPT_RULES = {
 }
 DEFAULT_REPO_ROLE = "contributor"
 DEFAULT_BOT_LOGINS = frozenset({"pilipilisbot"})
+
+
+def validate_policy_file(path: str | Path) -> None:
+    policy_path = Path(path).expanduser()
+    data = json.loads(policy_path.read_text(encoding="utf-8"))
+    schema = json.loads(files("github_agent_bridge").joinpath("policy.schema.json").read_text(encoding="utf-8"))
+    errors = sorted(Draft202012Validator(schema).iter_errors(data), key=lambda error: list(error.absolute_path))
+    if errors:
+        details = []
+        for error in errors:
+            location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+            details.append(f"{location}: {error.message}")
+        raise ValueError("policy schema validation failed:\n" + "\n".join(details))
+    Policy.from_file(policy_path)
+
+
+def complexity_from_metadata(metadata: dict | None) -> str:
+    classifier = (metadata or {}).get("intent_classifier")
+    llm = classifier.get("llm") if isinstance(classifier, dict) else None
+    if not isinstance(llm, dict) or not llm.get("applied"):
+        return "substantive"
+    complexity = str(llm.get("complexity") or "substantive").lower()
+    return complexity if complexity in ALLOWED_COMPLEXITIES else "substantive"
 
 
 @dataclass(frozen=True)
@@ -51,12 +79,21 @@ class ModelRoute:
             parts.append(f"thinking={self.thinking}")
         return " ".join(parts) if parts else "OpenClaw default model route"
 
+    def overlay(self, override: ModelRoute | None) -> ModelRoute:
+        if override is None:
+            return self
+        return ModelRoute(
+            model=override.model if override.model is not None else self.model,
+            thinking=override.thinking if override.thinking is not None else self.thinking,
+        )
+
 
 @dataclass(frozen=True)
 class RepoModelRoutes:
     default: ModelRoute | None = None
     by_action: dict[str, ModelRoute] = field(default_factory=dict)
     by_intent: dict[str, ModelRoute] = field(default_factory=dict)
+    by_complexity: dict[str, ModelRoute] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -64,6 +101,7 @@ class ModelRoutes:
     default: ModelRoute | None = None
     by_action: dict[str, ModelRoute] = field(default_factory=dict)
     by_intent: dict[str, ModelRoute] = field(default_factory=dict)
+    by_complexity: dict[str, ModelRoute] = field(default_factory=dict)
     by_repo: dict[str, RepoModelRoutes] = field(default_factory=dict)
 
 
@@ -93,6 +131,19 @@ class FeedbackLearning:
     model: str | None = None
     thinking: str = "low"
     session_id: str = "github-agent-bridge-feedback"
+    fallback_to_default_model: bool = True
+
+
+@dataclass(frozen=True)
+class IntentClassifier:
+    enabled: bool = False
+    model: str | None = None
+    thinking: str = "low"
+    min_confidence: float = 0.75
+    only_when_parser_defaulted: bool = True
+    openclaw_bin: str = "openclaw"
+    session_id: str = "github-agent-bridge-intent"
+    timeout: int = 60
 
 
 @dataclass(frozen=True)
@@ -105,6 +156,7 @@ class Policy:
     trusted_teams: set[str] = field(default_factory=set)
     enabled_repos: set[str] = field(default_factory=set)
     enabled_orgs: set[str] = field(default_factory=set)
+    webhook_canary_repos: set[str] = field(default_factory=set)
     auto_actions: set[str] = field(default_factory=lambda: {"archive_notification"})
     ask_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue", "docs_update", "content_change"})
     trusted_auto_actions: set[str] = field(default_factory=lambda: {"reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"})
@@ -116,6 +168,7 @@ class Policy:
     model_routes: ModelRoutes = field(default_factory=ModelRoutes)
     prompt_overrides: PromptOverrides = field(default_factory=PromptOverrides)
     feedback_learning: FeedbackLearning = field(default_factory=FeedbackLearning)
+    intent_classifier: IntentClassifier = field(default_factory=IntentClassifier)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Policy":
@@ -159,6 +212,16 @@ class Policy:
                     routes[str(key).lower()] = route
             return routes
 
+        def complexity_route_map(raw: dict | None, path: str) -> dict[str, ModelRoute]:
+            routes = model_route_map(raw, path)
+            unknown = sorted(set(routes) - ALLOWED_COMPLEXITIES)
+            if unknown:
+                raise ValueError(
+                    f"{path} has unknown complexity value(s): {unknown}; "
+                    f"allowed values: {sorted(ALLOWED_COMPLEXITIES)}"
+                )
+            return routes
+
         def repo_model_routes(raw: dict | None, path: str) -> RepoModelRoutes:
             raw = raw or {}
             if not isinstance(raw, dict):
@@ -167,6 +230,7 @@ class Policy:
                 default=model_route(raw.get("default"), f"{path}.default"),
                 by_action=model_route_map(raw.get("byAction"), f"{path}.byAction"),
                 by_intent=model_route_map(raw.get("byIntent"), f"{path}.byIntent"),
+                by_complexity=complexity_route_map(raw.get("byComplexity"), f"{path}.byComplexity"),
             )
 
         def model_routes(raw: dict | None) -> ModelRoutes:
@@ -180,6 +244,7 @@ class Policy:
                 default=model_route(raw.get("default"), "modelRoutes.default"),
                 by_action=model_route_map(raw.get("byAction"), "modelRoutes.byAction"),
                 by_intent=model_route_map(raw.get("byIntent"), "modelRoutes.byIntent"),
+                by_complexity=complexity_route_map(raw.get("byComplexity"), "modelRoutes.byComplexity"),
                 by_repo={str(repo).lower(): repo_model_routes(value, f"modelRoutes.byRepo.{repo}") for repo, value in by_repo.items()},
             )
 
@@ -238,6 +303,30 @@ class Policy:
                 model=str(model) if model else None,
                 thinking=str(raw.get("thinking", "low")),
                 session_id=str(raw.get("sessionId", "github-agent-bridge-feedback")),
+                fallback_to_default_model=bool(raw.get("fallbackToDefaultModel", True)),
+            )
+
+        def intent_classifier(raw: dict) -> IntentClassifier:
+            raw = raw or {}
+            min_confidence = float(raw.get("minConfidence", 0.75))
+            if min_confidence < 0 or min_confidence > 1:
+                raise ValueError("intentClassifier.minConfidence must be between 0 and 1")
+            timeout = int(raw.get("timeout", 60))
+            if timeout < 1:
+                raise ValueError("intentClassifier.timeout must be at least 1")
+            thinking = str(raw.get("thinking", "low")).lower()
+            if thinking not in ALLOWED_THINKING_LEVELS:
+                raise ValueError(f"intentClassifier.thinking must be one of {sorted(ALLOWED_THINKING_LEVELS)}")
+            model = raw.get("model")
+            return IntentClassifier(
+                enabled=bool(raw.get("enabled", False)),
+                model=str(model) if model else None,
+                thinking=thinking,
+                min_confidence=min_confidence,
+                only_when_parser_defaulted=bool(raw.get("onlyWhenParserDefaulted", True)),
+                openclaw_bin=str(raw.get("openclawBin", "openclaw")),
+                session_id=str(raw.get("sessionId", "github-agent-bridge-intent")),
+                timeout=timeout,
             )
 
         return cls(
@@ -249,6 +338,7 @@ class Policy:
             trusted_teams={t.lower() for t in data.get("trustedTeams", [])},
             enabled_repos={r.lower() for r in data.get("enabledRepos", [])},
             enabled_orgs={o.lower() for o in data.get("enabledOrgs", [])},
+            webhook_canary_repos={r.lower() for r in data.get("webhookCanaryRepos", [])},
             auto_actions=set(actions.get("auto", ["archive_notification"])),
             ask_actions=set(actions.get("ask", ["reply_comment", "open_issue", "docs_update", "content_change"])),
             trusted_auto_actions=set(actions.get("trustedAuto", ["reply_comment", "open_issue", "submit_review", "sync_after_merge", "workflow_run_failed"])),
@@ -262,6 +352,7 @@ class Policy:
             model_routes=model_routes(data.get("modelRoutes", {})),
             prompt_overrides=prompt_overrides(data.get("promptOverrides", {})),
             feedback_learning=feedback_learning(data.get("feedbackLearning", {})),
+            intent_classifier=intent_classifier(data.get("intentClassifier", {})),
         )
 
     def trusted_source(self, n: Notification, ctx: GitHubContext) -> bool:
@@ -278,12 +369,12 @@ class Policy:
         return repo in self.trusted_repos or org in self.trusted_orgs
 
     def repo_enabled(self, repo: str | None) -> bool:
-        if not self.enabled_repos and not self.enabled_orgs:
-            return True
         if not repo:
-            return False
+            return not self.enabled_repos and not self.enabled_orgs
         repo = repo.lower(); org = repo.split("/", 1)[0]
-        return repo in self.enabled_repos or org in self.enabled_orgs
+        if self.enabled_repos:
+            return repo in self.enabled_repos
+        return not self.enabled_orgs or org in self.enabled_orgs
 
     def actor_trusted(self, actor_login: str | None, *, gh_bin: str | None = None) -> bool:
         actor = (actor_login or "").strip().lstrip("@")
@@ -338,22 +429,28 @@ class Policy:
         repo = (repo or "").lower(); org = repo.split("/", 1)[0] if "/" in repo else ""
         return self.repo_roles.get(repo) or self.org_roles.get(org) or DEFAULT_REPO_ROLE
 
-    def model_route_for(self, repo: str | None, action: str, work_intent: str) -> ModelRoute:
+    def model_route_for(
+        self,
+        repo: str | None,
+        action: str,
+        work_intent: str,
+        complexity: str = "substantive",
+    ) -> ModelRoute:
         repo_key = (repo or "").lower()
         action_key = (action or "").lower()
         intent_key = (work_intent or "").lower()
+        complexity_key = (complexity or "substantive").lower()
+        if complexity_key not in ALLOWED_COMPLEXITIES:
+            complexity_key = "substantive"
         repo_routes = self.model_routes.by_repo.get(repo_key)
+        route = ModelRoute().overlay(self.model_routes.default)
         if repo_routes:
-            route = (
-                repo_routes.by_action.get(action_key)
-                or repo_routes.by_intent.get(intent_key)
-                or repo_routes.default
-            )
-            if route:
-                return route
-        return (
-            self.model_routes.by_action.get(action_key)
-            or self.model_routes.by_intent.get(intent_key)
-            or self.model_routes.default
-            or ModelRoute()
-        )
+            route = route.overlay(repo_routes.default)
+        route = route.overlay(self.model_routes.by_intent.get(intent_key))
+        route = route.overlay(self.model_routes.by_complexity.get(complexity_key))
+        route = route.overlay(self.model_routes.by_action.get(action_key))
+        if repo_routes:
+            route = route.overlay(repo_routes.by_intent.get(intent_key))
+            route = route.overlay(repo_routes.by_complexity.get(complexity_key))
+            route = route.overlay(repo_routes.by_action.get(action_key))
+        return route

@@ -4,9 +4,14 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from github_agent_bridge.autoupdate import (
+    _model_smoke_postcheck,
     apply_update_plan,
+    complete_pending_reload,
     default_install_command,
+    latest_release,
     load_update_state,
     plan_systemd_actions,
     plan_update,
@@ -15,6 +20,11 @@ from github_agent_bridge.autoupdate import (
 from github_agent_bridge.models import Notification
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
+
+
+def test_latest_release_reports_missing_gh_as_runtime_error():
+    with pytest.raises(RuntimeError, match=r"No such file or directory.*missing-gh"):
+        latest_release("gisce/github-agent-bridge", gh_bin="/missing-gh")
 
 
 def completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -30,6 +40,66 @@ def release_runner(tag: str, files: list[str]):
         return completed("", 1)
 
     return run
+
+
+def test_model_smoke_postcheck_runs_all_required_routes(tmp_path):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "repoRoutes": {"gisce/erp": {"agent": "gisce-developer"}},
+                "intentClassifier": {
+                    "model": "openai/gpt-5.4-mini",
+                    "thinking": "low",
+                },
+                "feedbackLearning": {
+                    "model": "openai/gpt-5.4-mini",
+                    "thinking": "low",
+                },
+                "modelRoutes": {
+                    "byRepo": {
+                        "gisce/erp": {
+                            "default": {
+                                "model": "openai/gpt-5.6-sol",
+                                "thinking": "xhigh",
+                            }
+                        }
+                    }
+                },
+            }
+        )
+    )
+    calls: list[list[str]] = []
+
+    def runner(args, cwd):
+        command = list(args)
+        calls.append(command)
+        marker = command[command.index("--message") + 1].rsplit(" ", 1)[-1]
+        return completed(json.dumps({"result": {"payloads": [{"text": marker}]}}))
+
+    checks = _model_smoke_postcheck(
+        policy_path,
+        openclaw_bin="/usr/bin/openclaw",
+        runner=runner,
+    )
+
+    assert [check["route"] for check in checks] == [
+        "intent_classifier",
+        "feedback_learning",
+        "erp_substantive",
+    ]
+    assert all(check["ok"] for check in checks)
+    assert [call[call.index("--model") + 1] for call in calls] == [
+        "openai/gpt-5.4-mini",
+        "openai/gpt-5.4-mini",
+        "openai/gpt-5.6-sol",
+    ]
+    assert [call[call.index("--thinking") + 1] for call in calls] == [
+        "low",
+        "low",
+        "xhigh",
+    ]
+    assert all(call[call.index("--agent") + 1] == "gisce-developer" for call in calls)
 
 
 def enqueue_job(q: JobQueue) -> int:
@@ -84,6 +154,46 @@ def test_dashboard_only_update_can_stage_while_jobs_are_active(tmp_path, monkeyp
             "unit": "github-agent-bridge-dashboard.service",
             "reason": "dashboard-only update can reload independently",
         }
+    ]
+
+
+def test_webhook_only_update_restarts_only_ingress(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+
+    plan = plan_update(
+        db,
+        repo_dir=tmp_path,
+        installed_version="1.2.3",
+        runner=release_runner("v1.2.4", ["src/github_agent_bridge/webhook.py"]),
+    )
+
+    assert plan["decision"] == "stage_webhook_reload"
+    assert plan["classification"]["webhook_only"] is True
+    assert plan["service_plan"]["immediate"] == [{
+        "command": "try-restart",
+        "unit": "github-agent-bridge-webhook.service",
+        "reason": "webhook ingress update can reload independently",
+    }]
+
+
+def test_shared_dashboard_and_ingress_update_restarts_both_apis(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+
+    plan = plan_update(
+        db,
+        repo_dir=tmp_path,
+        installed_version="1.2.3",
+        runner=release_runner("v1.2.4", ["src/github_agent_bridge/backend.py"]),
+    )
+
+    assert plan["decision"] == "stage_api_reload"
+    assert [item["unit"] for item in plan["service_plan"]["immediate"]] == [
+        "github-agent-bridge-dashboard.service",
+        "github-agent-bridge-webhook.service",
     ]
 
 
@@ -174,6 +284,22 @@ def test_systemd_unit_changes_require_daemon_reload(tmp_path, monkeypatch):
     assert "github-agent-bridge.service" in plan["service_plan"]["notes"][0]
 
 
+def test_autoupdate_systemd_unit_changes_are_named_in_notes(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+
+    plan = plan_update(
+        db,
+        repo_dir=tmp_path,
+        installed_version="1.2.3",
+        runner=release_runner("v1.2.4", ["systemd/github-agent-bridge-autoupdate.service"]),
+    )
+
+    assert plan["service_plan"]["daemon_reload_required"] is True
+    assert "github-agent-bridge-autoupdate.service" in plan["service_plan"]["notes"][0]
+
+
 def test_systemd_plan_accepts_custom_unit_names():
     plan = plan_systemd_actions(
         "stage_full_reload",
@@ -185,12 +311,12 @@ def test_systemd_plan_accepts_custom_unit_names():
 
 
 def test_default_install_command_targets_release_tag():
-    assert default_install_command("pilipilisbot/github-agent-bridge", "v1.2.4", python_bin="python") == [
+    assert default_install_command("gisce/github-agent-bridge", "v1.2.4", python_bin="python") == [
         "python",
         "-m",
         "pip",
         "install",
-        "git+https://github.com/pilipilisbot/github-agent-bridge.git@v1.2.4",
+        "git+https://github.com/gisce/github-agent-bridge.git@v1.2.4",
     ]
 
 
@@ -214,9 +340,10 @@ def test_apply_update_plan_installs_and_runs_immediate_systemd_actions():
                 ]
             },
         },
-        repo="pilipilisbot/github-agent-bridge",
+        repo="gisce/github-agent-bridge",
         install_command=["python", "-m", "pip", "install", "pkg"],
         runner=runner,
+        run_postchecks=False,
     )
 
     assert execution["applied"] is True
@@ -228,7 +355,7 @@ def test_apply_update_plan_installs_and_runs_immediate_systemd_actions():
     ]
 
 
-def test_apply_update_plan_blocks_migration_execution_before_install():
+def test_apply_update_plan_blocks_migration_execution_without_db():
     calls: list[list[str]] = []
 
     execution = apply_update_plan(
@@ -242,8 +369,150 @@ def test_apply_update_plan_blocks_migration_execution_before_install():
     )
 
     assert execution["applied"] is False
-    assert execution["blocked"] == ["migration_execution_not_supported"]
+    assert execution["blocked"] == ["missing_db_for_migration"]
     assert calls == []
+
+
+def test_apply_update_plan_blocks_migration_execution_while_jobs_are_active(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    enqueue_job(q)
+    calls: list[list[str]] = []
+
+    execution = apply_update_plan(
+        {
+            "target": {"tag_name": "v1.2.4"},
+            "decision": "defer_migration",
+            "queue": {"active_total": 1},
+            "blocked_reason": "active_jobs_block_migration",
+            "installed_version": "1.2.3",
+            "installed_tag": "v1.2.3",
+            "warnings": [],
+            "classification": {
+                "risk": "migration_required",
+                "migration_files": ["src/github_agent_bridge/sql/schema.sql"],
+                "risky_files": [],
+                "systemd_files": [],
+            },
+            "service_plan": {"immediate": [], "deferred": [{"command": "restart", "unit": "github-agent-bridge.service"}]},
+        },
+        db=db,
+        runner=lambda args, cwd: calls.append(list(args)) or completed("ok"),
+    )
+
+    state = load_update_state(q)
+    assert execution["applied"] is False
+    assert execution["blocked"] == ["active_jobs_block_migration"]
+    assert calls == []
+    assert state["degraded"] is False
+    assert state["blocked_reason"] == "active_jobs_block_migration"
+    assert state["migration"]["status"] == "deferred"
+
+
+def test_apply_update_plan_backs_up_migrates_restarts_and_postchecks(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    backup_dir = tmp_path / "backups"
+    calls: list[list[str]] = []
+
+    def runner(args, cwd: Path | None):
+        calls.append(list(args))
+        if args == ["python", "-m", "pip", "install", "pkg"]:
+            return completed("installed")
+        if args == ["migrate-db"]:
+            return completed("migrated")
+        if args[:3] == ["systemctl", "--user", "try-restart"]:
+            return completed("restarted")
+        if args[:3] == ["systemctl", "--user", "restart"]:
+            return completed("restarted")
+        if args[:3] == ["systemctl", "--user", "is-active"]:
+            return completed("active\n")
+        if len(args) >= 3 and args[1] == "-c":
+            return completed("1.2.4\n")
+        return completed("unexpected", returncode=1)
+
+    execution = apply_update_plan(
+        {
+            "target": {"tag_name": "v1.2.4"},
+            "decision": "stage_full_reload",
+            "queue": {"active_total": 0},
+            "blocked_reason": "",
+            "installed_version": "1.2.3",
+            "installed_tag": "v1.2.3",
+            "warnings": [],
+            "classification": {
+                "risk": "migration_required",
+                "migration_files": ["src/github_agent_bridge/sql/schema.sql"],
+                "risky_files": [],
+                "systemd_files": [],
+            },
+            "service_plan": {
+                "immediate": [
+                    {"command": "try-restart", "unit": "github-agent-bridge-dashboard.service"},
+                    {"command": "restart", "unit": "github-agent-bridge.service"},
+                ]
+            },
+        },
+        db=db,
+        backup_dir=backup_dir,
+        install_command=["python", "-m", "pip", "install", "pkg"],
+        migration_command=["migrate-db"],
+        runner=runner,
+    )
+
+    assert execution["applied"] is True
+    assert execution["blocked"] == []
+    assert execution["migration"]["status"] == "complete"
+    assert Path(execution["migration"]["backup"]["path"]).exists()
+    assert execution["postcheck"]["ok"] is True
+    assert ["migrate-db"] in calls
+    assert ["systemctl", "--user", "is-active", "github-agent-bridge.service"] in calls
+
+
+def test_apply_update_plan_records_degraded_state_when_migration_fails(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+
+    def runner(args, cwd: Path | None):
+        if args == ["python", "-m", "pip", "install", "pkg"]:
+            return completed("installed")
+        if args == ["migrate-db"]:
+            return completed("boom", returncode=1)
+        return completed("unexpected", returncode=1)
+
+    execution = apply_update_plan(
+        {
+            "target": {"tag_name": "v1.2.4"},
+            "decision": "stage_full_reload",
+            "queue": {"active_total": 0},
+            "blocked_reason": "",
+            "installed_version": "1.2.3",
+            "installed_tag": "v1.2.3",
+            "warnings": [],
+            "classification": {
+                "risk": "migration_required",
+                "migration_files": ["src/github_agent_bridge/sql/schema.sql"],
+                "risky_files": [],
+                "systemd_files": [],
+            },
+            "service_plan": {"immediate": [{"command": "restart", "unit": "github-agent-bridge.service"}]},
+        },
+        db=db,
+        backup_dir=tmp_path / "backups",
+        install_command=["python", "-m", "pip", "install", "pkg"],
+        migration_command=["migrate-db"],
+        runner=runner,
+    )
+
+    state = load_update_state(q)
+    assert execution["applied"] is False
+    assert execution["blocked"] == ["migration_apply_failed"]
+    assert execution["migration"]["status"] == "rolled_back"
+    assert state["degraded"] is True
+    assert state["blocked_reason"] == "migration_apply_failed"
+    assert state["migration"]["backup"]["path"]
+    assert state["migration"]["rollback"]["source"] == state["migration"]["backup"]["path"]
 
 
 def test_apply_update_plan_stops_before_services_when_install_fails():
@@ -264,7 +533,82 @@ def test_apply_update_plan_stops_before_services_when_install_fails():
         },
         install_command=["python", "-m", "pip", "install", "pkg"],
         runner=runner,
+        run_postchecks=False,
     )
 
     assert execution["applied"] is False
     assert calls == [["python", "-m", "pip", "install", "pkg"]]
+
+
+def test_complete_pending_reload_blocks_until_queue_is_quiet(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    enqueue_job(q)
+    plan = plan_update(
+        db,
+        repo_dir=tmp_path,
+        installed_version="1.2.3",
+        runner=release_runner("v1.2.4", ["src/github_agent_bridge/executor.py"]),
+    )
+    record_update_plan(db, plan)
+
+    completion = complete_pending_reload(db, runner=lambda args, cwd: completed("should not run"))
+
+    assert completion["completed"] is False
+    assert completion["blocked"] == ["active_jobs_block_executor_reload"]
+    assert completion["commands"] == []
+    assert load_update_state(q)["executor_reload_pending"] is True
+    assert load_update_state(q)["queue"]["active_total"] == 1
+
+
+def test_complete_pending_reload_runs_deferred_actions_and_clears_state(tmp_path, monkeypatch):
+    monkeypatch.setattr("github_agent_bridge.actors.github_actor_details_for_context", lambda ctx, *, gh_bin="gh": None)
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job_id = enqueue_job(q)
+    plan = plan_update(
+        db,
+        repo_dir=tmp_path,
+        installed_version="1.2.3",
+        runner=release_runner("v1.2.4", ["src/github_agent_bridge/executor.py"]),
+    )
+    record_update_plan(db, plan)
+    q.finish(job_id, "done", "finished")
+    calls: list[list[str]] = []
+
+    completion = complete_pending_reload(
+        db,
+        systemctl_bin="systemctl-test",
+        runner=lambda args, cwd: calls.append(list(args)) or completed("ok"),
+    )
+
+    state = load_update_state(q)
+    assert completion["completed"] is True
+    assert completion["blocked"] == []
+    assert calls == [["systemctl-test", "--user", "restart", "github-agent-bridge.service"]]
+    assert state["executor_reload_pending"] is False
+    assert state["decision"] == "noop"
+    assert state["service_plan"]["deferred"] == []
+    assert state["completion"]["commands"][0]["unit"] == "github-agent-bridge.service"
+
+
+def test_complete_pending_reload_refuses_migration_state(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.set_state(
+        "autoupdate",
+        json.dumps(
+            {
+                "executor_reload_pending": True,
+                "classification": {"migration_files": ["src/github_agent_bridge/sql/schema.sql"]},
+                "service_plan": {"deferred": [{"command": "restart", "unit": "github-agent-bridge.service"}]},
+            }
+        ),
+    )
+
+    completion = complete_pending_reload(db, runner=lambda args, cwd: completed("should not run"))
+
+    assert completion["completed"] is False
+    assert completion["blocked"] == ["migration_completion_not_supported"]
+    assert completion["commands"] == []

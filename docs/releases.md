@@ -29,6 +29,10 @@ When commits land on `main`, the `release` workflow:
 8. creates a GitHub Release;
 9. builds `sdist`/wheel artifacts and uploads them to the GitHub Release.
 
+Release runs are serialized. If another commit reaches `main` before an older
+run starts publishing, the stale run exits successfully and leaves the release
+to the run for the current branch head.
+
 No PyPI publish is configured yet.
 
 ## Commit convention

@@ -21,6 +21,20 @@ FEEDBACK_DECISIONS = {"auto_trusted", "ask"}
 PROMPT_RULES_PACKAGE = "github_agent_bridge.prompt_rules"
 
 
+def is_feedback_candidate(ctx: GitHubContext, action: str, decision: str) -> bool:
+    if decision in FEEDBACK_DECISIONS and action in ACTIONABLE_FEEDBACK_ACTIONS:
+        return True
+    # A pull request review can contain reusable feedback even when the intent
+    # classifier correctly decides that it does not ask the agent to act.
+    # Capture it for the feedback classifier without dispatching a job.
+    return (
+        ctx.review_id is not None
+        and ctx.target_kind == "review"
+        and action == "archive_notification"
+        and decision == "auto"
+    )
+
+
 def load_prompt_rule(name: str) -> str:
     return resources.files(PROMPT_RULES_PACKAGE).joinpath(name).read_text(encoding="utf-8").strip() + "\n"
 
@@ -74,7 +88,7 @@ def capture_feedback(
     This deliberately does not synthesize rules. The bridge records auditable
     evidence; only curated rows in feedback_rules are injected into agents.
     """
-    if decision not in FEEDBACK_DECISIONS or action not in ACTIONABLE_FEEDBACK_ACTIONS:
+    if not is_feedback_candidate(ctx, action, decision):
         return False
 
     repo = ctx.repo or "unknown/repo"
@@ -123,7 +137,13 @@ def capture_feedback(
 
 
 def pending_events(db_path: str | Path, scope: str = "", limit: int = 10) -> list[dict[str, Any]]:
-    clauses = ["NOT EXISTS (SELECT 1 FROM feedback_rule_proposals p WHERE p.event_id=feedback_events.id)"]
+    clauses = [
+        """NOT EXISTS (
+            SELECT 1 FROM feedback_rule_proposals p
+            WHERE p.event_id=feedback_events.id
+            AND p.status != 'error'
+        )"""
+    ]
     args: list[Any] = []
     if scope:
         clauses.append("(scope=? OR scope LIKE ?)")
@@ -198,6 +218,11 @@ def _openclaw_text_from_json(raw: str) -> str:
         value = data.get(key)
         if isinstance(value, str) and value.strip():
             return value
+    payloads = data.get("payloads")
+    if isinstance(payloads, list):
+        for payload in payloads:
+            if isinstance(payload, dict) and isinstance(payload.get("text"), str) and payload["text"].strip():
+                return payload["text"]
     if isinstance(data.get("result"), dict):
         payloads = data["result"].get("payloads")
         if isinstance(payloads, list):
@@ -241,6 +266,12 @@ def session_id_for_agent(base_session_id: str, agent: str | None) -> str:
         return base_session_id
     suffix = re.sub(r"[^A-Za-z0-9_.-]+", "-", agent).strip("-")
     return f"{base_session_id}-{suffix}" if suffix else base_session_id
+
+
+def session_id_for_event(base_session_id: str, agent: str | None, event_id: str) -> str:
+    agent_session_id = session_id_for_agent(base_session_id, agent)
+    event_suffix = short_hash(event_id)
+    return f"{agent_session_id}-{event_suffix}"
 
 
 def classify_event_with_llm(
@@ -352,7 +383,7 @@ def store_proposal(
     return next(item for item in list_proposals(db_path, status="", limit=100) if item["id"] == pid)
 
 
-def approve_proposal(db_path: str | Path, proposal_id: str) -> dict[str, Any] | None:
+def approve_proposal(db_path: str | Path, proposal_id: str, *, react: bool = False, gh_bin: str = "gh") -> dict[str, Any] | None:
     now = utc_now()
     with _connect(db_path) as con:
         row = con.execute("SELECT * FROM feedback_rule_proposals WHERE id=?", (proposal_id,)).fetchone()
@@ -360,6 +391,8 @@ def approve_proposal(db_path: str | Path, proposal_id: str) -> dict[str, Any] | 
             return None
         con.execute("UPDATE feedback_rule_proposals SET status='approved', updated_at=?, error=NULL WHERE id=?", (now, proposal_id))
     add_rule(db_path, row["scope"], row["type"], row["rule"], float(row["confidence"]), [row["event_id"], proposal_id])
+    if react:
+        react_to_feedback_event(db_path, row["event_id"], gh_bin=gh_bin)
     return get_proposal(db_path, proposal_id)
 
 
@@ -385,6 +418,62 @@ def delete_rule(db_path: str | Path, rule_id: str) -> bool:
         return cur.rowcount > 0
 
 
+def validate_rule_scope(scope: str) -> str:
+    normalized = (scope or "").strip().lower()
+    if normalized == "global":
+        return normalized
+    if normalized.startswith("org:"):
+        org = normalized.removeprefix("org:").strip()
+        if org and "/" not in org:
+            return f"org:{org}"
+    if normalized.startswith("repo:"):
+        repo = normalized.removeprefix("repo:").strip()
+        if repo.count("/") == 1 and all(part.strip() for part in repo.split("/", 1)):
+            return f"repo:{repo}"
+    raise ValueError("scope must be global, org:<owner>, or repo:<owner>/<name>")
+
+
+def update_rule_scope(db_path: str | Path, rule_id: str, scope: str) -> dict[str, Any] | None:
+    new_scope = validate_rule_scope(scope)
+    with _connect(db_path) as con:
+        row = con.execute("SELECT * FROM feedback_rules WHERE id=?", (rule_id,)).fetchone()
+        if not row:
+            return None
+        if row["scope"] == new_scope:
+            return _rule_dict(con, row)
+
+        new_id = canonical_key(new_scope, row["type"], row["rule"])
+        source_events = json.loads(row["source_events_json"] or "[]")
+        existing = con.execute("SELECT * FROM feedback_rules WHERE id=?", (new_id,)).fetchone()
+        if existing and existing["id"] != rule_id:
+            merged_events = sorted(set(json.loads(existing["source_events_json"] or "[]") + source_events))
+            con.execute(
+                """UPDATE feedback_rules
+                SET confidence=?, created_at=?, last_seen=?, source_events_json=?, observations=?
+                WHERE id=?""",
+                (
+                    max(float(existing["confidence"]), float(row["confidence"])),
+                    min(str(existing["created_at"]), str(row["created_at"])),
+                    max(str(existing["last_seen"]), str(row["last_seen"])),
+                    json.dumps(merged_events, ensure_ascii=False, sort_keys=True),
+                    int(existing["observations"]) + int(row["observations"]),
+                    existing["id"],
+                ),
+            )
+            con.execute("DELETE FROM feedback_rules WHERE id=?", (rule_id,))
+            merged = con.execute("SELECT * FROM feedback_rules WHERE id=?", (new_id,)).fetchone()
+            return _rule_dict(con, merged) if merged else None
+
+        con.execute(
+            """UPDATE feedback_rules
+            SET id=?, scope=?
+            WHERE id=?""",
+            (new_id, new_scope, rule_id),
+        )
+        updated = con.execute("SELECT * FROM feedback_rules WHERE id=?", (new_id,)).fetchone()
+        return _rule_dict(con, updated) if updated else None
+
+
 def reaction_endpoint(ctx: GitHubContext) -> str | None:
     if not ctx.repo:
         return None
@@ -398,7 +487,11 @@ def reaction_endpoint(ctx: GitHubContext) -> str | None:
 
 
 def react_to_feedback_comment(event: dict[str, Any], gh_bin: str = "gh") -> bool:
-    ctx = extract_github_context(str(event.get("comment") or ""))
+    ctx = _github_context_from_event(event)
+    if ctx.review_id and not ctx.review_comment_id:
+        resolved = resolve_review_comment_source(event, gh_bin=gh_bin)
+        if resolved:
+            ctx = resolved
     endpoint = reaction_endpoint(ctx)
     if not endpoint:
         return False
@@ -425,6 +518,15 @@ def react_to_feedback_comment(event: dict[str, Any], gh_bin: str = "gh") -> bool
     return result.returncode == 0
 
 
+def react_to_feedback_event(db_path: str | Path, event_id: str, gh_bin: str = "gh") -> bool:
+    with _connect(db_path) as con:
+        row = con.execute("SELECT * FROM feedback_events WHERE id=?", (event_id,)).fetchone()
+        if not row:
+            return False
+        event = _enrich_event(con, _event_dict(row))
+    return react_to_feedback_comment(event, gh_bin=gh_bin)
+
+
 def learn_from_events(
     db_path: str | Path,
     openclaw_bin: str = "openclaw",
@@ -437,14 +539,16 @@ def learn_from_events(
     auto_approve_confidence: float = 0.8,
     timeout: int = 180,
     prompt_template: str | None = None,
+    fallback_to_default_model: bool = True,
 ) -> dict[str, Any]:
     events = pending_events(db_path, limit=limit)
     proposals = []
     reacted = 0
     for event in events:
         try:
+            event = persist_resolved_review_comment_source(db_path, event, gh_bin=gh_bin)
             agent = route_agent_for_event(event, policy)
-            event_session_id = session_id_for_agent(session_id, agent)
+            event_session_id = session_id_for_event(session_id, agent, event["id"])
             model_used = model
             try:
                 proposal = classify_event_with_llm(
@@ -458,7 +562,7 @@ def learn_from_events(
                     prompt_template=prompt_template,
                 )
             except Exception as exc:
-                if not model or not is_model_override_not_allowed(exc):
+                if not model or not fallback_to_default_model or not is_model_override_not_allowed(exc):
                     raise
                 model_used = None
                 proposal = classify_event_with_llm(
@@ -506,10 +610,15 @@ def list_proposals(db_path: str | Path, status: str = "", limit: int = 20) -> li
     sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
     args.append(limit)
     with _connect(db_path) as con:
-        return [_proposal_dict(row) for row in con.execute(sql, args)]
+        proposals = []
+        for row in con.execute(sql, args):
+            event_row = con.execute("SELECT * FROM feedback_events WHERE id=?", (row["event_id"],)).fetchone()
+            source_event = _enrich_event(con, _event_dict(event_row)) if event_row else None
+            proposals.append(_proposal_dict(row, source_event=source_event))
+        return proposals
 
 
-def _proposal_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _proposal_dict(row: sqlite3.Row, source_event: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "id": row["id"],
         "event_id": row["event_id"],
@@ -523,6 +632,7 @@ def _proposal_dict(row: sqlite3.Row) -> dict[str, Any]:
         "reason": row["reason"],
         "model": row["model"],
         "error": row["error"],
+        "source_event": source_event,
     }
 
 
@@ -663,6 +773,121 @@ def _first_value(*values: Any) -> Any:
     return None
 
 
+def _github_context_from_event(event: dict[str, Any]) -> GitHubContext:
+    context = event.get("context") if isinstance(event.get("context"), dict) else {}
+    github_context = event.get("github_context")
+    if not isinstance(github_context, dict):
+        github_context = context.get("github_context")
+    if isinstance(github_context, dict):
+        try:
+            return GitHubContext.from_json(json.dumps(github_context))
+        except (TypeError, ValueError):
+            pass
+    return extract_github_context(str(event.get("comment") or ""))
+
+
+def _review_comment_candidates(ctx: GitHubContext, gh_bin: str = "gh") -> list[dict[str, Any]]:
+    if not (ctx.repo and ctx.issue_number and ctx.review_id):
+        return []
+    try:
+        result = subprocess.run(
+            [
+                gh_bin,
+                "api",
+                f"repos/{ctx.repo}/pulls/{ctx.issue_number}/reviews/{ctx.review_id}/comments",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError:
+        return []
+    if result.returncode != 0:
+        return []
+    try:
+        comments = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+    return [item for item in comments if isinstance(item, dict)]
+
+
+def _matching_review_comment(ctx: GitHubContext, text: str, gh_bin: str = "gh") -> dict[str, Any] | None:
+    normalized_text = re.sub(r"\s+", " ", text).strip().lower()
+    candidates = _review_comment_candidates(ctx, gh_bin=gh_bin)
+    if not candidates:
+        return None
+    for comment in candidates:
+        body = str(comment.get("body") or "")
+        normalized_body = re.sub(r"\s+", " ", body).strip().lower()
+        if normalized_body and normalized_body in normalized_text:
+            return comment
+    return None
+
+
+def _context_with_review_comment(ctx: GitHubContext, comment: dict[str, Any]) -> GitHubContext | None:
+    try:
+        review_comment_id = int(comment["id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    html_url = str(comment.get("html_url") or "").strip()
+    urls = [html_url, *[url for url in ctx.urls if url != html_url]] if html_url else ctx.urls
+    return GitHubContext(
+        urls=urls,
+        repo=ctx.repo,
+        issue_number=ctx.issue_number,
+        comment_id=ctx.comment_id,
+        review_id=ctx.review_id,
+        review_comment_id=review_comment_id,
+        commit_comment_id=ctx.commit_comment_id,
+        commit_sha=ctx.commit_sha,
+        target_kind="review_comment",
+        workflow_run_id=ctx.workflow_run_id,
+    )
+
+
+def resolve_review_comment_source(event: dict[str, Any], gh_bin: str = "gh") -> GitHubContext | None:
+    ctx = _github_context_from_event(event)
+    if ctx.review_comment_id or not ctx.review_id:
+        return None
+    comment = _matching_review_comment(ctx, str(event.get("comment") or ""), gh_bin=gh_bin)
+    return _context_with_review_comment(ctx, comment) if comment else None
+
+
+def persist_resolved_review_comment_source(db_path: str | Path, event: dict[str, Any], gh_bin: str = "gh") -> dict[str, Any]:
+    resolved = resolve_review_comment_source(event, gh_bin=gh_bin)
+    if not resolved:
+        return event
+    source_url = resolved.short_url
+    with _connect(db_path) as con:
+        row = con.execute("SELECT context_json FROM feedback_events WHERE id=?", (event["id"],)).fetchone()
+        if not row:
+            return event
+        context = _safe_json_object(row["context_json"])
+        github_context = _safe_json_object(resolved.to_json())
+        context["github_context"] = github_context
+        context["github_urls"] = resolved.urls
+        context["source_url"] = source_url
+        con.execute(
+            "UPDATE feedback_events SET context_json=? WHERE id=?",
+            (json.dumps(context, ensure_ascii=False, sort_keys=True), event["id"]),
+        )
+    enriched = {
+        **event,
+        "github_context": _safe_json_object(resolved.to_json()),
+        "github_urls": resolved.urls,
+        "source_url": source_url,
+    }
+    if isinstance(enriched.get("context"), dict):
+        enriched["context"] = {
+            **enriched["context"],
+            "github_context": enriched["github_context"],
+            "github_urls": resolved.urls,
+            "source_url": source_url,
+        }
+    return enriched
+
+
 def _enrich_event(con: sqlite3.Connection, event: dict[str, Any]) -> dict[str, Any]:
     context = event.get("context") if isinstance(event.get("context"), dict) else {}
     stored = _source_from_stored_context(context)
@@ -704,21 +929,68 @@ def list_rules(db_path: str | Path, scope: str = "", min_confidence: float | Non
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY last_seen DESC, created_at DESC, scope ASC, type ASC, rule ASC"
     with _connect(db_path) as con:
-        return [
-            {
-                "id": row["id"],
-                "scope": row["scope"],
-                "type": row["type"],
-                "confidence": row["confidence"],
-                "rule": row["rule"],
-                "created_at": row["created_at"],
-                "last_seen": row["last_seen"],
-                "source_events": json.loads(row["source_events_json"] or "[]"),
-                "source_event_details": _source_event_details(con, json.loads(row["source_events_json"] or "[]")),
-                "observations": row["observations"],
-            }
-            for row in con.execute(sql, args)
-        ]
+        return [_rule_dict(con, row) for row in con.execute(sql, args)]
+
+
+def rule_scopes_for_repo(repo: str) -> list[str]:
+    normalized = (repo or "").strip().lower()
+    if "/" not in normalized:
+        return ["global"]
+    owner, name = [part.strip() for part in normalized.split("/", 1)]
+    if not owner or not name:
+        return ["global"]
+    return ["global", f"org:{owner}", f"repo:{owner}/{name}"]
+
+
+def list_applicable_rules(db_path: str | Path, repo: str, min_confidence: float | None = None) -> list[dict[str, Any]]:
+    scopes = rule_scopes_for_repo(repo)
+    clauses = []
+    args: list[Any] = []
+    scope_clauses = []
+    for scope in scopes:
+        scope_clauses.append("(scope=? OR scope LIKE ?)")
+        args.extend([scope, f"{scope}:%"])
+    if scope_clauses:
+        clauses.append("(" + " OR ".join(scope_clauses) + ")")
+    if min_confidence is not None:
+        clauses.append("confidence>=?")
+        args.append(min_confidence)
+    sql = "SELECT * FROM feedback_rules"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY last_seen DESC, created_at DESC, scope ASC, type ASC, rule ASC"
+    with _connect(db_path) as con:
+        return [_rule_dict(con, row) for row in con.execute(sql, args)]
+
+
+def _rule_dict(con: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+    source_events = json.loads(row["source_events_json"] or "[]")
+    return {
+        "id": row["id"],
+        "scope": row["scope"],
+        "type": row["type"],
+        "confidence": row["confidence"],
+        "rule": row["rule"],
+        "created_at": row["created_at"],
+        "last_seen": row["last_seen"],
+        "source_events": source_events,
+        "source_event_details": _source_event_details(con, source_events),
+        "observations": row["observations"],
+    }
+
+
+def format_rules_context(repo: str, min_confidence: float, rules: list[dict[str, Any]]) -> str:
+    scope = f"repo:{(repo or 'unknown/repo').strip().lower()}"
+    if not rules:
+        return f"No curated feedback rules matched {scope} at confidence >= {min_confidence}."
+    lines = []
+    for rule in rules:
+        lines.append(
+            f"- [{rule['scope']}] {rule['type']} "
+            f"(confidence {rule['confidence']:.2f}, observations {rule['observations']}): "
+            f"{rule['rule']}"
+        )
+    return "\n".join(lines)
 
 
 def _source_event_details(con: sqlite3.Connection, source_events: list[str]) -> list[dict[str, Any]]:

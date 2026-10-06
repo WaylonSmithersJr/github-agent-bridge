@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -9,10 +10,11 @@ from fastapi.testclient import TestClient
 
 from github_agent_bridge import __version__
 from github_agent_bridge import feedback
-from github_agent_bridge.backend import DashboardConfig, _encode_session, _is_admin, _is_allowed, _session_stream_events, _sign, create_app
-from github_agent_bridge.dashboard_data import get_job_detail, job_session, job_session_events, job_session_transcript, list_job_actors, list_jobs, metrics_summary
+from github_agent_bridge.backend import DashboardConfig, _encode_session, _is_admin, _is_allowed, _journal_stream_events, _session_stream_events, _sign, create_app
+from github_agent_bridge.dashboard_data import JOB_LIST_ORDER_SQL, get_job_detail, job_session, job_session_events, job_session_transcript, jobs_select_sql, list_all_job_actor_logins, list_job_actors, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import GitHubContext, Notification
+from github_agent_bridge.mcp import create_token
 from github_agent_bridge.observability import record_monitor_observation
 from github_agent_bridge.policy import Policy
 from github_agent_bridge.queue import JobQueue
@@ -61,13 +63,23 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["read_only"] is False
+    assert response.json()["dashboard_url"] == "http://testserver"
+    assert response.json()["dashboard_url_source"] == "request"
     assert response.json()["admin_actions"] == [
         "retry_job",
         "dismiss_job",
+        "cancel_job",
         "approve_knowledge_proposal",
         "reject_knowledge_proposal",
+        "update_knowledge_rule_scope",
         "delete_knowledge_rule",
+        "create_mcp_token",
+        "revoke_mcp_token",
+        "ping_webhook",
         "view_autoupdate_plan",
+        "refresh_autoupdate_plan",
+        "apply_autoupdate",
+        "complete_autoupdate_reload",
     ]
     assert response.json()["autoupdate"] == {}
     assert response.json()["metrics"]["pending"] == 1
@@ -75,6 +87,74 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
     assert jobs.json()["jobs"][0]["work_key"] == "gisce/erp#1"
     assert jobs.json()["jobs"][0]["trigger_actor"] is None
     assert jobs.json()["jobs"][0]["trigger_actor_avatar_url"] is None
+    assert jobs.json()["jobs"][0]["model_route"] == {
+        "configured": False,
+        "model": None,
+        "thinking": None,
+        "summary": "n/a",
+    }
+
+
+def test_dashboard_status_reports_configured_public_url(tmp_path):
+    app = create_app(DashboardConfig(db=tmp_path / "bridge.sqlite3", require_auth=False, public_url="https://bridge.example.com/"))
+    client = TestClient(app)
+
+    response = client.get("/api/status", headers={"host": "127.0.0.1:8765"})
+
+    assert response.status_code == 200
+    assert response.json()["dashboard_url"] == "https://bridge.example.com"
+    assert response.json()["dashboard_url_source"] == "configured"
+
+
+def test_dashboard_status_reports_forwarded_public_url(tmp_path):
+    app = create_app(DashboardConfig(db=tmp_path / "bridge.sqlite3", require_auth=False))
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/status",
+        headers={
+            "host": "127.0.0.1:8765",
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "bridge.example.com",
+            "x-forwarded-prefix": "/ops",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["dashboard_url"] == "https://bridge.example.com/ops"
+    assert response.json()["dashboard_url_source"] == "forwarded"
+
+
+def test_dashboard_web_push_config_and_subscription_api(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, require_auth=False, web_push_public_key="public-vapid"))
+    client = TestClient(app)
+    payload = {"endpoint": "https://push.example/sub/1", "keys": {"p256dh": "public-key", "auth": "auth-secret"}}
+
+    config = client.get("/api/web-push/config")
+    created = client.post("/api/web-push/subscriptions", json=payload)
+    removed = client.request("DELETE", "/api/web-push/subscriptions", json={"endpoint": payload["endpoint"]})
+
+    assert config.status_code == 200
+    assert config.json()["configured"] is True
+    assert config.json()["status"]["enabled"] is False
+    assert created.status_code == 200
+    assert created.json()["status"]["enabled"] is True
+    assert created.json()["subscription"]["user_login"] == "test"
+    assert removed.status_code == 200
+    assert removed.json()["removed"] is True
+    assert removed.json()["status"]["enabled"] is False
+
+
+def test_dashboard_web_push_requires_public_key(tmp_path):
+    app = create_app(DashboardConfig(db=tmp_path / "bridge.sqlite3", require_auth=False))
+    client = TestClient(app)
+
+    response = client.post("/api/web-push/subscriptions", json={"endpoint": "https://push.example/sub/1", "keys": {"p256dh": "x", "auth": "y"}})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "web_push_not_configured"
 
 
 def test_dashboard_autoupdate_state_requires_admin_profile(tmp_path):
@@ -95,6 +175,141 @@ def test_dashboard_autoupdate_state_requires_admin_profile(tmp_path):
     assert "view_autoupdate_plan" in admin["admin_actions"]
 
 
+def test_dashboard_autoupdate_refresh_requires_admin_and_records_plan(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    plan = {
+        "installed_version": "0.27.0",
+        "installed_tag": "v0.27.0",
+        "target": {"tag_name": "v0.28.0"},
+        "decision": "stage_full_reload",
+        "executor_reload_pending": True,
+        "blocked_reason": "",
+        "queue": {"active_counts": {}, "active_total": 0},
+        "classification": {"risk": "executor_or_shared", "migration_files": [], "risky_files": [], "systemd_files": []},
+        "service_plan": {"immediate": [], "deferred": []},
+        "warnings": [],
+    }
+    monkeypatch.setattr("github_agent_bridge.backend._dashboard_autoupdate_plan", lambda db: plan)
+
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+    forbidden = client.post("/api/autoupdate/refresh")
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+    response = client.post("/api/autoupdate/refresh")
+
+    assert forbidden.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["state"]["target"]["tag_name"] == "v0.28.0"
+    state = json.loads(JobQueue(db).get_state("autoupdate", ""))
+    assert state["executor_reload_pending"] is False
+    assert "dashboard_applied_at" not in state
+
+
+def test_dashboard_autoupdate_apply_runs_safe_plan_and_records_state(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, require_auth=False))
+    client = TestClient(app)
+    plan = {
+        "installed_version": "0.27.0",
+        "installed_tag": "v0.27.0",
+        "target": {"tag_name": "v0.28.0"},
+        "decision": "stage_full_reload",
+        "executor_reload_pending": True,
+        "blocked_reason": "",
+        "queue": {"active_counts": {}, "active_total": 0},
+        "classification": {"risk": "executor_or_shared", "migration_files": [], "risky_files": [], "systemd_files": []},
+        "service_plan": {"immediate": [], "deferred": []},
+        "warnings": [],
+    }
+    monkeypatch.setattr("github_agent_bridge.backend._dashboard_autoupdate_plan", lambda db: plan)
+    monkeypatch.setattr("github_agent_bridge.backend._dashboard_apply_autoupdate", lambda plan, db: {"applied": True, "blocked": [], "commands": []})
+
+    response = client.post("/api/autoupdate/apply")
+
+    assert response.status_code == 200
+    assert response.json()["execution"]["applied"] is True
+    assert response.json()["state"]["decision"] == "stage_full_reload"
+    assert response.json()["state"]["executor_reload_pending"] is True
+    assert response.json()["state"]["dashboard_applied_at"]
+
+
+def test_dashboard_autoupdate_apply_does_not_arm_completion_when_blocked(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, require_auth=False))
+    client = TestClient(app)
+    plan = {
+        "installed_version": "0.27.0",
+        "installed_tag": "v0.27.0",
+        "target": {"tag_name": "v0.28.0"},
+        "decision": "stage_defer_executor_reload",
+        "executor_reload_pending": True,
+        "blocked_reason": "active_jobs_block_executor_reload",
+        "queue": {"active_counts": {"running": 1}, "active_total": 1},
+        "classification": {"risk": "executor_or_shared", "migration_files": [], "risky_files": [], "systemd_files": []},
+        "service_plan": {"immediate": [], "deferred": []},
+        "warnings": [],
+    }
+    monkeypatch.setattr("github_agent_bridge.backend._dashboard_autoupdate_plan", lambda db: plan)
+    monkeypatch.setattr(
+        "github_agent_bridge.backend._dashboard_apply_autoupdate",
+        lambda plan, db: {"applied": False, "blocked": ["active_jobs_block_executor_reload"], "commands": []},
+    )
+
+    response = client.post("/api/autoupdate/apply")
+
+    assert response.status_code == 409
+    assert response.json()["state"]["executor_reload_pending"] is False
+    assert "dashboard_applied_at" not in response.json()["state"]
+
+
+def test_dashboard_autoupdate_complete_pending_requires_applied_state(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.set_state(
+        "autoupdate",
+        json.dumps(
+            {
+                "executor_reload_pending": True,
+                "target": {"tag_name": "v0.28.0"},
+                "classification": {"migration_files": []},
+                "service_plan": {"deferred": [{"command": "restart", "unit": "github-agent-bridge.service"}]},
+            }
+        ),
+    )
+    app = create_app(DashboardConfig(db=db, require_auth=False))
+    client = TestClient(app)
+    monkeypatch.setattr(
+        "github_agent_bridge.backend.complete_pending_reload",
+        lambda db, systemctl_bin="systemctl": {"completed": True, "blocked": [], "commands": []},
+    )
+
+    response = client.post("/api/autoupdate/complete-pending")
+
+    assert response.status_code == 409
+    assert response.json()["completion"]["blocked"] == ["autoupdate_not_applied"]
+
+
+def test_dashboard_autoupdate_complete_pending_reports_blockers(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.set_state("autoupdate", json.dumps({"dashboard_applied_at": "2026-06-09T19:50:00Z", "executor_reload_pending": True}))
+    app = create_app(DashboardConfig(db=db, require_auth=False))
+    client = TestClient(app)
+    monkeypatch.setattr(
+        "github_agent_bridge.backend.complete_pending_reload",
+        lambda db, systemctl_bin="systemctl": {"completed": False, "blocked": ["active_jobs_block_executor_reload"]},
+    )
+
+    response = client.post("/api/autoupdate/complete-pending")
+
+    assert response.status_code == 409
+    assert response.json()["completion"]["blocked"] == ["active_jobs_block_executor_reload"]
+
+
 def test_dashboard_about_exposes_package_version_and_repository(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     JobQueue(db)
@@ -106,7 +321,7 @@ def test_dashboard_about_exposes_package_version_and_repository(tmp_path):
     assert response.json() == {
         "service": "github-agent-bridge-dashboard",
         "version": __version__,
-        "repository_url": "https://github.com/pilipilisbot/github-agent-bridge",
+        "repository_url": "https://github.com/gisce/github-agent-bridge",
     }
 
 
@@ -150,6 +365,21 @@ def test_dashboard_serves_dedicated_knowledge_frontend_route(tmp_path):
     app = create_app(DashboardConfig(db=db, static_dir=static_dir, require_auth=False))
 
     response = TestClient(app).get("/knowledge")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "root" in response.text
+
+
+def test_dashboard_serves_dedicated_mcp_frontend_route(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html><div id=\"root\"></div>", encoding="utf-8")
+    JobQueue(db)
+    app = create_app(DashboardConfig(db=db, static_dir=static_dir, require_auth=False))
+
+    response = TestClient(app).get("/mcp")
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -251,6 +481,67 @@ def test_dashboard_jobs_can_filter_by_status_repo_action_intent_and_actor(tmp_pa
     assert list_jobs(db, status_filter="pending", actor="ecarreras") == []
 
 
+def test_dashboard_marks_pending_job_serialized_behind_running_work_key(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    running, _ = q.enqueue(notif(uid=1, mid="<1@github.com>"), Policy(trusted_orgs=["gisce"]))
+    assert q.claim_next("worker").id == running.id
+    pending, _ = q.enqueue(
+        notif(uid=2, mid="<2@github.com>", body="@pilipilisbot two https://github.com/gisce/erp/pull/1#issuecomment-20"),
+        Policy(trusted_orgs=["gisce"]),
+    )
+
+    row = next(job for job in list_jobs(db) if job["id"] == pending.id)
+
+    assert row["runnable"] is False
+    assert row["blocked_by_job_id"] == running.id
+    assert row["queue_state"] == "serialized_by_work_key"
+
+
+def test_dashboard_job_owner_can_cancel_running_job(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(from_addr="ecarreras <notifications@github.com>"), Policy(trusted_orgs=["gisce"]))
+    claimed = q.claim_next("worker")
+    assert claimed is not None
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"ecarreras"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "ecarreras"})))
+
+    def fake_cancel(queue, job_id, *, actor, reason):
+        cancelled = queue.mark_cancelled(job_id, actor=actor, reason=reason, signal_detail="sent SIGTERM", followup_url="https://github.com/gisce/erp/issues/1#issuecomment-2")
+        return type("Result", (), {"cancelled": cancelled is not None, "signalled": True, "detail": "sent SIGTERM", "followup_url": "https://github.com/gisce/erp/issues/1#issuecomment-2"})()
+
+    monkeypatch.setattr("github_agent_bridge.backend.cancel_running_job", fake_cancel)
+
+    response = client.post(f"/api/jobs/{job.id}/cancel", json={"reason": "obsolete"})
+
+    assert response.status_code == 200
+    assert response.json()["detail"] == "job_cancelled"
+    assert response.json()["followup_url"] == "https://github.com/gisce/erp/issues/1#issuecomment-2"
+    stored = q.get(job.id)
+    assert stored is not None
+    assert stored.status == "done"
+    assert stored.metadata["cancellation"]["actor"] == "ecarreras"
+    assert stored.metadata["cancellation"]["reason"] == "obsolete"
+
+
+def test_dashboard_cancel_rejects_non_owner_reader(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(from_addr="ecarreras <notifications@github.com>"), Policy(trusted_orgs=["gisce"]))
+    q.claim_next("worker")
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"marc"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "marc"})))
+    monkeypatch.setattr("github_agent_bridge.backend.cancel_running_job", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not cancel")))
+
+    response = client.post(f"/api/jobs/{job.id}/cancel", json={"reason": "nope"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "job_cancel_not_allowed"
+
+
 def test_dashboard_jobs_orders_active_work_before_finished_jobs(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)
@@ -308,10 +599,69 @@ def test_dashboard_jobs_orders_active_work_before_finished_jobs(tmp_path):
     assert [row["id"] for row in list_jobs(db, status_filter="done", limit=10)] == [done_new.id, done_old.id]
 
 
+def test_dashboard_unfiltered_job_list_uses_order_index(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    rows = [
+        (
+            f"gisce/erp#{index}",
+            "gisce/erp",
+            index,
+            "done",
+            "reply_comment",
+            "trusted",
+            "work_allowed",
+            f"Job {index}",
+            f"<{index}@github.com>",
+            "{}",
+            f"2026-01-01T00:{index % 60:02d}:00Z",
+            f"2026-01-01T00:{index % 60:02d}:00Z",
+        )
+        for index in range(200)
+    ]
+    with q.connect() as con:
+        con.executemany(
+            """
+            INSERT INTO jobs (
+                work_key, repo, thread, status, action, decision, work_intent,
+                subject, message_id, context_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        plan = con.execute(
+            f"EXPLAIN QUERY PLAN {jobs_select_sql(con)} ORDER BY {JOB_LIST_ORDER_SQL} LIMIT ?",
+            (12,),
+        ).fetchall()
+
+    details = [row[3] for row in plan]
+    assert any("USING INDEX idx_jobs_dashboard_order" in detail for detail in details)
+    assert all("USE TEMP B-TREE FOR ORDER BY" not in detail for detail in details)
+
+
 def test_dashboard_exposes_job_detail_logs_and_metrics(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)
     job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    with q.connect() as con:
+        metadata = job.metadata | {
+            "intent_classifier": {
+                "enabled": True,
+                "parser": {"action": "reply_comment", "work_intent": "review_only"},
+                "llm": {
+                    "addressed_to_agent": True,
+                    "action": "reply_comment",
+                    "work_intent": "work_allowed",
+                    "write_permission": "state_change_allowed",
+                    "scope": "Update the PR tests.",
+                    "confidence": 0.91,
+                    "reason": "The comment asks the configured agent to modify repository state.",
+                    "applied": True,
+                },
+            }
+        }
+        con.execute("UPDATE jobs SET metadata_json=?, work_intent=? WHERE id=?", (json.dumps(metadata), "work_allowed", job.id))
+    assert q.claim_next("worker-1").id == job.id
     q.finish(job.id, "done", "completed")
 
     detail = get_job_detail(db, job.id)
@@ -319,7 +669,12 @@ def test_dashboard_exposes_job_detail_logs_and_metrics(tmp_path):
     client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
 
     assert detail is not None
+    assert detail["action_mode"] == "fix_allowed"
+    assert detail["intent_classifier"]["llm"]["write_permission"] == "state_change_allowed"
+    assert detail["intent_classifier"]["llm"]["scope"] == "Update the PR tests."
     assert detail["worklog"][0]["phase"] == "queued"
+    assert detail["runs"][0]["result"] == "done"
+    assert detail["runs"][0]["worker_id"] == "worker-1"
     assert metrics["status_counts"]["done"] == 1
     assert list(metrics["by_created_day"].values()) == [1]
     assert client.get(f"/api/jobs/{job.id}/logs").json()["logs"][-1]["phase"] == "done"
@@ -339,26 +694,20 @@ def test_dashboard_metrics_groups_runtime_usage_by_requested_timezone(tmp_path):
         notif(uid=4, mid="<4@github.com>", body="@pilipilisbot https://github.com/gisce/erp/pull/4#issuecomment-40"),
         Policy(trusted_orgs=["gisce"]),
     )
-    q.finish(first.id, "done", "completed")
-    q.finish(second.id, "done", "completed")
-    q.finish(missing_finish.id, "done", "completed")
-    q.finish(invalid_finish.id, "done", "completed")
     with q.connect() as con:
-        con.execute(
-            "UPDATE jobs SET started_at=?, finished_at=? WHERE id=?",
-            ("2026-06-01T23:30:00Z", "2026-06-02T00:30:00Z", first.id),
-        )
-        con.execute(
-            "UPDATE jobs SET started_at=?, finished_at=? WHERE id=?",
-            ("2026-06-02T10:00:00Z", "2026-06-02T10:30:00Z", second.id),
-        )
-        con.execute(
-            "UPDATE jobs SET started_at=?, finished_at=NULL WHERE id=?",
-            ("2026-06-02T11:00:00Z", missing_finish.id),
-        )
-        con.execute(
-            "UPDATE jobs SET started_at=?, finished_at=? WHERE id=?",
-            ("2026-06-02T12:00:00Z", "n/a", invalid_finish.id),
+        con.execute("UPDATE jobs SET work_intent=? WHERE id=?", ("work_allowed", first.id))
+        con.execute("UPDATE jobs SET work_intent=? WHERE id=?", ("review_only", second.id))
+        con.executemany(
+            """INSERT INTO job_runs(
+                job_id,attempt,started_at,finished_at,result,worker_id,session_id
+            ) VALUES(?,?,?,?,?,?,?)""",
+            [
+                (first.id, 1, "2026-06-01T03:20:00Z", "2026-06-01T03:50:00Z", "requeued", "worker-1", "run-1"),
+                (first.id, 2, "2026-06-01T03:55:00Z", "2026-06-01T04:35:00Z", "done", "worker-1", "run-2"),
+                (second.id, 1, "2026-07-01T03:30:00Z", "2026-07-01T04:30:00Z", "done", "worker-2", "run-3"),
+                (missing_finish.id, 1, "2026-06-02T11:00:00Z", None, None, "worker-3", "run-4"),
+                (invalid_finish.id, 1, "2026-06-02T12:00:00Z", "n/a", "done", "worker-4", "run-5"),
+            ],
         )
 
     metrics = metrics_summary(db, timezone_name="America/New_York")
@@ -366,14 +715,102 @@ def test_dashboard_metrics_groups_runtime_usage_by_requested_timezone(tmp_path):
     payload = client.get("/api/metrics/summary", params={"timezone": "America/New_York"}).json()["metrics"]
 
     assert metrics["runtime_usage"]["day"] == [
-        {"bucket": "2026-06-01", "seconds": 3600, "minutes": 60.0, "jobs": 1},
-        {"bucket": "2026-06-02", "seconds": 1800, "minutes": 30.0, "jobs": 1},
+        {
+            "bucket": "2026-05-31",
+            "seconds": 1800,
+            "minutes": 30.0,
+            "runs": 1,
+            "jobs": 1,
+            "work_seconds": 1800,
+            "review_seconds": 0,
+            "work_runs": 1,
+            "review_runs": 0,
+            "work_jobs": 1,
+            "review_jobs": 0,
+        },
+        {
+            "bucket": "2026-06-01",
+            "seconds": 2400,
+            "minutes": 40.0,
+            "runs": 1,
+            "jobs": 1,
+            "work_seconds": 2400,
+            "review_seconds": 0,
+            "work_runs": 1,
+            "review_runs": 0,
+            "work_jobs": 1,
+            "review_jobs": 0,
+        },
+        {
+            "bucket": "2026-06-30",
+            "seconds": 3600,
+            "minutes": 60.0,
+            "runs": 1,
+            "jobs": 1,
+            "work_seconds": 0,
+            "review_seconds": 3600,
+            "work_runs": 0,
+            "review_runs": 1,
+            "work_jobs": 0,
+            "review_jobs": 1,
+        },
     ]
     assert metrics["runtime_usage"]["month"] == [
-        {"bucket": "2026-06", "seconds": 5400, "minutes": 90.0, "jobs": 2},
+        {
+            "bucket": "2026-05",
+            "seconds": 1800,
+            "minutes": 30.0,
+            "runs": 1,
+            "jobs": 1,
+            "work_seconds": 1800,
+            "review_seconds": 0,
+            "work_runs": 1,
+            "review_runs": 0,
+            "work_jobs": 1,
+            "review_jobs": 0,
+        },
+        {
+            "bucket": "2026-06",
+            "seconds": 6000,
+            "minutes": 100.0,
+            "runs": 2,
+            "jobs": 2,
+            "work_seconds": 2400,
+            "review_seconds": 3600,
+            "work_runs": 1,
+            "review_runs": 1,
+            "work_jobs": 1,
+            "review_jobs": 1,
+        },
     ]
-    assert metrics["runtime_seconds"] == {"median": 1800, "p90": 3600, "p99": 3600}
+    assert metrics["runtime_seconds"] == {"median": 2400, "p90": 3600, "p99": 3600}
     assert payload["runtime_usage"] == metrics["runtime_usage"]
+
+
+def test_dashboard_runtime_uses_elapsed_time_across_dst_fallback(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    with q.connect() as con:
+        con.execute(
+            """INSERT INTO job_runs(
+                job_id,attempt,started_at,finished_at,result,worker_id,session_id
+            ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                job.id,
+                1,
+                "2026-11-01T05:30:00Z",
+                "2026-11-01T07:30:00Z",
+                "done",
+                "worker-1",
+                "dst-run",
+            ),
+        )
+
+    metrics = metrics_summary(db, timezone_name="America/New_York")
+
+    assert metrics["runtime_usage"]["day"][0]["bucket"] == "2026-11-01"
+    assert metrics["runtime_usage"]["day"][0]["seconds"] == 7200
 
 
 def test_dashboard_exposes_safe_openclaw_session_correlation(tmp_path):
@@ -392,6 +829,26 @@ def test_dashboard_exposes_safe_openclaw_session_correlation(tmp_path):
     assert session["id"] == f"github-agent-bridge-job-{job.id}"
     assert session["transcript_exposure"] == "redacted_dashboard"
     assert payload["id"] == session["id"]
+
+
+def test_dashboard_exposes_selected_model_route_on_jobs(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    q.claim_next("worker-1")
+    q.add_session_event(job.id, "model_route_selected", "OpenClaw model route selected", "model=openai/gpt-5.4-mini thinking=medium")
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False)))
+
+    list_route = client.get("/api/jobs").json()["jobs"][0]["model_route"]
+    detail_route = client.get(f"/api/jobs/{job.id}").json()["job"]["model_route"]
+
+    assert list_route == {
+        "configured": True,
+        "model": "openai/gpt-5.4-mini",
+        "thinking": "medium",
+        "summary": "model=openai/gpt-5.4-mini thinking=medium",
+    }
+    assert detail_route == list_route
 
 
 def test_dashboard_exposes_redacted_job_session_events(tmp_path):
@@ -565,6 +1022,82 @@ def test_dashboard_sse_streams_live_trajectory_entries_before_session_file(tmp_p
     assert "live trajectory output" in body
 
 
+def test_dashboard_sse_stream_exits_when_shutdown_is_signaled(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+
+    async def stream_until_shutdown():
+        shutdown = asyncio.Event()
+        stream = _session_stream_events(db, job.id, sleep_seconds=60, shutdown_event=shutdown)
+        try:
+            assert "event: session_heartbeat" in await anext(stream)
+            pending_chunk = asyncio.create_task(anext(stream))
+            await asyncio.sleep(0)
+            assert not pending_chunk.done()
+            shutdown.set()
+            with pytest.raises(StopAsyncIteration):
+                await asyncio.wait_for(pending_chunk, timeout=0.5)
+        finally:
+            await stream.aclose()
+
+    asyncio.run(stream_until_shutdown())
+
+
+def test_dashboard_journal_stream_exits_when_shutdown_is_signaled(monkeypatch):
+    closed = False
+
+    async def fake_stream_journal_lines(unit):
+        nonlocal closed
+        try:
+            await asyncio.sleep(60)
+            yield "unreachable"
+        finally:
+            closed = True
+
+    async def stream_until_shutdown():
+        shutdown = asyncio.Event()
+        monkeypatch.setattr("github_agent_bridge.backend.stream_journal_lines", fake_stream_journal_lines)
+        stream = _journal_stream_events("github-agent-bridge-dashboard.service", shutdown_event=shutdown)
+        try:
+            pending_chunk = asyncio.create_task(anext(stream))
+            await asyncio.sleep(0)
+            assert not pending_chunk.done()
+            shutdown.set()
+            with pytest.raises(StopAsyncIteration):
+                await asyncio.wait_for(pending_chunk, timeout=0.5)
+            assert closed is True
+        finally:
+            await stream.aclose()
+
+    asyncio.run(stream_until_shutdown())
+
+
+def test_dashboard_journal_stream_cancels_pending_read_when_client_disconnects(monkeypatch):
+    closed = False
+
+    async def fake_stream_journal_lines(unit):
+        nonlocal closed
+        try:
+            await asyncio.sleep(60)
+            yield "unreachable"
+        finally:
+            closed = True
+
+    async def disconnect_stream():
+        shutdown = asyncio.Event()
+        monkeypatch.setattr("github_agent_bridge.backend.stream_journal_lines", fake_stream_journal_lines)
+        stream = _journal_stream_events("github-agent-bridge-dashboard.service", shutdown_event=shutdown)
+        pending_chunk = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        pending_chunk.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending_chunk
+        assert closed is True
+
+    asyncio.run(disconnect_stream())
+
+
 def test_dashboard_requires_auth_by_default(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     JobQueue(db)
@@ -658,6 +1191,7 @@ def test_dashboard_knowledge_lists_and_admin_moderates_feedback(tmp_path):
         "reply_comment",
         "auto_trusted",
         "review_only",
+        trigger_actor="alice",
     )
     event = feedback.list_events(db, "repo:gisce/erp")[0]
     proposal = feedback.store_proposal(
@@ -695,6 +1229,225 @@ def test_dashboard_knowledge_lists_and_admin_moderates_feedback(tmp_path):
     assert client.get("/api/knowledge", params={"repo": "gisce/erp"}).json()["rules"] == []
 
 
+def test_dashboard_admin_can_change_knowledge_rule_scope(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    rule = feedback.add_rule(db, "repo:gisce/erp", "operating_rule", "Keep knowledge management auditable.", 0.8)
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+
+    forbidden = client.patch(f"/api/knowledge/rules/{rule['id']}", json={"scope": "global"})
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+    updated = client.patch(f"/api/knowledge/rules/{rule['id']}", json={"scope": "global"})
+    invalid = client.patch(f"/api/knowledge/rules/{updated.json()['rule']['id']}", json={"scope": "repo:missing-owner"})
+
+    assert forbidden.status_code == 403
+    assert updated.status_code == 200
+    assert updated.json()["rule"]["scope"] == "global"
+    assert client.get("/api/knowledge").json()["rules"][0]["scope"] == "global"
+    assert client.get("/api/knowledge", params={"repo": "gisce/erp"}).json()["rules"][0]["scope"] == "global"
+    assert invalid.status_code == 400
+
+
+def test_dashboard_user_sees_all_knowledge_and_can_manage_owned_records(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(
+        db,
+        notif(mid="<alice@github.com>"),
+        GitHubContext(["https://github.com/gisce/erp/pull/1#issuecomment-10"], "gisce/erp", 1, comment_id=10),
+        "reply_comment",
+        "auto_trusted",
+        "review_only",
+        trigger_actor="alice",
+    )
+    feedback.capture_feedback(
+        db,
+        notif(mid="<bob@github.com>"),
+        GitHubContext(["https://github.com/other/project/issues/2#issuecomment-20"], "other/project", 2, comment_id=20),
+        "reply_comment",
+        "auto_trusted",
+        "review_only",
+        trigger_actor="bob",
+    )
+    alice_event = feedback.list_events(db, "repo:gisce/erp")[0]
+    bob_event = feedback.list_events(db, "repo:other/project")[0]
+    feedback.add_rule(db, "repo:gisce/erp", "operating_rule", "Alice owned rule.", 0.8, [alice_event["id"]])
+    feedback.add_rule(db, "repo:other/project", "operating_rule", "Bob owned rule.", 0.8, [bob_event["id"]])
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice", "bob"}, admin_users={"admin"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+
+    listing = client.get("/api/knowledge").json()
+
+    assert listing["repositories"] == ["gisce/erp", "other/project"]
+    assert {event["trigger_actor"]: event["can_manage"] for event in listing["events"]} == {"alice": True, "bob": False}
+    assert {rule["rule"]: rule["can_manage"] for rule in listing["rules"]} == {"Alice owned rule.": True, "Bob owned rule.": False}
+
+
+def test_dashboard_user_can_manage_only_owned_knowledge_rules(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    feedback.capture_feedback(
+        db,
+        notif(mid="<alice@github.com>"),
+        GitHubContext(["https://github.com/gisce/erp/pull/1#issuecomment-10"], "gisce/erp", 1, comment_id=10),
+        "reply_comment",
+        "auto_trusted",
+        "review_only",
+        trigger_actor="alice",
+    )
+    feedback.capture_feedback(
+        db,
+        notif(mid="<bob@github.com>"),
+        GitHubContext(["https://github.com/gisce/erp/pull/2#issuecomment-20"], "gisce/erp", 2, comment_id=20),
+        "reply_comment",
+        "auto_trusted",
+        "review_only",
+        trigger_actor="bob",
+    )
+    events = feedback.list_events(db, "repo:gisce/erp", limit=2)
+    alice_event = next(event for event in events if event["trigger_actor"] == "alice")
+    bob_event = next(event for event in events if event["trigger_actor"] == "bob")
+    alice_rule = feedback.add_rule(db, "repo:gisce/erp", "operating_rule", "Alice owned rule.", 0.8, [alice_event["id"]])
+    bob_rule = feedback.add_rule(db, "repo:gisce/erp", "operating_rule", "Bob owned rule.", 0.8, [bob_event["id"]])
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"admin"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+
+    updated = client.patch(f"/api/knowledge/rules/{alice_rule['id']}", json={"scope": "org:gisce"})
+    forbidden_update = client.patch(f"/api/knowledge/rules/{bob_rule['id']}", json={"scope": "org:gisce"})
+    forbidden_delete = client.delete(f"/api/knowledge/rules/{bob_rule['id']}")
+    deleted = client.delete(f"/api/knowledge/rules/{updated.json()['rule']['id']}")
+
+    assert updated.status_code == 200
+    assert updated.json()["rule"]["scope"] == "org:gisce"
+    assert updated.json()["rule"]["can_manage"] is True
+    assert forbidden_update.status_code == 403
+    assert forbidden_delete.status_code == 403
+    assert deleted.status_code == 200
+
+
+def test_dashboard_admin_manages_mcp_tokens(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    q.enqueue(
+        notif(body="@pilipilisbot https://github.com/gisce/github-agent-bridge/issues/182#issuecomment-1"),
+        Policy(trusted_orgs=["gisce"]),
+    )
+    with sqlite3.connect(db) as con:
+        con.execute("UPDATE jobs SET trigger_actor=?, trigger_actor_avatar_url=? WHERE id=1", ("pilipilisbot", "https://github.com/pilipilisbot.png?size=80"))
+    legacy = create_token(db, "legacy agent")
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice", "bob"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+
+    reader_created = client.post("/api/mcp/tokens", json={"name": "reader agent"})
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+    users = client.get("/api/mcp/users")
+    created = client.post("/api/mcp/tokens", json={"name": "local agent", "user_login": "bob"})
+    unknown_owner = client.post("/api/mcp/tokens", json={"name": "typo agent", "user_login": "bbo"})
+    linked = client.patch(f"/api/mcp/tokens/{legacy['record']['id']}", json={"user_login": "bob"})
+    listed = client.get("/api/mcp/tokens")
+    revoked = client.delete(f"/api/mcp/tokens/{created.json()['record']['id']}")
+    listed_after_revoke = client.get("/api/mcp/tokens")
+
+    assert reader_created.status_code == 200
+    assert reader_created.json()["record"]["user_login"] == "alice"
+    assert {user["login"] for user in users.json()["users"]} == {"alice", "bob", "pilipilisbot"}
+    assert created.status_code == 200
+    assert created.json()["token"].startswith("gab_mcp_")
+    assert created.json()["record"]["user_login"] == "bob"
+    assert created.json()["record"]["created_by"] == "alice"
+    assert unknown_owner.status_code == 400
+    assert unknown_owner.json()["detail"] == "mcp_token_owner_unknown"
+    assert linked.status_code == 200
+    assert linked.json()["token"]["user_login"] == "bob"
+    assert {token["name"] for token in listed.json()["tokens"]} == {"legacy agent", "reader agent", "local agent"}
+    assert "token" not in listed.json()["tokens"][0]
+    assert revoked.status_code == 200
+    assert {token["name"] for token in listed_after_revoke.json()["tokens"]} == {"legacy agent", "reader agent"}
+
+
+def test_dashboard_mcp_users_include_all_job_actors(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    policy = Policy(trusted_orgs=["pilipilisbot"])
+    for index in range(205):
+        q.enqueue(
+            notif(
+                uid=index + 1,
+                mid=f"<{index + 1}@github.com>",
+                body=f"@pilipilisbot https://github.com/gisce/erp/pull/1#issuecomment-{index + 10}",
+                from_addr=f"user{index:03d} <notifications@github.com>",
+            ),
+            policy,
+        )
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+
+    response = client.get("/api/mcp/users")
+    logins = {user["login"] for user in response.json()["users"]}
+
+    assert len(list_job_actors(db)) == 100
+    assert len(list_all_job_actor_logins(db)) == 205
+    assert {"alice", "user000", "user204"} <= logins
+
+
+def test_dashboard_user_manages_only_own_mcp_tokens(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    alice = create_token(db, "alice agent", user_login="alice")
+    bob = create_token(db, "bob agent", user_login="bob")
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice", "bob"}, admin_users={"admin"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"})))
+
+    listed = client.get("/api/mcp/tokens")
+    forbidden_create = client.post("/api/mcp/tokens", json={"name": "not mine", "user_login": "bob"})
+    forbidden_revoke = client.delete(f"/api/mcp/tokens/{bob['record']['id']}")
+    revoked = client.delete(f"/api/mcp/tokens/{alice['record']['id']}")
+
+    assert [token["name"] for token in listed.json()["tokens"]] == ["alice agent"]
+    assert forbidden_create.status_code == 403
+    assert forbidden_revoke.status_code == 404
+    assert revoked.status_code == 200
+
+
+def test_http_mcp_uses_bearer_tokens_and_shared_server(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    feedback.add_rule(db, "repo:gisce/erp", "technical_criterion", "Prefer the HTTP MCP endpoint for remote agents.", 0.9)
+    token = create_token(db, "remote agent")["token"]
+    app = create_app(DashboardConfig(db=db, require_auth=False))
+    client = TestClient(app)
+
+    missing = client.post("/api/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    invalid = client.post("/api/mcp", headers={"Authorization": "Bearer bad-token"}, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    response = client.post(
+        "/api/mcp",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "list_knowledge", "arguments": {"repo": "gisce/erp"}},
+        },
+    )
+
+    assert missing.status_code == 401
+    assert missing.json()["detail"] == "mcp_token_required"
+    assert invalid.status_code == 401
+    assert invalid.json()["detail"] == "invalid_mcp_token"
+    assert response.status_code == 200
+    assert response.json()["jsonrpc"] == "2.0"
+    assert response.json()["id"] == 2
+    knowledge = json.loads(response.json()["result"]["content"][0]["text"])
+    assert knowledge["rules"][0]["rule"] == "Prefer the HTTP MCP endpoint for remote agents."
+
+
 def test_dashboard_retry_requires_admin_and_requeues_retryable_job(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)
@@ -728,6 +1481,24 @@ def test_dashboard_retry_rejects_non_retryable_jobs(tmp_path):
 
     assert response.status_code == 409
     assert response.json()["detail"] == "job_not_retryable"
+
+
+@pytest.mark.parametrize("decision,status", [("deny", "denied"), ("ask", "waiting_approval")])
+def test_dashboard_retry_cannot_override_policy_decision(tmp_path, decision, status):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    with q.connect() as con:
+        con.execute("UPDATE jobs SET decision=?, status=? WHERE id=?", (decision, status, job.id))
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+
+    response = client.post(f"/api/jobs/{job.id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "job_not_retryable"
+    assert q.get(job.id).status == status
 
 
 def test_dashboard_dismiss_requires_admin_and_marks_recoverable_job_done(tmp_path):

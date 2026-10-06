@@ -13,8 +13,15 @@ from typing import Callable
 
 from . import feedback
 from .models import GitHubContext, Job
-from .policy import DEFAULT_REPO_ROLE, Policy, Route
-from .session_correlation import normalize_session_id, session_id_for_job, session_key_for_work
+from .policy import DEFAULT_REPO_ROLE, Policy, Route, complexity_from_metadata
+from .process_inspection import process_stat
+from .session_correlation import (
+    normalize_session_id,
+    session_id_for_job,
+    session_id_for_job_attempt,
+    session_key_for_rescue,
+    session_key_for_work,
+)
 
 PROMPT_RULES_PACKAGE = "github_agent_bridge.prompt_rules"
 
@@ -72,6 +79,10 @@ def coauthor_identity_for_job(job: Job) -> str:
     return f"Use this commit trailer when committing requested work: `Co-authored-by: {login} <{email}>`"
 
 
+def action_mode_for_job(job: Job) -> str:
+    return "fix_allowed" if job.work_intent == "work_allowed" else "review_only"
+
+
 class RunMode(StrEnum):
     SHADOW = "shadow"  # no external side effects: no GitHub reaction, no OpenClaw dispatch
     DRY_RUN = "dry-run"  # no external side effects, but render intended commands/actions
@@ -87,6 +98,7 @@ class DispatchResult:
     timed_out: bool = False
     reaction_ok: bool | None = None
     command: list[str] | None = None
+    cancelled: bool = False
 
     @property
     def detail(self) -> str:
@@ -99,7 +111,11 @@ class GitHubClient:
         self.gh_bin = gh_bin
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([self.gh_bin, *args], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        command = [self.gh_bin, *args]
+        try:
+            return subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except FileNotFoundError as exc:
+            return subprocess.CompletedProcess(command, 127, "", str(exc))
 
     def current_login(self) -> str | None:
         result = self._run(["api", "user", "--jq", ".login"])
@@ -146,9 +162,11 @@ class GitHubClient:
         if not review:
             return False
         state = (review.get("state") or "").upper()
-        if state == "APPROVED":
-            return True
         body = (review.get("body") or "").lower()
+        login = self.current_login()
+        addressed_to_agent = bool(login and re.search(rf"(?<![A-Za-z0-9-])@{re.escape(login.lower())}(?![A-Za-z0-9-])", body))
+        if state == "APPROVED" and not addressed_to_agent:
+            return True
         non_actionable_markers = (
             "generated no new comments",
             "wasn't able to review any files",
@@ -300,21 +318,55 @@ class GitHubClient:
                 newest_url = comment.get("html_url") or f"{repo}#{issue}"
         return newest_url
 
+    def current_user_review_after(self, ctx: GitHubContext, after: str | None = None) -> str | None:
+        repo, issue = ctx.repo, ctx.issue_number
+        if not repo or not issue:
+            return None
+        login = self.current_login()
+        if not login:
+            return None
+        result = self._run([
+            "api",
+            "--paginate",
+            f"repos/{repo}/pulls/{issue}/reviews",
+            "--jq",
+            ".[] | @json",
+        ])
+        if result.returncode != 0:
+            return None
+        newest_url = None
+        newest_created_at = ""
+        for line in result.stdout.splitlines():
+            try:
+                review = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            user = review.get("user") if isinstance(review, dict) else None
+            if not isinstance(user, dict) or user.get("login") != login:
+                continue
+            submitted_at = review.get("submitted_at") or ""
+            if after and submitted_at <= after:
+                continue
+            if submitted_at >= newest_created_at:
+                newest_created_at = submitted_at
+                newest_url = review.get("html_url") or f"https://github.com/{repo}/pull/{issue}#pullrequestreview-{review.get('id')}"
+        return newest_url
+
     def visible_followup_after_trigger(self, ctx: GitHubContext) -> str | None:
         if ctx.comment_id:
             trigger = self.issue_comment(ctx)
             trigger_created_at = trigger.get("created_at") if isinstance(trigger, dict) else None
-            return self.current_user_thread_comment_after(ctx, trigger_created_at) or self.current_user_review_comment_after(ctx, trigger_created_at)
+            return self.current_user_thread_comment_after(ctx, trigger_created_at) or self.current_user_review_comment_after(ctx, trigger_created_at) or self.current_user_review_after(ctx, trigger_created_at)
         if ctx.review_comment_id:
             trigger = self.pull_request_review_comment(ctx)
             trigger_created_at = trigger.get("created_at") if isinstance(trigger, dict) else None
-            return self.current_user_review_comment_after(ctx, trigger_created_at) or self.current_user_thread_comment_after(ctx, trigger_created_at)
+            return self.current_user_review_comment_after(ctx, trigger_created_at) or self.current_user_thread_comment_after(ctx, trigger_created_at) or self.current_user_review_after(ctx, trigger_created_at)
         if ctx.review_id:
             review = self.pull_request_review(ctx)
             trigger_created_at = review.get("submitted_at") if isinstance(review, dict) else None
-            return self.current_user_review_comment_after(ctx, trigger_created_at) or self.current_user_thread_comment_after(ctx, trigger_created_at)
+            return self.current_user_review_comment_after(ctx, trigger_created_at) or self.current_user_thread_comment_after(ctx, trigger_created_at) or self.current_user_review_after(ctx, trigger_created_at)
         after = self.issue_created_at(ctx)
-        return self.current_user_thread_comment_after(ctx, after) or self.current_user_review_comment_after(ctx, after)
+        return self.current_user_thread_comment_after(ctx, after) or self.current_user_review_comment_after(ctx, after) or self.current_user_review_after(ctx, after)
 
     def issue_comment_addresses_current_user(self, ctx: GitHubContext) -> bool:
         body = self.issue_comment_body(ctx)
@@ -353,6 +405,10 @@ class GitHubClient:
                     if comment_id:
                         ok = self._run(["api", "-X", "POST", f"repos/{repo}/pulls/comments/{comment_id}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0 and ok
                 return ok
+            # GitHub has no reaction endpoint for a top-level pull request
+            # review. Do not silently react to the PR body instead: that makes
+            # the acknowledgement appear unrelated to the triggering review.
+            return False
         if not issue:
             return False
         return self._run(["api", "-X", "POST", f"repos/{repo}/issues/{issue}/reactions", "-f", f"content={content}", "-H", "Accept: application/vnd.github+json"]).returncode == 0
@@ -396,6 +452,26 @@ class GitHubClient:
     def react_ack_no_comment(self, ctx: GitHubContext) -> bool:
         return self.react(ctx, "+1")
 
+    def comment_on_thread(self, ctx: GitHubContext, body: str) -> str | None:
+        if self.mode != RunMode.LIVE:
+            return ctx.short_url
+        repo, issue = ctx.repo, ctx.issue_number
+        if not repo or not issue:
+            return None
+        result = self._run([
+            "api",
+            "-X",
+            "POST",
+            f"repos/{repo}/issues/{issue}/comments",
+            "-f",
+            f"body={body}",
+            "--jq",
+            ".html_url",
+        ])
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+
 
 class OpenClawDispatcher:
     def __init__(
@@ -421,6 +497,43 @@ class OpenClawDispatcher:
         self.cli_grace_seconds = cli_grace_seconds
         self.feedback_db_path = feedback_db_path
         self.mode = mode
+        self._shutdown_event = threading.Event()
+        self._process_lock = threading.Lock()
+        self._active_processes: set[subprocess.Popen] = set()
+
+    def shutdown(self, kill_grace_seconds: float = 5.0) -> None:
+        """Cancel active CLI process groups and prevent new dispatches."""
+        if self._shutdown_event.is_set():
+            return
+        self._shutdown_event.set()
+        with self._process_lock:
+            processes = list(self._active_processes)
+        for proc in processes:
+            self._signal_process_group(proc, signal.SIGTERM)
+        if processes and kill_grace_seconds >= 0:
+            threading.Thread(
+                target=self._kill_processes_after_grace,
+                args=(processes, kill_grace_seconds),
+                daemon=True,
+            ).start()
+
+    @staticmethod
+    def _signal_process_group(proc: subprocess.Popen, sig: signal.Signals) -> None:
+        if proc.poll() is not None:
+            return
+        try:
+            os.killpg(proc.pid, sig)
+        except (OSError, ProcessLookupError):
+            try:
+                proc.send_signal(sig)
+            except (OSError, ProcessLookupError):
+                pass
+
+    def _kill_processes_after_grace(self, processes: list[subprocess.Popen], grace_seconds: float) -> None:
+        if grace_seconds:
+            threading.Event().wait(grace_seconds)
+        for proc in processes:
+            self._signal_process_group(proc, signal.SIGKILL)
 
     def timeout_for(self, job: Job) -> int:
         if job.work_intent == "review_only":
@@ -449,6 +562,7 @@ class OpenClawDispatcher:
             thread=thread,
             action=job.action,
             work_intent=job.work_intent,
+            action_mode=action_mode_for_job(job),
             url=job.context.short_url,
             message_id=job.message_id,
             subject=job.subject,
@@ -473,21 +587,11 @@ class OpenClawDispatcher:
     def feedback_rules_context(self, repo: str, min_confidence: float) -> str:
         if not self.feedback_db_path:
             return "No bridge database was provided, so no curated feedback rules were loaded."
-        scope = f"repo:{repo}"
         try:
-            rules = feedback.list_rules(self.feedback_db_path, scope=scope, min_confidence=min_confidence)
+            rules = feedback.list_applicable_rules(self.feedback_db_path, repo=repo, min_confidence=min_confidence)
         except Exception as exc:
             return f"Could not load curated feedback rules from the bridge database: {exc}"
-        if not rules:
-            return f"No curated feedback rules matched {scope} at confidence >= {min_confidence}."
-        lines = []
-        for rule in rules:
-            lines.append(
-                f"- [{rule['scope']}] {rule['type']} "
-                f"(confidence {rule['confidence']:.2f}, observations {rule['observations']}): "
-                f"{rule['rule']}"
-            )
-        return "\n".join(lines)
+        return feedback.format_rules_context(repo, min_confidence, rules)
 
     def route_for(self, job: Job, policy: Policy) -> tuple[str | None, str, str]:
         route: Route = policy.route_for(job.repo)
@@ -502,19 +606,35 @@ class OpenClawDispatcher:
         policy: Policy,
         reaction_ok: bool | None = None,
         activity_callback: Callable[[str, str, str | None], None] | None = None,
+        process_callback: Callable[[dict[str, int]], bool | None] | None = None,
     ) -> DispatchResult:
         agent, channel, to = self.route_for(job, policy)
         cmd = [self.openclaw_bin, "agent"]
         if agent:
             cmd += ["--agent", agent]
-        model_route = policy.model_route_for(job.repo, job.action, job.work_intent)
+        model_route = policy.model_route_for(
+            job.repo,
+            job.action,
+            job.work_intent,
+            complexity_from_metadata(job.metadata),
+        )
         if model_route.model:
             cmd += ["--model", model_route.model]
         if model_route.thinking:
             cmd += ["--thinking", model_route.thinking]
         agent_timeout = self.timeout_for(job)
-        session_id = normalize_session_id(str(job.metadata.get("openclaw_session_id") or session_id_for_job(job.id)))
-        session_key = session_key_for_work(job.work_key)
+        fresh_session = bool(job.metadata.get("fresh_session_on_retry")) and job.attempts > 1
+        session_key = (
+            session_key_for_rescue(job.work_key, job.id, job.attempts)
+            if fresh_session
+            else session_key_for_work(job.work_key)
+        )
+        if fresh_session or job.work_intent == "work_allowed":
+            default_session_id = session_id_for_job_attempt(job.id, job.attempts)
+            session_id = normalize_session_id(default_session_id)
+        else:
+            default_session_id = session_id_for_job(job.id)
+            session_id = normalize_session_id(str(job.metadata.get("openclaw_session_id") or default_session_id))
         cmd += [
             "--session-id",
             session_id,
@@ -533,11 +653,46 @@ class OpenClawDispatcher:
             self.build_prompt(job, policy),
         ]
         env = os.environ.copy()
+        env["GITHUB_AGENT_BRIDGE_ACTION_MODE"] = action_mode_for_job(job)
+        env["GITHUB_AGENT_BRIDGE_WORK_INTENT"] = job.work_intent
+        env["GITHUB_AGENT_BRIDGE_ALLOW_REPOSITORY_WRITE"] = "1" if job.work_intent == "work_allowed" else "0"
+        env["GITHUB_AGENT_BRIDGE_ALLOW_PUSH"] = "1" if job.work_intent == "work_allowed" else "0"
         if self.node_bin:
             env["PATH"] = os.path.dirname(self.node_bin) + os.pathsep + env.get("PATH", "")
         if self.mode != RunMode.LIVE:
             return DispatchResult(True, 0, "side effects skipped", "", False, reaction_ok, cmd)
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
+        with self._process_lock:
+            if self._shutdown_event.is_set():
+                return DispatchResult(False, 130, "", "executor shutdown requested before dispatch", False, reaction_ok, cmd, True)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
+            self._active_processes.add(proc)
+        if process_callback:
+            stat = process_stat(proc.pid)
+            identity = {
+                "pid": proc.pid,
+                "ppid": int(stat["ppid"]) if stat else os.getpid(),
+                "pgid": int(stat["pgid"]) if stat else proc.pid,
+                "sid": int(stat["sid"]) if stat else proc.pid,
+                "start_time_ticks": int(stat["start_time_ticks"]) if stat else 0,
+            }
+            try:
+                registered = bool(stat) and process_callback(identity) is not False
+            except Exception:
+                registered = False
+            if not registered:
+                self._signal_process_group(proc, signal.SIGKILL)
+                proc.wait()
+                with self._process_lock:
+                    self._active_processes.discard(proc)
+                return DispatchResult(
+                    False,
+                    125,
+                    "",
+                    "failed to persist runtime process ownership; dispatch terminated",
+                    False,
+                    reaction_ok,
+                    cmd,
+                )
 
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
@@ -559,20 +714,22 @@ class OpenClawDispatcher:
         stdout_thread.start()
         stderr_thread.start()
         try:
-            # Let OpenClaw's own --timeout own the agent run deadline. The bridge only
-            # keeps a small grace window so it can capture the CLI result cleanly.
-            proc.wait(timeout=agent_timeout + self.cli_grace_seconds)
-            stdout_thread.join(timeout=1)
-            stderr_thread.join(timeout=1)
-            out, err = "".join(stdout_chunks), "".join(stderr_chunks)
-            return DispatchResult(proc.returncode == 0, proc.returncode, (out or "")[:2000], (err or "")[:4000], False, reaction_ok, cmd)
-        except subprocess.TimeoutExpired:
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except Exception:
-                proc.kill()
-            proc.wait()
-            stdout_thread.join(timeout=1)
-            stderr_thread.join(timeout=1)
-            out, err = "".join(stdout_chunks), "".join(stderr_chunks)
-            return DispatchResult(False, 124, (out or "")[:2000], (err or "")[:4000], True, reaction_ok, cmd)
+                # Let OpenClaw's own --timeout own the agent run deadline. The bridge only
+                # keeps a small grace window so it can capture the CLI result cleanly.
+                proc.wait(timeout=agent_timeout + self.cli_grace_seconds)
+                stdout_thread.join(timeout=1)
+                stderr_thread.join(timeout=1)
+                out, err = "".join(stdout_chunks), "".join(stderr_chunks)
+                cancelled = self._shutdown_event.is_set() and proc.returncode != 0
+                return DispatchResult(proc.returncode == 0, proc.returncode, (out or "")[:2000], (err or "")[:4000], False, reaction_ok, cmd, cancelled)
+            except subprocess.TimeoutExpired:
+                self._signal_process_group(proc, signal.SIGKILL)
+                proc.wait()
+                stdout_thread.join(timeout=1)
+                stderr_thread.join(timeout=1)
+                out, err = "".join(stdout_chunks), "".join(stderr_chunks)
+                return DispatchResult(False, 124, (out or "")[:2000], (err or "")[:4000], True, reaction_ok, cmd)
+        finally:
+            with self._process_lock:
+                self._active_processes.discard(proc)

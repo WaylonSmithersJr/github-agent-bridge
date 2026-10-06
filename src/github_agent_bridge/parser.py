@@ -8,12 +8,23 @@ from .models import GitHubContext
 
 REVIEW_ONLY_PATTERNS = ("fes-ne una review", "fes una review", "fes review", "fer una review", "fes-ne una revisio", "fes-ne una revisió", "fes una revisio", "fes una revisió", "fer una revisio", "fer una revisió", "review de la pr", "revisió de la pr", "revisio de la pr", "revisa aquesta pr", "revisa els canvis", "revisar els canvis", "com veus els canvis", "què et semblen els canvis", "que et semblen els canvis", "what do you think of these changes", "please review", "can you review")
 IMPLEMENTATION_PATTERNS = ("fes els canvis", "fes-ho", "implementa", "modifica", "canvia", "arregla", "corregeix", "fix", "push", "commit", "aplica", "resol", "resolve")
+ISSUE_CREATION_PATTERNS = (
+    "crea la issue",
+    "crea una issue",
+    "obre la issue",
+    "obre una issue",
+    "create the issue",
+    "create an issue",
+    "open the issue",
+    "open an issue",
+)
 BOT_MENTION_PATTERNS = ("you are receiving this because you were mentioned",)
 ASSIGNMENT_PATTERNS = ("assigned you", "assigned to you", "you were assigned", "you are assigned")
 ASSIGNMENT_REASON_PATTERNS = ("github notification reason: assign",)
 REVIEW_REQUEST_PATTERNS = ("requested your review", "requested a review from you", "you were requested for review", "review requested")
 COPILOT_REVIEW_PATTERNS = ("copilot-pull-request-reviewer", "github-copilot", "github copilot", "copilot reviewed", "copilot commented", "copilot left a comment", "copilot suggested", "copilot requested changes")
 WORKFLOW_RUN_FAILED_PATTERNS = ("run failed", "workflow run failed", "workflow failed", "job failed", "failing after")
+MERGE_EVENT_RE = re.compile(r"\b[\w.-]+\s+merged\s+(?:commit(?:\s+[0-9a-f]{7,40})?|[0-9a-f]{7,40}|#\d+)\s+(?:into|to)\s+[\w./-]+\b")
 
 
 def decode_header_value(value: str | None) -> str:
@@ -84,7 +95,7 @@ def classify_work_intent(subject: str, body: str, bot_logins: set[str] | None = 
     text = f"{subject}\n{body}".lower()
     flags = github_event_flags(subject, body, bot_logins)
     asks_review = flags["review_requested"] or _contains_any(text, REVIEW_ONLY_PATTERNS)
-    asks_implementation = flags["assigned"] or _contains_any(text, IMPLEMENTATION_PATTERNS)
+    asks_implementation = _contains_any(text, IMPLEMENTATION_PATTERNS + ISSUE_CREATION_PATTERNS)
     if asks_review and not asks_implementation:
         return "review_only"
     # PR threads are review/discussion by default. Do not mutate a contributor's
@@ -95,12 +106,30 @@ def classify_work_intent(subject: str, body: str, bot_logins: set[str] | None = 
     return "work_allowed"
 
 
-def classify_github_action(subject: str, body: str, bot_logins: set[str] | None = None) -> str:
+def _is_merge_notification(text: str, ctx: GitHubContext, message_id: str | None) -> bool:
+    if "merged" not in text:
+        return False
+    normalized_message_id = (message_id or "").lower()
+    if "/merged@" in normalized_message_id:
+        return True
+    if ctx.target_kind != "issue":
+        return False
+    return any("#event-" in url for url in ctx.urls) and bool(MERGE_EVENT_RE.search(text))
+
+
+def classify_github_action(
+    subject: str,
+    body: str,
+    bot_logins: set[str] | None = None,
+    *,
+    message_id: str | None = None,
+) -> str:
     text = f"{subject}\n{body}".lower()
     flags = github_event_flags(subject, body, bot_logins)
+    ctx = extract_github_context(body)
     if re.search(r"github\.com/[^/]+/[^/]+/actions/runs/\d+", text) and _contains_any(text, WORKFLOW_RUN_FAILED_PATTERNS):
         return "workflow_run_failed"
-    if "merged" in text:
+    if _is_merge_notification(text, ctx, message_id):
         return "sync_after_merge"
     # PR reviews/comments should be handled as replies even when GitHub's footer
     # also says the bot was assigned to the thread.
@@ -108,6 +137,8 @@ def classify_github_action(subject: str, body: str, bot_logins: set[str] | None 
         return "submit_review"
     if flags["copilot_review"] or "pullrequestreview" in text:
         return "reply_comment"
+    if _contains_any(text, ISSUE_CREATION_PATTERNS):
+        return "open_issue"
     if flags["assigned"]:
         return "open_issue"
     if flags["bot_mentioned"]:
@@ -138,7 +169,7 @@ def extract_github_context(body: str) -> GitHubContext:
         commit = re.search(r"github\.com/([^/]+/[^/]+)/commit/([0-9a-fA-F]+)", url)
         if commit:
             repo = commit.group(1).lower(); commit_sha = commit.group(2)
-            cc = re.search(r"#r(\d+)", url)
+            cc = re.search(r"#(?:r|commitcomment-)(\d+)", url)
             if cc:
                 commit_comment_id = int(cc.group(1)); target_kind = "commit_comment"; primary_url = url; break
             target_kind = "commit"

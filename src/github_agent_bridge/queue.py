@@ -825,7 +825,7 @@ class JobQueue:
         now = utc_now()
         summary = f"job requeued by @{actor}" if actor else "job requeued"
         with self.connect() as con:
-            cur = con.execute("UPDATE jobs SET status='pending', locked_by=NULL, last_error=NULL, updated_at=? WHERE id=? AND status IN ('blocked','denied','waiting_approval')", (now, job_id))
+            cur = con.execute("UPDATE jobs SET status='pending', locked_by=NULL, last_error=NULL, updated_at=? WHERE id=? AND status='blocked' AND decision='auto_trusted'", (now, job_id))
             if cur.rowcount:
                 row = con.execute("SELECT work_key FROM jobs WHERE id=?", (job_id,)).fetchone()
                 self._log(con, job_id, row["work_key"] if row else None, "retry", summary, None)

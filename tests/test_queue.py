@@ -29,6 +29,36 @@ def intent_policy(**kwargs):
     )
 
 
+@pytest.mark.parametrize("decision,status", [("deny", "denied"), ("ask", "waiting_approval")])
+def test_retry_cannot_override_policy_decision(tmp_path, decision, status):
+    q = JobQueue(tmp_path / "q.sqlite3")
+    job, _ = q.enqueue(notif(1, "<policy@github.com>", BODY1), policy())
+    with q.connect() as con:
+        con.execute("UPDATE jobs SET decision=?, status=? WHERE id=?", (decision, status, job.id))
+
+    assert q.retry(job.id, actor="admin") is False
+    assert q.get(job.id).status == status
+    with q.connect() as con:
+        assert con.execute(
+            "SELECT count(*) FROM worklog WHERE job_id=? AND phase='retry'", (job.id,)
+        ).fetchone()[0] == 0
+
+
+def test_retry_blocked_job_requires_executable_decision(tmp_path):
+    q = JobQueue(tmp_path / "q.sqlite3")
+    job, _ = q.enqueue(notif(1, "<blocked@github.com>", BODY1), policy())
+    q.finish(job.id, "blocked", "failed", "boom")
+
+    assert q.retry(job.id, actor="admin") is True
+    assert q.get(job.id).status == "pending"
+
+    q.finish(job.id, "blocked", "failed", "boom")
+    with q.connect() as con:
+        con.execute("UPDATE jobs SET decision='deny' WHERE id=?", (job.id,))
+    assert q.retry(job.id, actor="admin") is False
+    assert q.get(job.id).status == "blocked"
+
+
 def test_queue_expands_user_in_db_path(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))

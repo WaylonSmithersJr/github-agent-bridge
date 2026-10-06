@@ -1483,6 +1483,24 @@ def test_dashboard_retry_rejects_non_retryable_jobs(tmp_path):
     assert response.json()["detail"] == "job_not_retryable"
 
 
+@pytest.mark.parametrize("decision,status", [("deny", "denied"), ("ask", "waiting_approval")])
+def test_dashboard_retry_cannot_override_policy_decision(tmp_path, decision, status):
+    db = tmp_path / "bridge.sqlite3"
+    q = JobQueue(db)
+    job, _ = q.enqueue(notif(), Policy(trusted_orgs=["gisce"]))
+    with q.connect() as con:
+        con.execute("UPDATE jobs SET decision=?, status=? WHERE id=?", (decision, status, job.id))
+    app = create_app(DashboardConfig(db=db, secret_key="secret", allowed_users={"alice"}, admin_users={"alice"}))
+    client = TestClient(app)
+    client.cookies.set("gab_dashboard_session", _sign(app.state.dashboard_config, _encode_session({"login": "Alice"}, is_admin=True)))
+
+    response = client.post(f"/api/jobs/{job.id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "job_not_retryable"
+    assert q.get(job.id).status == status
+
+
 def test_dashboard_dismiss_requires_admin_and_marks_recoverable_job_done(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     q = JobQueue(db)

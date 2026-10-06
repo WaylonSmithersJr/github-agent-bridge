@@ -302,8 +302,8 @@ describe("dashboard routing and API query helpers", () => {
 
   it("limits retry actions to manually recoverable job states", () => {
     expect(isRetryableStatus("blocked")).toBe(true);
-    expect(isRetryableStatus("denied")).toBe(true);
-    expect(isRetryableStatus("waiting_approval")).toBe(true);
+    expect(isRetryableStatus("denied")).toBe(false);
+    expect(isRetryableStatus("waiting_approval")).toBe(false);
     expect(isRetryableStatus("pending")).toBe(false);
     expect(isRetryableStatus("running")).toBe(false);
     expect(isRetryableStatus("done")).toBe(false);
@@ -812,7 +812,7 @@ describe("status badges", () => {
             thread: 58,
             status: "blocked",
             action: "reply_comment",
-            decision: "allowed",
+            decision: "auto_trusted",
             intent: "work_allowed",
             subject: "Needs a guarded retry from the list",
             trigger_actor: "ecarreras",

@@ -50,10 +50,11 @@ def test_enabled_orgs_restricts_canary_scope():
     assert policy.decision(n, other, "reply_comment") == "deny"
 
 
-def test_enabled_repos_remains_hard_guardrail_with_enabled_orgs():
-    policy = Policy(enabled_repos={"gisce/erp"}, enabled_orgs={"gisce"})
+def test_enabled_repos_and_orgs_form_guarded_union():
+    policy = Policy(enabled_repos={"gisce/erp"}, enabled_orgs={"palomos-molones"})
 
     assert policy.repo_enabled("gisce/erp")
+    assert policy.repo_enabled("palomos-molones/el-cami")
     assert not policy.repo_enabled("gisce/other")
 
 

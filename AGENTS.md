@@ -7,7 +7,9 @@ This repository is the GitHub notification → OpenClaw agent bridge used by Pil
 - Default to `--mode shadow` for local runs. Use `--mode live` only when the operator explicitly asks.
 - Never enable `--mark-seen` in development fixtures or shadow tests. It mutates the mailbox.
 - Never commit secrets, app passwords, tokens, local DBs, logs, or `~/.config/*` files.
-- Treat `enabledRepos` as the canary guardrail. If it is set, jobs outside that repo set must be denied.
+- Treat `enabledRepos` and `enabledOrgs` as the canary guardrail. When either is
+  set, jobs outside the union of exact repositories and configured owners must
+  be denied.
 - Do not remove the per-`work_key` lock/coalescing behavior without replacing it with an equivalent concurrency guard.
 - Prefer adding tests around parser/policy/queue/dispatch behavior before changing production flow.
 

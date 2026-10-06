@@ -25,7 +25,9 @@
   "enabledRepos": [
     "your-org/your-repo"
   ],
-  "enabledOrgs": [],
+  "enabledOrgs": [
+    "your-org"
+  ],
   "webhookCanaryRepos": [],
   "repoRoutes": {},
   "orgRoutes": {

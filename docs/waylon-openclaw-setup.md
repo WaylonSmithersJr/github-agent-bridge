@@ -95,9 +95,9 @@ gab ... read-github-notifications-once --mark-read
 
 ## Safety Defaults
 
-- Keep `enabledRepos` narrow. It is a hard allowlist even when `enabledOrgs` is
-  also set. To allow an entire org instead, remove `enabledRepos` and configure
-  `enabledOrgs`; do not combine them expecting a union.
+- Keep the combined `enabledRepos` / `enabledOrgs` scope narrow. Repositories in
+  either list are enabled; all others are denied. An `enabledOrgs` entry enables
+  every repository under that owner.
 - Keep `run --mode shadow` until a canary repo behaves correctly.
 - Do not use `--mark-read` until this bridge owns GitHub notification handling.
 - Keep `botLogins` set to `WaylonSmithersJr`.

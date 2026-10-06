@@ -116,8 +116,8 @@ gab --policy ~/.config/github-agent-bridge/policy.json enqueue-comment-url ...
 | `trustedRepos` | array of strings | `[]` | Exact `owner/repo` names trusted for `trustedAuto` actions. Case-insensitive. |
 | `trustedOrgs` | array of strings | `[]` | GitHub org/user names trusted for all repos under that owner. Case-insensitive. |
 | `trustedTeams` | array of strings | `[]` | GitHub `org/team-slug` entries whose active members are trusted actors for `trustedAuto` actions. Case-insensitive team config; actor membership is checked with `gh api`. |
-| `enabledRepos` | array of strings | `[]` | Optional hard allowlist/canary scope. If non-empty, all repos not listed here are denied before other checks. Case-insensitive. |
-| `enabledOrgs` | array of strings | `[]` | Optional owner/org allowlist when `enabledRepos` is empty. Case-insensitive. |
+| `enabledRepos` | array of strings | `[]` | Optional exact-repo canary scope. When combined with `enabledOrgs`, their union is allowed; everything else is denied before other checks. Case-insensitive. |
+| `enabledOrgs` | array of strings | `[]` | Optional owner/org canary scope, additive to `enabledRepos`. Case-insensitive. |
 | `webhookCanaryRepos` | array of strings | `[]` | Explicit webhook dual-ingest allowlist. Empty means no webhook delivery may enqueue. It does not narrow IMAP scope. |
 | `repoRoutes` | object | `{}` | Exact per-repo delivery routes. Takes precedence over `orgRoutes`. |
 | `orgRoutes` | object | `{}` | Per-owner delivery routes used when no `repoRoutes` entry matches. |

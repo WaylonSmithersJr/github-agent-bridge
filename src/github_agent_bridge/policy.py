@@ -369,12 +369,12 @@ class Policy:
         return repo in self.trusted_repos or org in self.trusted_orgs
 
     def repo_enabled(self, repo: str | None) -> bool:
+        if not self.enabled_repos and not self.enabled_orgs:
+            return True
         if not repo:
-            return not self.enabled_repos and not self.enabled_orgs
+            return False
         repo = repo.lower(); org = repo.split("/", 1)[0]
-        if self.enabled_repos:
-            return repo in self.enabled_repos
-        return not self.enabled_orgs or org in self.enabled_orgs
+        return repo in self.enabled_repos or org in self.enabled_orgs
 
     def actor_trusted(self, actor_login: str | None, *, gh_bin: str | None = None) -> bool:
         actor = (actor_login or "").strip().lstrip("@")

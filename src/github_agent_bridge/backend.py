@@ -694,11 +694,14 @@ def _team_key(team: dict[str, Any]) -> str | None:
 
 
 def _exchange_code(config: DashboardConfig, code: str) -> str:
-    data = urllib.parse.urlencode({
+    params = {
         "client_id": config.oauth_client_id,
         "client_secret": config.oauth_client_secret,
         "code": code,
-    }).encode("utf-8")
+    }
+    if config.public_url:
+        params["redirect_uri"] = f"{config.public_url}/auth/callback"
+    data = urllib.parse.urlencode(params).encode("utf-8")
     req = urllib.request.Request(GITHUB_TOKEN_URL, data=data, headers={"Accept": "application/json", "User-Agent": "github-agent-bridge-dashboard"})
     with urllib.request.urlopen(req, timeout=10) as response:
         payload = json.loads(response.read().decode("utf-8"))
@@ -1822,7 +1825,10 @@ def create_app(config: DashboardConfig | None = None) -> FastAPI:
         scopes = ["read:user"]
         if config.allowed_orgs or config.allowed_teams or config.admin_teams:
             scopes.append("read:org")
-        params = urllib.parse.urlencode({"client_id": config.oauth_client_id, "scope": " ".join(scopes), "state": state})
+        authorize_params = {"client_id": config.oauth_client_id, "scope": " ".join(scopes), "state": state}
+        if config.public_url:
+            authorize_params["redirect_uri"] = f"{config.public_url}/auth/callback"
+        params = urllib.parse.urlencode(authorize_params)
         response = RedirectResponse(f"{GITHUB_AUTHORIZE_URL}?{params}", status_code=status.HTTP_302_FOUND)
         response.set_cookie(OAUTH_STATE_COOKIE, _sign(config, state), httponly=True, secure=True, samesite="lax", max_age=600)
         return response

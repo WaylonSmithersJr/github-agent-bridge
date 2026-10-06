@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from github_agent_bridge import __version__
 from github_agent_bridge import feedback
-from github_agent_bridge.backend import DashboardConfig, _encode_session, _is_admin, _is_allowed, _journal_stream_events, _session_stream_events, _sign, create_app
+from github_agent_bridge.backend import DashboardConfig, _encode_session, _exchange_code, _is_admin, _is_allowed, _journal_stream_events, _session_stream_events, _sign, create_app
 from github_agent_bridge.dashboard_data import JOB_LIST_ORDER_SQL, get_job_detail, job_session, job_session_events, job_session_transcript, jobs_select_sql, list_all_job_actor_logins, list_job_actors, list_jobs, metrics_summary
 from github_agent_bridge.monitor import MonitorReport
 from github_agent_bridge.models import GitHubContext, Notification
@@ -1555,6 +1555,56 @@ def test_dashboard_oauth_login_uses_minimal_scope_for_user_allowlist(tmp_path):
     assert response.status_code == 302
     query = parse_qs(urlparse(response.headers["location"]).query)
     assert query["scope"] == ["read:user"]
+
+
+def test_dashboard_oauth_login_selects_registered_callback_for_shared_github_app(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    app = create_app(
+        DashboardConfig(
+            db=db,
+            secret_key="secret",
+            oauth_client_id="client-id",
+            oauth_client_secret="client-secret",
+            allowed_users={"alice"},
+            public_url="https://bridge.example.com/",
+        )
+    )
+
+    response = TestClient(app, follow_redirects=False).get("/auth/login")
+
+    assert response.status_code == 302
+    query = parse_qs(urlparse(response.headers["location"]).query)
+    assert query["redirect_uri"] == ["https://bridge.example.com/auth/callback"]
+
+
+def test_dashboard_oauth_token_exchange_uses_same_callback(monkeypatch, tmp_path):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def read(self):
+            return b'{"access_token":"test-token"}'
+
+    def fake_urlopen(request, timeout):
+        assert timeout == 10
+        params = parse_qs(request.data.decode("utf-8"))
+        assert params["redirect_uri"] == ["https://bridge.example.com/auth/callback"]
+        return Response()
+
+    monkeypatch.setattr("github_agent_bridge.backend.urllib.request.urlopen", fake_urlopen)
+    config = DashboardConfig(
+        db=tmp_path / "bridge.sqlite3",
+        secret_key="secret",
+        oauth_client_id="client-id",
+        oauth_client_secret="client-secret",
+        public_url="https://bridge.example.com/",
+    )
+
+    assert _exchange_code(config, "test-code") == "test-token"
 
 
 def test_dashboard_oauth_login_requests_org_scope_only_for_org_allowlist(tmp_path):

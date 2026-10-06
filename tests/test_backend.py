@@ -75,6 +75,7 @@ def test_dashboard_status_is_read_only_and_lists_recent_jobs(tmp_path):
         "delete_knowledge_rule",
         "create_mcp_token",
         "revoke_mcp_token",
+        "ping_webhook",
         "view_autoupdate_plan",
         "refresh_autoupdate_plan",
         "apply_autoupdate",

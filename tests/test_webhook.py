@@ -783,14 +783,17 @@ def test_webhook_status_requires_dashboard_admin(tmp_path):
     )
     assert {client.get(path).status_code for path in paths} == {401}
     assert client.get("/api/webhooks/github/hooks/42").status_code == 401
+    assert client.post("/api/webhooks/github/hooks/42/ping").status_code == 401
     assert client.get("/api/webhooks/github/deliveries/delivery-1").status_code == 401
     client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "alice"})))
     assert {client.get(path).status_code for path in paths} == {403}
     assert client.get("/api/webhooks/github/hooks/42").status_code == 403
+    assert client.post("/api/webhooks/github/hooks/42/ping").status_code == 403
     assert client.get("/api/webhooks/github/deliveries/delivery-1").status_code == 403
     client.cookies.set("gab_dashboard_session", _sign(config, _encode_session({"login": "operator"}, is_admin=True)))
     assert {client.get(path).status_code for path in paths} == {200}
     assert client.get("/api/webhooks/github/hooks/42").status_code == 404
+    assert client.post("/api/webhooks/github/hooks/42/ping").status_code == 404
     assert client.get("/api/webhooks/github/deliveries/delivery-1").status_code == 404
     assert client.get("/api/status").json()["webhook_configured"] is True
 
@@ -881,6 +884,7 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
     assert detail["stats"] == {"deliveries": 2, "duplicates": 0, "unsupported": 1}
     assert {item["delivery_id"] for item in detail["recent_deliveries"]} == {"ping-1", "delivery-1"}
     assert "secret" not in json.dumps(detail)
+    assert detail["recent_actions"] == []
 
     first_page = client.get("/api/webhooks/github/deliveries", params={"limit": 1}).json()
     assert len(first_page["deliveries"]) == 1
@@ -1007,6 +1011,89 @@ def test_webhook_coverage_uses_comparable_window_keys_and_grace(tmp_path):
         ("webhook_only", "issue_comment:created:gisce/repo:2"),
     }
 
+
+def test_admin_can_request_hook_ping_and_action_is_audited(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+    ping = json.dumps({
+        "hook": {
+            "id": 42, "active": True, "events": ["issue_comment"],
+            "ping_url": "https://api.github.com/orgs/gisce/hooks/42/pings",
+        },
+        "organization": {"login": "gisce"},
+    }).encode()
+    assert client.post(
+        "/api/webhooks/github", content=ping,
+        headers=hook_headers(ping, delivery="ping-config", event="ping", hook_id="42"),
+    ).status_code == 200
+    calls = []
+
+    def fake_ping(endpoint, *, gh_bin):
+        calls.append((endpoint, gh_bin))
+        return backend.subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(backend, "_request_webhook_ping", fake_ping)
+    response = client.post("/api/webhooks/github/hooks/42/ping")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded"
+    assert calls == [("/orgs/gisce/hooks/42/pings", "gh")]
+    action = client.get("/api/webhooks/github/hooks/42").json()["recent_actions"][0]
+    assert action["action"] == "ping"
+    assert action["actor"] == "test"
+    assert action["status"] == "succeeded"
+    assert action["completed_at"]
+
+
+def test_hook_ping_rejects_untrusted_stored_api_url(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+    ping = json.dumps({
+        "hook": {
+            "id": 42, "active": True,
+            "ping_url": "https://attacker.example/orgs/gisce/hooks/42/pings",
+        },
+        "organization": {"login": "gisce"},
+    }).encode()
+    assert client.post(
+        "/api/webhooks/github", content=ping,
+        headers=hook_headers(ping, delivery="ping-config", event="ping", hook_id="42"),
+    ).status_code == 200
+    monkeypatch.setattr(backend, "_request_webhook_ping", lambda *args, **kwargs: None)
+
+    response = client.post("/api/webhooks/github/hooks/42/ping")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "webhook_ping_url_invalid"
+
+
+def test_failed_hook_ping_is_audited_without_exposing_cli_error(tmp_path, monkeypatch):
+    db = tmp_path / "bridge.sqlite3"
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+    ping = json.dumps({
+        "hook": {
+            "id": 42, "active": True,
+            "ping_url": "https://api.github.com/orgs/gisce/hooks/42/pings",
+        },
+        "organization": {"login": "gisce"},
+    }).encode()
+    client.post(
+        "/api/webhooks/github", content=ping,
+        headers=hook_headers(ping, delivery="ping-config", event="ping", hook_id="42"),
+    )
+    monkeypatch.setattr(
+        backend, "_request_webhook_ping",
+        lambda *args, **kwargs: backend.subprocess.CompletedProcess([], 1, "", "permission denied: sensitive detail"),
+    )
+
+    response = client.post("/api/webhooks/github/hooks/42/ping")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "github_webhook_ping_failed"
+    assert "sensitive detail" not in response.text
+    action = client.get("/api/webhooks/github/hooks/42").json()["recent_actions"][0]
+    assert action["status"] == "failed"
+    assert action["detail"] == "permission denied: sensitive detail"
 
 def test_webhook_monitoring_rejects_unbounded_ranges_and_invalid_cursors(tmp_path):
     client = TestClient(create_app(DashboardConfig(

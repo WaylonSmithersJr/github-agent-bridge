@@ -108,7 +108,15 @@ split so opening the overview does not load hook inventory or delivery history:
   configuration (never the secret or raw payload), while later deliveries
   update its latest event, repository, delivery ID, and result.
 - `GET /api/webhooks/github/hooks/{hook_id}` returns the sanitized hook detail,
-  aggregate retained-delivery counts, and its most recent deliveries.
+  aggregate retained-delivery counts, its most recent deliveries, and recent
+  audited administrative actions.
+- `POST /api/webhooks/github/hooks/{hook_id}/ping` lets a dashboard administrator
+  ask GitHub to send a fresh `ping`. The server validates the stored URL against
+  the exact `api.github.com` organization or repository hook path before calling
+  `gh api`; browser OAuth credentials are never reused. The operational `gh`
+  identity needs `Organization hooks: write` or `Repository webhooks: write`.
+  Requested, successful, and failed actions are recorded with the administrator
+  login, while CLI failure details remain hidden from the HTTP response.
 - `GET /api/webhooks/github/deliveries?limit=<1-100>&cursor=<opaque>` returns a
   cursor-paginated delivery page. Optional `hook_id`, `event_name`, `repository`,
   and `result` filters are applied server-side; every row includes the known

@@ -159,6 +159,17 @@ type WebhookHookDetailResponse = {
   hook: WebhookHook;
   stats: { deliveries: number; duplicates: number; unsupported: number };
   recent_deliveries: WebhookDelivery[];
+  recent_actions?: WebhookHookAction[];
+};
+
+type WebhookHookAction = {
+  id: number;
+  action: "ping";
+  actor: string;
+  status: "requested" | "succeeded" | "failed";
+  detail?: string | null;
+  created_at: string;
+  completed_at?: string | null;
 };
 
 type WebhookDeliveryDetailResponse = {
@@ -1066,6 +1077,12 @@ function App() {
     queryFn: () => api<WebhookHookDetailResponse>(`/api/webhooks/github/hooks/${encodeURIComponent(selectedWebhookHookId ?? "")}`),
     enabled: webhookEnabled && selectedWebhookHookId !== null,
   });
+  const pingWebhookHook = React.useCallback(async (hookId: string) => {
+    const result = await api<{ detail: string }>(`/api/webhooks/github/hooks/${encodeURIComponent(hookId)}/ping`, { method: "POST" });
+    void webhookHookDetail.refetch();
+    window.setTimeout(() => void webhookHookDetail.refetch(), 1500);
+    return result.detail;
+  }, [webhookHookDetail]);
   const webhookDeliveryDetail = useQuery({
     queryKey: ["webhook-delivery", selectedWebhookDeliveryId],
     queryFn: () => api<WebhookDeliveryDetailResponse>(`/api/webhooks/github/deliveries/${encodeURIComponent(selectedWebhookDeliveryId ?? "")}`),
@@ -1417,6 +1434,7 @@ function App() {
               onRefresh={() => webhookHookDetail.refetch()}
               onViewHook={(hookId) => navigateDashboard(`/webhooks/hooks/${encodeURIComponent(hookId)}`)}
               onViewDelivery={(deliveryId) => navigateDashboard(`/webhooks/deliveries/${encodeURIComponent(deliveryId)}`)}
+              onPing={pingWebhookHook}
             />
           ) : (
             <WebhookPage
@@ -1930,12 +1948,29 @@ function LazyLoadSentinel({ noun, hasMore, loading, onLoadMore }: { noun: string
   return <div ref={ref} className="flex min-h-10 items-center justify-center border-t border-border px-3 py-2 text-xs font-medium text-muted" aria-live="polite">{loading ? `Loading more ${noun}...` : `Scroll for more ${noun}`}</div>;
 }
 
-function WebhookHookDetailPage({ data, loading, error, onBack, onRefresh, onViewHook, onViewDelivery = () => undefined }: { data?: WebhookHookDetailResponse; loading: boolean; error: Error | null; onBack: () => void; onRefresh: () => void; onViewHook: (hookId: string) => void; onViewDelivery?: (deliveryId: string) => void }) {
+function WebhookHookDetailPage({ data, loading, error, onBack, onRefresh, onViewHook, onViewDelivery = () => undefined, onPing }: { data?: WebhookHookDetailResponse; loading: boolean; error: Error | null; onBack: () => void; onRefresh: () => void; onViewHook: (hookId: string) => void; onViewDelivery?: (deliveryId: string) => void; onPing?: (hookId: string) => Promise<string> }) {
+  const [pingPending, setPingPending] = React.useState(false);
+  const [pingResult, setPingResult] = React.useState("");
+  const [pingError, setPingError] = React.useState("");
   if (loading) return <WebhookLoadingState text="Loading hook detail…" />;
   if (error) return <div className="grid gap-3"><Banner tone="error" text={error.message} /><button type="button" className="w-fit rounded border border-border px-3 py-2 text-sm font-semibold" onClick={onBack}>Back to hooks</button></div>;
   if (!data) return <EmptyState text="Hook detail is not available." />;
   const hook = data.hook;
-  return <section className="grid gap-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><button type="button" className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline" onClick={onBack}><ArrowLeft className="h-4 w-4" aria-hidden />Back to hooks</button><h2 className="text-xl font-semibold">{hook.target}</h2><p className="font-mono text-xs text-muted">{hook.target_type} webhook #{hook.id}</p></div><div className="flex gap-2"><RefreshButton onClick={onRefresh} />{hook.admin_url ? <a className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold hover:bg-slate-50" href={safeExternalUrl(hook.admin_url)} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" aria-hidden />Open in GitHub</a> : null}</div></div><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric title="State" value={hook.status} icon={<Activity className="h-5 w-5" />} /><Metric title="Deliveries" value={data.stats.deliveries} icon={<Link className="h-5 w-5" />} /><Metric title="Retries" value={data.stats.duplicates} icon={<RefreshCw className="h-5 w-5" />} /><Metric title="Unsupported" value={data.stats.unsupported} icon={<AlertTriangle className="h-5 w-5" />} /></div><Panel title="Sanitized configuration"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Active" value={hook.active ? "yes" : "no"} /><MiniStat label="Content type" value={hook.content_type ?? "unknown"} /><MiniStat label="SSL verification" value={hook.ssl_verify === null || hook.ssl_verify === undefined ? "unknown" : hook.ssl_verify ? "enabled" : "disabled"} /><MiniStat label="Destination URL" value={hook.delivery_url ?? "unknown"} /><MiniStat label="GitHub created" value={hook.github_created_at ?? "unknown"} /><MiniStat label="GitHub updated" value={hook.github_updated_at ?? "unknown"} /><MiniStat label="Last ping" value={hook.last_ping_at ?? "never"} /><MiniStat label="Last delivery" value={hook.last_event_at ?? "never"} /><MiniStat label="Last result" value={hook.last_result ?? "unknown"} /></div><div className="mt-3 rounded-md border border-border p-3"><div className="text-xs font-semibold text-muted">Subscribed events</div><div className="mt-2 flex flex-wrap gap-1.5">{hook.events.length ? hook.events.map((event) => <span key={event} className="rounded border border-border bg-slate-50 px-2 py-1 font-mono text-xs">{event}</span>) : <span className="text-sm text-muted">No event snapshot; redeliver a ping.</span>}</div></div></Panel><Panel title="Latest observed delivery"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Event" value={hook.last_event_name ? `${hook.last_event_name}${hook.last_action ? ` · ${hook.last_action}` : ""}` : "none"} /><MiniStat label="Repository" value={hook.last_repository ?? "none"} /><MiniStat label="Delivery ID" value={hook.last_delivery_id ?? "none"} /></div></Panel><Panel title="Recent deliveries">{data.recent_deliveries.length ? <WebhookDeliveriesTable deliveries={data.recent_deliveries} onViewHook={onViewHook} onViewDelivery={onViewDelivery} /> : <EmptyState text="This hook has no retained deliveries." />}</Panel></section>;
+  const requestPing = async () => {
+    if (!onPing || pingPending) return;
+    setPingPending(true);
+    setPingResult("");
+    setPingError("");
+    try {
+      setPingResult(await onPing(hook.id));
+    } catch (err) {
+      setPingError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPingPending(false);
+    }
+  };
+  const recentActions = data.recent_actions ?? [];
+  return <section className="grid gap-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><button type="button" className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline" onClick={onBack}><ArrowLeft className="h-4 w-4" aria-hidden />Back to hooks</button><h2 className="text-xl font-semibold">{hook.target}</h2><p className="font-mono text-xs text-muted">{hook.target_type} webhook #{hook.id}</p></div><div className="flex flex-wrap gap-2">{hook.ping_url && onPing ? <button type="button" className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60" disabled={pingPending} onClick={() => void requestPing()}><Activity className={cn("h-4 w-4", pingPending && "animate-pulse")} aria-hidden />{pingPending ? "Sending ping…" : "Send ping"}</button> : null}<RefreshButton onClick={onRefresh} />{hook.admin_url ? <a className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-sm font-semibold hover:bg-slate-50" href={safeExternalUrl(hook.admin_url)} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" aria-hidden />Open in GitHub</a> : null}</div></div>{pingError ? <Banner tone="error" text={pingError} /> : null}{pingResult ? <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{pingResult}</div> : null}<div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric title="State" value={hook.status} icon={<Activity className="h-5 w-5" />} /><Metric title="Deliveries" value={data.stats.deliveries} icon={<Link className="h-5 w-5" />} /><Metric title="Retries" value={data.stats.duplicates} icon={<RefreshCw className="h-5 w-5" />} /><Metric title="Unsupported" value={data.stats.unsupported} icon={<AlertTriangle className="h-5 w-5" />} /></div><Panel title="Sanitized configuration"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Active" value={hook.active ? "yes" : "no"} /><MiniStat label="Content type" value={hook.content_type ?? "unknown"} /><MiniStat label="SSL verification" value={hook.ssl_verify === null || hook.ssl_verify === undefined ? "unknown" : hook.ssl_verify ? "enabled" : "disabled"} /><MiniStat label="Destination URL" value={hook.delivery_url ?? "unknown"} /><MiniStat label="GitHub created" value={hook.github_created_at ?? "unknown"} /><MiniStat label="GitHub updated" value={hook.github_updated_at ?? "unknown"} /><MiniStat label="Last ping" value={hook.last_ping_at ?? "never"} /><MiniStat label="Last delivery" value={hook.last_event_at ?? "never"} /><MiniStat label="Last result" value={hook.last_result ?? "unknown"} /></div><div className="mt-3 rounded-md border border-border p-3"><div className="text-xs font-semibold text-muted">Subscribed events</div><div className="mt-2 flex flex-wrap gap-1.5">{hook.events.length ? hook.events.map((event) => <span key={event} className="rounded border border-border bg-slate-50 px-2 py-1 font-mono text-xs">{event}</span>) : <span className="text-sm text-muted">No event snapshot; send a ping to refresh it.</span>}</div></div></Panel><Panel title="Latest observed delivery"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><MiniStat label="Event" value={hook.last_event_name ? `${hook.last_event_name}${hook.last_action ? ` · ${hook.last_action}` : ""}` : "none"} /><MiniStat label="Repository" value={hook.last_repository ?? "none"} /><MiniStat label="Delivery ID" value={hook.last_delivery_id ?? "none"} /></div></Panel><Panel title="Recent administrative actions">{recentActions.length ? <div className="divide-y divide-border rounded-md border border-border">{recentActions.map((action) => <div key={action.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"><div><span className="font-semibold">{action.action}</span><span className="ml-2 text-muted">by @{action.actor}</span></div><span className="font-mono text-xs text-muted">{action.status} · {action.created_at}</span></div>)}</div> : <EmptyState text="No administrative actions recorded for this hook." />}</Panel><Panel title="Recent deliveries">{data.recent_deliveries.length ? <WebhookDeliveriesTable deliveries={data.recent_deliveries} onViewHook={onViewHook} onViewDelivery={onViewDelivery} /> : <EmptyState text="This hook has no retained deliveries." />}</Panel></section>;
 }
 
 function WebhookDeliveryDetailPage({ data, loading, error, onBack, onRefresh, onViewHook, onViewJob }: { data?: WebhookDeliveryDetailResponse; loading: boolean; error: Error | null; onBack: () => void; onRefresh: () => void; onViewHook: (hookId: string) => void; onViewJob: (jobId: number) => void }) {

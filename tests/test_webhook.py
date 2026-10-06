@@ -931,6 +931,45 @@ def test_webhook_monitoring_endpoints_keep_summary_light_and_return_real_data(tm
     }
 
 
+def test_webhook_repository_hook_ping_keeps_repository_target_when_organization_is_present(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    client = TestClient(create_app(DashboardConfig(
+        db=db,
+        require_auth=False,
+        webhook_secrets=(SECRET,),
+    )))
+    ping = json.dumps({
+        "zen": "Keep it logically awesome.",
+        "hook": {
+            "id": 42, "name": "web", "active": True,
+            "events": ["*"],
+            "config": {
+                "content_type": "json", "insecure_ssl": "0",
+                "secret": "********", "url": "https://gab.gisce.net/api/webhooks/github",
+            },
+            "created_at": "2026-10-05T15:29:44Z",
+            "updated_at": "2026-10-05T15:29:44Z",
+            "url": "https://api.github.com/repos/gisce/github-agent-bridge/hooks/42",
+            "ping_url": "https://api.github.com/repos/gisce/github-agent-bridge/hooks/42/pings",
+            "deliveries_url": "https://api.github.com/repos/gisce/github-agent-bridge/hooks/42/deliveries",
+        },
+        "repository": {"full_name": "gisce/github-agent-bridge"},
+        "organization": {"login": "gisce"},
+    }).encode()
+
+    response = client.post(
+        "/api/webhooks/github",
+        content=ping,
+        headers=hook_headers(ping, delivery="repo-ping-1", event="ping", hook_id="42"),
+    )
+
+    assert response.status_code == 200
+    hook = client.get("/api/webhooks/github/hooks").json()["hooks"][0]
+    assert hook["target"] == "gisce/github-agent-bridge"
+    assert hook["target_type"] == "repository"
+    assert hook["admin_url"] == "https://github.com/gisce/github-agent-bridge/settings/hooks/42"
+
+
 def test_webhook_coverage_uses_comparable_window_keys_and_grace(tmp_path):
     db = tmp_path / "bridge.sqlite3"
     JobQueue(db)
@@ -1199,6 +1238,40 @@ def test_existing_webhook_receipt_schema_is_migrated_for_hook_inventory(tmp_path
         hook_columns = {row[1] for row in con.execute("PRAGMA table_info(webhook_hooks)")}
     assert "idx_webhook_shadow_delivery_page" in indexes
     assert {"delivery_url", "last_delivery_id", "last_result"} <= hook_columns
+
+
+def test_existing_webhook_hook_targets_are_backfilled_from_github_api_url(tmp_path):
+    db = tmp_path / "bridge.sqlite3"
+    JobQueue(db)
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "INSERT INTO webhook_hooks(hook_id,target,target_type,events_json,github_api_url,updated_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (
+                "42", "gisce", "organization", "[]",
+                "https://api.github.com/repos/gisce/github-agent-bridge/hooks/42",
+                "2026-10-05T15:29:45+00:00",
+            ),
+        )
+        con.execute(
+            "INSERT INTO webhook_hooks(hook_id,target,target_type,events_json,github_api_url,updated_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (
+                "43", "gisce", "organization", "[]",
+                "https://api.github.com/orgs/gisce/hooks/43",
+                "2026-10-05T15:29:45+00:00",
+            ),
+        )
+
+    client = TestClient(create_app(DashboardConfig(db=db, require_auth=False, webhook_secrets=(SECRET,))))
+    hooks = {hook["id"]: hook for hook in client.get("/api/webhooks/github/hooks").json()["hooks"]}
+
+    assert hooks["42"]["target"] == "gisce/github-agent-bridge"
+    assert hooks["42"]["target_type"] == "repository"
+    assert hooks["42"]["admin_url"] == "https://github.com/gisce/github-agent-bridge/settings/hooks/42"
+    assert hooks["43"]["target"] == "gisce"
+    assert hooks["43"]["target_type"] == "organization"
+    assert hooks["43"]["admin_url"] == "https://github.com/organizations/gisce/settings/hooks/43"
 
 
 def test_submitted_review_uses_same_canonical_key_as_email_ingestion(tmp_path):

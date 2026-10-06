@@ -5,6 +5,7 @@ import json
 import sqlite3
 from importlib import resources
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .models import GitHubContext, Job, Notification, utc_now
 from .parser import classify_github_action, classify_work_intent, extract_github_context
@@ -26,6 +27,15 @@ SCHEMA = load_schema()
 ACTIVE_STATUSES = ("pending", "running", "waiting_approval")
 COALESCE_STATUSES = ("pending", "waiting_approval")
 ACK_RETRY_LIMIT = 2
+
+
+def _webhook_hook_target_from_api_url(api_url: str) -> tuple[str, str] | None:
+    parts = [part for part in urlparse(api_url).path.split("/") if part]
+    if len(parts) >= 4 and parts[0] == "repos" and parts[3] == "hooks":
+        return f"{parts[1]}/{parts[2]}", "repository"
+    if len(parts) >= 3 and parts[0] == "orgs" and parts[2] == "hooks":
+        return parts[1], "organization"
+    return None
 
 
 def semantic_event_identity(
@@ -116,6 +126,7 @@ class JobQueue:
             self._ensure_columns(con)
             self._ensure_indexes(con)
             self._backfill_job_runs(con)
+            self._backfill_webhook_hook_targets(con)
         return con
 
     def init(self) -> None:
@@ -124,6 +135,7 @@ class JobQueue:
             self._ensure_columns(con)
             self._ensure_indexes(con)
             self._backfill_job_runs(con)
+            self._backfill_webhook_hook_targets(con)
 
     def enqueue(self, n: Notification, policy: Policy) -> tuple[Job | None, str]:
         """Backward-compatible email enqueue entrypoint."""
@@ -1018,6 +1030,27 @@ class JobQueue:
             )
             con.execute(
                 "CREATE INDEX IF NOT EXISTS idx_quarantined_notifications_unresolved ON quarantined_notifications(resolved_at, created_at)"
+            )
+
+    def _backfill_webhook_hook_targets(self, con: sqlite3.Connection) -> None:
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='webhook_hooks'").fetchone() is None:
+            return
+        columns = {row["name"] for row in con.execute("PRAGMA table_info(webhook_hooks)")}
+        if not {"hook_id", "target", "target_type", "github_api_url"} <= columns:
+            return
+        rows = con.execute(
+            "SELECT hook_id,target,target_type,github_api_url FROM webhook_hooks WHERE github_api_url IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            target = _webhook_hook_target_from_api_url(str(row["github_api_url"] or ""))
+            if target is None:
+                continue
+            target_name, target_type = target
+            if row["target"] == target_name and row["target_type"] == target_type:
+                continue
+            con.execute(
+                "UPDATE webhook_hooks SET target=?,target_type=? WHERE hook_id=?",
+                (target_name, target_type, row["hook_id"]),
             )
 
     def _row_to_job(self, row: sqlite3.Row | None) -> Job | None:

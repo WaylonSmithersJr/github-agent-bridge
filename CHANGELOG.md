@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v0.71.3 (2026-10-06)
+
+### Bug Fixes
+
+- Prevent retry from bypassing denied policy decisions
+  ([`25b9fd1`](https://github.com/gisce/github-agent-bridge/commit/25b9fd1c24c6a84bea061167c9f39d1a4508d1dd))
+
+- **deps**: Bump source-map-js from 1.2.1 to 1.2.2 in /dashboard
+  ([`ad1cec8`](https://github.com/gisce/github-agent-bridge/commit/ad1cec8d9ee5c501961cef3299605505564b209b))
+
+
 ## v0.71.2 (2026-10-06)
 
 ### Bug Fixes

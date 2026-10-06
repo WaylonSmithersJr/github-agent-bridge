@@ -153,6 +153,25 @@ def webhook_notification(
     return notification
 
 
+def webhook_hook_target(payload: dict[str, Any]) -> tuple[str, str]:
+    hook = payload.get("hook") if isinstance(payload, dict) else None
+    repository = payload.get("repository") if isinstance(payload, dict) else None
+    organization = payload.get("organization") if isinstance(payload, dict) else None
+    repository_name = str(repository.get("full_name") or "") if isinstance(repository, dict) else ""
+    organization_name = str(organization.get("login") or "") if isinstance(organization, dict) else ""
+    hook_url = str(hook.get("url") or "") if isinstance(hook, dict) else ""
+
+    if "/repos/" in hook_url and repository_name:
+        return repository_name, "repository"
+    if "/orgs/" in hook_url and organization_name:
+        return organization_name, "organization"
+    if repository_name:
+        return repository_name, "repository"
+    if organization_name:
+        return organization_name, "organization"
+    return "unknown", "repository"
+
+
 def persist_shadow_delivery(
     db: str | Path,
     *,
@@ -197,13 +216,7 @@ def persist_shadow_delivery(
             status = "duplicate"
         if hook_id:
             hook = payload.get("hook") if isinstance(payload, dict) else None
-            organization = payload.get("organization") if isinstance(payload, dict) else None
-            target_type = "organization" if isinstance(organization, dict) else "repository"
-            target = (
-                organization.get("login") if isinstance(organization, dict)
-                else repository.get("full_name") if isinstance(repository, dict)
-                else None
-            ) or "unknown"
+            target, target_type = webhook_hook_target(payload)
             if event_name == "ping" and isinstance(hook, dict):
                 config = hook.get("config") if isinstance(hook.get("config"), dict) else {}
                 events = hook.get("events") if isinstance(hook.get("events"), list) else []

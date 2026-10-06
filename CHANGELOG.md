@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v0.71.2 (2026-10-06)
+
+### Bug Fixes
+
+- Classify repository webhook hooks correctly
+  ([`a029d30`](https://github.com/gisce/github-agent-bridge/commit/a029d30efc85d849f2dfe0b8ee78418e56fd4516))
+
+- **dashboard**: Complete Tailwind 4 migration
+  ([`27116e7`](https://github.com/gisce/github-agent-bridge/commit/27116e70957ded07508ea8c4e298684a926bcc4b))
+
+- **deps**: Bump postcss-selector-parser and tailwindcss in /dashboard
+  ([`32dbdd1`](https://github.com/gisce/github-agent-bridge/commit/32dbdd18a4bbc3da8daff74d55ede5c6dcb20f90))
+
+
 ## v0.71.1 (2026-10-06)
 
 ### Bug Fixes

@@ -385,13 +385,17 @@ class Policy:
             if "/" not in team:
                 continue
             org, slug = team.split("/", 1)
-            proc = subprocess.run(
-                [gh_bin, "api", f"orgs/{org}/teams/{slug}/memberships/{actor}"],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+            try:
+                proc = subprocess.run(
+                    [gh_bin, "api", f"orgs/{org}/teams/{slug}/memberships/{actor}"],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=5,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
             if proc.returncode != 0:
                 continue
             try:

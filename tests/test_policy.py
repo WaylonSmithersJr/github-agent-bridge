@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 from github_agent_bridge.models import Notification
 from github_agent_bridge.parser import extract_github_context
@@ -49,6 +50,13 @@ def test_enabled_orgs_restricts_canary_scope():
     assert policy.decision(n, other, "reply_comment") == "deny"
 
 
+def test_enabled_repos_remains_hard_guardrail_with_enabled_orgs():
+    policy = Policy(enabled_repos={"gisce/erp"}, enabled_orgs={"gisce"})
+
+    assert policy.repo_enabled("gisce/erp")
+    assert not policy.repo_enabled("gisce/other")
+
+
 def test_trusted_team_actor_allows_trusted_auto(tmp_path):
     gh = tmp_path / "gh"
     gh.write_text(
@@ -75,6 +83,16 @@ esac
     assert policy.decision(n, ctx, "reply_comment", actor_login="outsider", gh_bin=str(gh)) == "ask"
 
 
+def test_team_lookup_timeout_fails_closed(monkeypatch):
+    def fail_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr("github_agent_bridge.policy.subprocess.run", fail_run)
+    policy = Policy(trusted_teams={"gisce/team"})
+
+    assert not policy.actor_trusted("someone")
+
+
 def test_bot_login_actor_is_archived_to_avoid_self_loop():
     body = "@waylonsmithersjr https://github.com/palomos-molones/agent-lab/issues/1#issuecomment-1"
     n = Notification(1, "<x@github.com>", "subj", "notifications@github.com", body, auth={"spf": True, "dkim": True, "dmarc": True})
@@ -82,6 +100,19 @@ def test_bot_login_actor_is_archived_to_avoid_self_loop():
     policy = Policy(bot_logins={"waylonsmithersjr"}, trusted_teams={"palomos-molones/team-rocket"}, enabled_orgs={"palomos-molones"})
 
     assert policy.decision(n, ctx, "reply_comment", actor_login="WaylonSmithersJr") == "auto"
+
+
+def test_assignment_without_actor_can_still_be_auto_trusted_by_repo_scope():
+    body = "https://github.com/palomos-molones/el-cami/issues/15\n\nGitHub notification reason: assign"
+    n = Notification(1, "<x@github.com>", "subj", "GitHub <notifications@github.com>", body, auth={"spf": True, "dkim": True, "dmarc": True})
+    ctx = extract_github_context(body)
+    policy = Policy(
+        trusted_repos={"palomos-molones/el-cami"},
+        enabled_orgs={"palomos-molones"},
+        bot_logins={"waylonsmithersjr"},
+    )
+
+    assert policy.decision(n, ctx, "open_issue", actor_login=None) == "auto_trusted"
 
 
 def test_repo_roles_precedence_and_default():

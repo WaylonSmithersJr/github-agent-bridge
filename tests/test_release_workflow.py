@@ -4,6 +4,10 @@ from pathlib import Path
 WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "release.yml"
 
 
+def test_fork_cannot_publish_upstream_release():
+    assert "if: github.repository == 'gisce/github-agent-bridge'" in WORKFLOW.read_text()
+
+
 def release_steps():
     sections = WORKFLOW.read_text().split("\n      - name: ")[1:]
     return {

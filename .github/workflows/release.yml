@@ -16,7 +16,7 @@ jobs:
   release:
     name: semantic release
     runs-on: ubuntu-latest
-    if: github.actor != 'github-actions[bot]'
+    if: github.repository == 'gisce/github-agent-bridge' && github.actor != 'github-actions[bot]'
     permissions:
       contents: write
       id-token: write

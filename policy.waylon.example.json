@@ -10,12 +10,11 @@
     "waylonsmithersjr/proton-web-agent",
     "waylonsmithersjr/github-agent-bridge"
   ],
-  "enabledOrgs": [
-    "Palomos-Molones"
-  ],
   "enabledRepos": [
     "waylonsmithersjr/proton-web-agent",
-    "waylonsmithersjr/github-agent-bridge"
+    "waylonsmithersjr/github-agent-bridge",
+    "palomos-molones/el-cami",
+    "palomos-molones/palomos-molones.github.io"
   ],
   "repoRoutes": {
     "waylonsmithersjr/proton-web-agent": {

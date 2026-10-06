@@ -54,6 +54,13 @@ def trigger_actor_details_from_notification(notification: Notification) -> Trigg
 
 def trigger_actor_details_for_enqueue(notification: Notification, ctx: GitHubContext, *, gh_bin: str | None = None) -> TriggerActor | None:
     gh_bin = gh_bin or default_gh_bin()
+    reason_line = "github notification reason: assign"
+    if (
+        reason_line in notification.body.lower()
+        and ctx.target_kind == "issue"
+        and not any((ctx.comment_id, ctx.review_id, ctx.review_comment_id, ctx.commit_comment_id))
+    ):
+        return trigger_actor_details_from_notification(notification)
     return github_actor_details_for_context(ctx, gh_bin=gh_bin) or trigger_actor_details_from_notification(notification)
 
 

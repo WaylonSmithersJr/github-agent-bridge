@@ -84,19 +84,25 @@ def notification_from_github_thread(thread: dict, gh_bin: str = "gh") -> GitHubN
 
     kind = _issue_kind(issue, str(subject_type or ""))
     thread_label = f"{kind} #{issue_number}" if issue_number is not None else str(subject_type or "Thread")
+    reason = str(thread.get("reason") or "unknown")
+    actor_is_ambiguous_assignment = (
+        reason.lower() == "assign"
+        and (not latest_comment_url or latest_comment_url == subject_url)
+        and issue_number is not None
+    )
     body_parts = [
         body,
         "",
         str(html_url or ""),
         "",
-        f"GitHub notification reason: {thread.get('reason') or 'unknown'}",
+        f"GitHub notification reason: {reason}",
         f"GitHub notification type: {subject_type or 'unknown'}",
     ]
-    login = user.get("login") or "GitHub"
+    login = "GitHub" if actor_is_ambiguous_assignment else user.get("login") or "GitHub"
     avatar = user.get("avatar_url") or ""
-    if login != "GitHub":
+    if login != "GitHub" and not actor_is_ambiguous_assignment:
         body_parts.append(f"GitHub actor: @{login}")
-    if avatar:
+    if avatar and not actor_is_ambiguous_assignment:
         body_parts.append(f"GitHub actor avatar: {avatar}")
 
     notification = Notification(

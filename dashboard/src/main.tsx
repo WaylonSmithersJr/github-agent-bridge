@@ -941,6 +941,10 @@ function shouldRefreshJobForSessionEvent(eventType: string) {
 }
 
 function isRetryableStatus(status: string) {
+  return status === "blocked";
+}
+
+function isDismissableStatus(status: string) {
   return ["blocked", "denied", "waiting_approval"].includes(status);
 }
 
@@ -2081,7 +2085,8 @@ function JobDetailPage({
   const [retrying, setRetrying] = React.useState(false);
   const [dismissing, setDismissing] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
-  const canRetry = Boolean(user?.is_admin && selectedJob && isRetryableStatus(selectedJob.status));
+  const canRetry = Boolean(user?.is_admin && selectedJob && isRetryableStatus(selectedJob.status) && selectedJob.decision === "auto_trusted");
+  const canDismiss = Boolean(user?.is_admin && selectedJob && isDismissableStatus(selectedJob.status));
   const canCancel = Boolean(selectedJob && canCancelJob(selectedJob, user));
   const retryLabel = retrying ? "Retrying..." : "Retry";
   const dismissLabel = dismissing ? "Dismissing..." : "Dismiss";
@@ -2121,7 +2126,7 @@ function JobDetailPage({
               {retryLabel}
             </button>
           ) : null}
-          {canRetry ? (
+          {canDismiss ? (
             <button
               className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-semibold text-foreground hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               type="button"
@@ -3403,10 +3408,10 @@ function JobsList({
             job={job}
             onViewJob={onViewJob}
             now={now}
-            canRetry={canRetryFromList && isRetryableStatus(job.status)}
+            canRetry={canRetryFromList && isRetryableStatus(job.status) && job.decision === "auto_trusted"}
             retrying={retryingJobId === job.id}
             onRetry={retryJobFromList}
-            canDismiss={canDismissFromList && isRetryableStatus(job.status)}
+            canDismiss={canDismissFromList && isDismissableStatus(job.status)}
             dismissing={dismissingJobId === job.id}
             onDismiss={dismissJobFromList}
             canCancel={Boolean(onCancel && canCancelJob(job, user))}
@@ -3436,10 +3441,10 @@ function JobsList({
                 job={job}
                 now={now}
                 onViewJob={onViewJob}
-                canRetry={canRetryFromList && isRetryableStatus(job.status)}
+                canRetry={canRetryFromList && isRetryableStatus(job.status) && job.decision === "auto_trusted"}
                 retrying={retryingJobId === job.id}
                 onRetry={retryJobFromList}
-                canDismiss={canDismissFromList && isRetryableStatus(job.status)}
+                canDismiss={canDismissFromList && isDismissableStatus(job.status)}
                 dismissing={dismissingJobId === job.id}
                 onDismiss={dismissJobFromList}
                 canCancel={Boolean(onCancel && canCancelJob(job, user))}

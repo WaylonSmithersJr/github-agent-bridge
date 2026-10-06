@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.71.4 (2026-10-06)
+
+### Bug Fixes
+
+- Skip stale release workflow runs
+  ([`d976323`](https://github.com/gisce/github-agent-bridge/commit/d9763238d425a3bf5b1c7da8f1e1584f0154927f))
+
+### Documentation
+
+- Explain stale release handling
+  ([`4b9176b`](https://github.com/gisce/github-agent-bridge/commit/4b9176be6815978bc80960e3cdda4e0837dc670a))
+
+
 ## v0.71.3 (2026-10-06)
 
 ### Bug Fixes
